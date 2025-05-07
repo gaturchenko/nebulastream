@@ -67,7 +67,7 @@ VarVal TupleBufferMemoryProvider::loadValue(
     }
     const auto childIndex = Nautilus::Util::readValueFromMemRef<uint32_t>(fieldReference);
     const auto textPtr = invoke(loadAssociatedTextValue, recordBuffer.getReference(), childIndex);
-    return VariableSizedData(textPtr);
+    return VariableSizedData(textPtr, VariableSizedData::Owned(true));
 }
 
 VarVal TupleBufferMemoryProvider::storeValue(
