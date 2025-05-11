@@ -38,8 +38,9 @@ namespace NES
 AggregationOperatorHandler::AggregationOperatorHandler(
     const std::vector<OriginId>& inputOrigins,
     const OriginId outputOriginId,
-    std::unique_ptr<WindowSlicesStoreInterface> sliceAndWindowStore)
-    : WindowBasedOperatorHandler(inputOrigins, outputOriginId, std::move(sliceAndWindowStore))
+    std::unique_ptr<WindowSlicesStoreInterface> sliceAndWindowStore,
+    bool sequentialProcessing)
+    : WindowBasedOperatorHandler(inputOrigins, outputOriginId, std::move(sliceAndWindowStore), sequentialProcessing)
 {
 }
 
@@ -50,7 +51,7 @@ AggregationOperatorHandler::getCreateNewSlicesFunction(const CreateNewSlicesArgu
         numberOfWorkerThreads > 0, "Number of worker threads not set for window based operator. Was setWorkerThreads() being called?");
     const auto newHashMapArgs = dynamic_cast<const CreateNewHashMapSliceArgs&>(newSlicesArguments);
     return std::function(
-        [outputOriginId = outputOriginId, numberOfWorkerThreads = numberOfWorkerThreads, copyOfNewHashMapArgs = newHashMapArgs](
+        [outputOriginId = outputOriginId, numberOfWorkerThreads = sequentialProcessing ? 1 : numberOfWorkerThreads, copyOfNewHashMapArgs = newHashMapArgs](
             SliceStart sliceStart, SliceEnd sliceEnd) -> std::vector<std::shared_ptr<Slice>>
         {
             NES_TRACE("Creating new aggregation slice with for slice {}-{} for output origin {}", sliceStart, sliceEnd, outputOriginId);
