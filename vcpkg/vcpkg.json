@@ -24,6 +24,21 @@
           ]
         }
       ]
+    },
+    "video": {
+      "description": "video queries",
+      "dependencies": [
+        "aravis",
+        "openssl",
+        {
+          "name": "opencv4",
+          "default-features": false,
+          "features": [
+            "calib3d",
+            "jpeg"
+          ]
+        }
+      ]
     }
   },
   "dependencies": [
@@ -42,5 +57,9 @@
     "replxx",
     "spdlog",
     "yaml-cpp"
+  ],
+  "default-features": [
+    "video",
+    "mqtt"
   ]
 }
