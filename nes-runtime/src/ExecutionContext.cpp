@@ -65,7 +65,7 @@ int8_t* Arena::allocateMemory(const size_t sizeInBytes)
         return unpooledBuffers.back().getBuffer<int8_t>();
     }
 
-    if (fixedSizeBuffers.empty())
+    if (fixedSizeBuffers.empty() || fixedSizeBuffers.size() == 1)
     {
         fixedSizeBuffers.emplace_back(bufferProvider->getBufferBlocking());
         lastAllocationSize = bufferProvider->getBufferSize();
@@ -181,7 +181,7 @@ OperatorState* ExecutionContext::getLocalState(const OperatorId operatorId)
 
 void ExecutionContext::setLocalOperatorState(const OperatorId operatorId, std::unique_ptr<OperatorState> state)
 {
-    localStateMap.insert_or_assign(operatorId, std::move(state));
+    localStateMap.emplace(operatorId, std::move(state));
 }
 
 static OperatorHandler* getGlobalOperatorHandlerProxy(PipelineExecutionContext* pipelineCtx, const OperatorHandlerId index)

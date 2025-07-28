@@ -64,7 +64,8 @@ public:
 
     WindowBasedOperatorHandler(
         const std::vector<OriginId>& inputOrigins,
-        OriginId outputOriginId);
+        OriginId outputOriginId,
+        bool sequentialProcessing);
 
     ~WindowBasedOperatorHandler() override = default;
 
