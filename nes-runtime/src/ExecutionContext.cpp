@@ -65,7 +65,7 @@ int8_t* Arena::allocateMemory(const size_t sizeInBytes)
         return unpooledBuffers.back().getBuffer<int8_t>();
     }
 
-    if (fixedSizeBuffers.empty() || fixedSizeBuffers.size() == 1)
+    if (fixedSizeBuffers.empty())
     {
         fixedSizeBuffers.emplace_back(bufferProvider->getBufferBlocking());
         lastAllocationSize = bufferProvider->getBufferSize();
