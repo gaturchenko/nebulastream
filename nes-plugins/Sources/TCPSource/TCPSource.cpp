@@ -344,5 +344,4 @@ FileDataRegistryReturnType FileDataGeneratedRegistrar::RegisterTCPFileData(FileD
     }
     throw InvalidConfigParameter("An attach source of type FileData must contain a filePath configuration.");
 }
-    return systestAdaptorArguments.physicalSourceConfig;
 }

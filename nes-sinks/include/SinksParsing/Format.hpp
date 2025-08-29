@@ -45,7 +45,7 @@ public:
 
 
     /// Return formatted content of TupleBuffer, contains timestamp if specified in config.
-    virtual std::string getFormattedBuffer(const Memory::TupleBuffer& inputBuffer) const = 0;
+    virtual std::string getFormattedBuffer(const TupleBuffer& inputBuffer) const = 0;
 
     virtual std::ostream& toString(std::ostream&) const = 0;
     friend std::ostream& operator<<(std::ostream& os, const Format& obj) { return obj.toString(os); }

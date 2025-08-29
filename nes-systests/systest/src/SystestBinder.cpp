@@ -316,7 +316,10 @@ struct SystestBinder::Impl
 
                                      if (systest.getBoundPlan().has_value())
                                      {
-                                         const LegacyOptimizer optimizer{testfile.sourceCatalog, testfile.sinkCatalog};
+                                         const LegacyOptimizer optimizer{
+                                            testfile.sourceCatalog,
+                                            testfile.sinkCatalog,
+                                            testfile.modelCatalog};
                                          try
                                          {
                                              systest.setOptimizedPlan(optimizer.optimize(systest.getBoundPlan().value()));

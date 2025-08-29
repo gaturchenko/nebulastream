@@ -26,7 +26,6 @@
 #include <Runtime/TupleBuffer.hpp>
 #include <Sinks/SinkDescriptor.hpp>
 #include <SinksParsing/CSVFormat.hpp>
-#include <SinksParsing/JSONFormat.hpp>
 #include <fmt/format.h>
 #include <magic_enum/magic_enum.hpp>
 #include <ErrorHandling.hpp>
@@ -43,9 +42,6 @@ PrintSink::PrintSink(const SinkDescriptor& sinkDescriptor) : outputStream(&std::
     {
         case InputFormat::CSV:
             outputParser = std::make_unique<CSVFormat>(*sinkDescriptor.getSchema());
-            break;
-        case Configurations::InputFormat::JSON:
-            outputParser = std::make_unique<JSONFormat>(sinkDescriptor.schema);
             break;
         default:
             throw UnknownSinkFormat(fmt::format("Sink format: {} not supported.", magic_enum::enum_name(inputFormat)));
