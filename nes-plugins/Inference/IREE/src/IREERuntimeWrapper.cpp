@@ -12,10 +12,15 @@
     limitations under the License.
 */
 
-#include "IREERuntimeWrapper.hpp"
+#include <IREERuntimeWrapper.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <iree/runtime/api.h>
 #include <ErrorHandling.hpp>
+#include <PerfEvent.hpp>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace NES
 {
@@ -30,7 +35,7 @@ void IREERuntimeWrapper::setup(iree_const_byte_span_t compiledModel)
     NES_DEBUG("Created IREE runtime instance")
 
     iree_hal_device_t* device = nullptr;
-    iree_runtime_instance_try_create_default_device(instance, iree_make_cstring_view("local-task"), &device);
+    iree_runtime_instance_try_create_default_device(instance, iree_make_cstring_view("local-sync"), &device);
     NES_DEBUG("Created IREE device")
 
     iree_runtime_session_options_t sessionOptions;
@@ -116,7 +121,23 @@ void IREERuntimeWrapper::execute(std::string functionName, void* inputData, size
         throw InferenceRuntime("Model Execution failed. Could not copy input tensor");
     }
 
+    PerfEvent perfEvent;
+    perfEvent.startCounters();
     status = iree_runtime_call_invoke(&call, 0);
+    perfEvent.stopCounters();
+
+    json cacheData;
+    for (const auto& name : perfEvent.names)
+    {
+        cacheData[name] = perfEvent.getCounter(name);
+    }
+
+    fs::path jsonPath = fmt::format("{}.jsonl", inputSize / 32);
+    std::ofstream out(jsonPath, std::ios::app);
+    out << cacheData.dump() << '\n';
+    out.flush();
+    out.close();
+
     if (!iree_status_is_ok(status))
     {
         throw InferenceRuntime("Model Execution failed. Could not invoke model");
@@ -145,8 +166,6 @@ void IREERuntimeWrapper::execute(std::string functionName, void* inputData, size
     {
         throw InferenceRuntime("Model Execution failed. Could not copy output tensor");
     }
-
-    // iree_runtime_call_deinitialize(&call);
 }
 
 void IREERuntimeWrapper::setInputShape(std::vector<size_t> inputShape)
