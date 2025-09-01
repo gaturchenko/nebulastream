@@ -299,7 +299,12 @@ struct SystestBinder::Impl
     std::vector<SystestQuery> loadOptimizeQueriesFromTestFile(const Systest::TestFile& testfile)
     {
         SLTSinkFactory sinkProvider{testfile.sinkCatalog};
-        auto loadedSystests = loadFromSLTFile(testfile.file, testfile.name(), *testfile.sourceCatalog, sinkProvider);
+        auto loadedSystests = loadFromSLTFile(
+            testfile.file,
+            testfile.name(),
+            *testfile.sourceCatalog,
+            *testfile.modelCatalog,
+            sinkProvider);
         std::unordered_set<SystestQueryId> foundQueries;
 
         auto buildSystests = loadedSystests
@@ -353,6 +358,7 @@ struct SystestBinder::Impl
         const std::filesystem::path& testFilePath,
         const std::string_view testFileName,
         SourceCatalog& sourceCatalog,
+        Nebuli::Inference::ModelCatalog& modelCatalog,
         SLTSinkFactory& sltSinkProvider)
     {
         uint64_t sourceIndex = 0;
@@ -553,6 +559,12 @@ struct SystestBinder::Impl
                         attachSource.logicalSourceName);
                 }
             });
+
+        parser.registerOnModelCallback(
+            [&](Nebuli::Inference::ModelDescriptor&& model)
+        {
+            modelCatalog.registerModel(std::move(model));
+        });
 
         /// We create a new query plan from our config when finding a query
         parser.registerOnQueryCallback(
