@@ -16,6 +16,8 @@
 #include <Util/Logger/Logger.hpp>
 #include <iree/runtime/api.h>
 #include <ErrorHandling.hpp>
+#include "iree/task/api.h"
+#include "iree/hal/drivers/local_task/task_driver.h"
 
 namespace NES
 {
@@ -30,7 +32,7 @@ void IREERuntimeWrapper::setup(iree_const_byte_span_t compiledModel)
     NES_DEBUG("Created IREE runtime instance")
 
     iree_hal_device_t* device = nullptr;
-    iree_runtime_instance_try_create_default_device(instance, iree_make_cstring_view("local-task"), &device);
+    iree_runtime_instance_try_create_default_device(instance, iree_make_cstring_view("local-sync"), &device);
     NES_DEBUG("Created IREE device")
 
     iree_runtime_session_options_t sessionOptions;
