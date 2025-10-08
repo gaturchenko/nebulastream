@@ -24,6 +24,7 @@
 #include <Configurations/ScalarOption.hpp>
 #include <Configurations/Validation/NumberValidation.hpp>
 #include <Util/ExecutionMode.hpp>
+#include <PredictionCacheConfiguration.hpp>
 
 namespace NES
 {
@@ -77,10 +78,19 @@ public:
            "Join Strategy"
            "[NESTED_LOOP_JOIN|HASH_JOIN|OPTIMIZER_CHOOSES]."};
 
+    Configurations::PredictionCacheConfiguration predictionCacheConfiguration = {"predictionCache", "Prediction Cache Configuration"};
+
 private:
     std::vector<BaseOption*> getOptions() override
     {
-        return {&executionMode, &pageSize, &numberOfPartitions, &joinStrategy, &numberOfRecordsPerKey, &operatorBufferSize};
+        return {
+            &executionMode,
+            &pageSize,
+            &numberOfPartitions,
+            &joinStrategy,
+            &numberOfRecordsPerKey,
+            &operatorBufferSize,
+            &predictionCacheConfiguration};
     }
 };
 
