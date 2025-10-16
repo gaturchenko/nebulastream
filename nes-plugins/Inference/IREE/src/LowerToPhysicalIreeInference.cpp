@@ -20,10 +20,12 @@
 #include <RewriteRuleRegistry.hpp>
 #include <BatchingPhysicalOperator.hpp>
 #include <IREEBatchInferenceOperator.hpp>
+#include <IREEBatchCacheInferenceOperator.hpp>
 #include <IREEBatchInferenceOperatorHandler.hpp>
 #include <IREEInferenceOperator.hpp>
 #include <IREECacheInferenceOperator.hpp>
 #include <IREEInferenceOperatorHandler.hpp>
+#include <PredictionCacheBatch/PredictionCacheBatchUtil.hpp>
 
 struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
 {
@@ -167,7 +169,9 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                     NES::Configurations::PredictionCacheOptions predictionCacheOptions{
                         conf.predictionCacheConfiguration.predictionCacheType.getValue(),
                         conf.predictionCacheConfiguration.numberOfEntriesPredictionCache.getValue()};
-                    auto ireeOperator = NES::IREEBatchInferenceOperator(handlerId, inputFunctions, outputNames, memoryProvider);
+                    auto ireeOperator = NES::IREEBatchCacheInferenceOperator(handlerId, inputFunctions, outputNames, memoryProvider,
+                        NES::Util::createPredictionCacheBatch(
+                            predictionCacheOptions, nautilus::val<int8_t*>(nullptr), nautilus::val<size_t>(0)));
 
                     if (inferModelOperator.getInputFields().size() == 1
                         && inferModelOperator.getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)
