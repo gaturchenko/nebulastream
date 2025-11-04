@@ -230,12 +230,12 @@ void serializeExecutionResults(const RunningQuery& queryRan, nlohmann::json& res
     }
     const auto executionTimeInSeconds = queryRan.getElapsedTime().count();
     resultJson.push_back({
-        {"query name", queryRan.systestQuery.testName},
+        {"query_id", queryRan.systestQuery.queryIdInFile.getRawValue()},
         {"time", executionTimeInSeconds},
-        {"bytesPerSecond",
+        {"bytes_per_second",
          queryRan.bytesProcessed.has_value() ? static_cast<double>(queryRan.bytesProcessed.value()) / executionTimeInSeconds
                                              : std::numeric_limits<double>::quiet_NaN()},
-        {"tuplesPerSecond",
+        {"tuples_per_second",
          queryRan.tuplesProcessed.has_value() ? static_cast<double>(queryRan.tuplesProcessed.value()) / executionTimeInSeconds
                                               : std::numeric_limits<double>::quiet_NaN()},
     });
