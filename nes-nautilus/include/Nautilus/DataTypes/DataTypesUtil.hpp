@@ -32,8 +32,22 @@ namespace NES::Nautilus::Util
 template <typename T, typename U>
 nautilus::val<int8_t*> getMemberRef(nautilus::val<int8_t*> objectReference, U T::* member)
 {
-#pragma GCC diagnostic ignored "-Wnull-pointer-subtraction"
+    #pragma GCC diagnostic ignored "-Wnull-pointer-subtraction"
     return objectReference + ((char*)&((T*)nullptr->*member) - (char*)(nullptr)); /// NOLINT
+}
+
+template <typename T>
+static nautilus::val<T*> getMemberWithOffset(nautilus::val<int8_t*> objectReference, const size_t memberOffset)
+{
+    #pragma GCC diagnostic ignored "-Wnull-pointer-subtraction"
+    return static_cast<nautilus::val<T*>>(objectReference + memberOffset); /// NOLINT
+}
+
+template <typename T>
+static nautilus::val<T**> getMemberPtrWithOffset(nautilus::val<T*> objectReference, const size_t memberOffset)
+{
+    #pragma GCC diagnostic ignored "-Wnull-pointer-subtraction"
+    return static_cast<nautilus::val<T**>>(objectReference + memberOffset); /// NOLINT
 }
 
 template <typename T>
