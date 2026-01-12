@@ -31,9 +31,11 @@ Configuration worker.default_query_execution.inference.batch_size: [1]
 Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
 Configuration worker.default_query_execution.inference.number_of_entries_prediction_cache: [4]
 
-MODEL irisCache TESTDATA/model/dummy_model.onnx
-FLOAT32 FLOAT32 FLOAT32 FLOAT32
-FLOAT32 setosa FLOAT32 versicolor FLOAT32 virginica
+CREATE MODEL irisCache(
+    PATH "TESTDATA/model/dummy_model.onnx"
+    INPUTS (FLOAT32, FLOAT32, FLOAT32, FLOAT32)
+    OUTPUTS (setosa FLOAT32, versicolor FLOAT32, virginica FLOAT32)
+);
 
 SELECT setosa, versicolor, virginica
 FROM (SELECT INFER_MODEL(irisCache, (p1,p2,p3,p4)) FROM streamFloat)
