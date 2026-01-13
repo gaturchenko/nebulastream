@@ -33,7 +33,8 @@ void SequentialAggregationRule::apply(LogicalPlan& queryPlan) const
             queryPlan = replaceSubtree(
                             queryPlan,
                             LogicalOperator(aggregation).getId(),
-                            LogicalOperator(aggregation).withChildren({SequenceLogicalOperator().withChildren(aggregation.getChildren())}))
+                            LogicalOperator(aggregation).withChildren(
+                                {SequenceLogicalOperator(SequenceLogicalOperator::SequenceSource::AGGREGATION).withChildren(aggregation.getChildren())}))
                             .value();
         }
     }

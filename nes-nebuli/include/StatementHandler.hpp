@@ -208,7 +208,9 @@ public:
 
 FMT_OSTREAM(NES::CreateLogicalSourceStatementResult);
 FMT_OSTREAM(NES::CreatePhysicalSourceStatementResult);
+FMT_OSTREAM(NES::CreateModelStatementResult);
 FMT_OSTREAM(NES::DropLogicalSourceStatementResult);
 FMT_OSTREAM(NES::DropPhysicalSourceStatementResult);
 FMT_OSTREAM(NES::DropQueryStatementResult);
+FMT_OSTREAM(NES::DropModelStatementResult);
 FMT_OSTREAM(NES::QueryStatementResult);

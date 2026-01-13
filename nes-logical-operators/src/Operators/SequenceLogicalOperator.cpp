@@ -37,8 +37,6 @@
 namespace NES
 {
 
-SequenceLogicalOperator::SequenceLogicalOperator() = default;
-
 std::string_view SequenceLogicalOperator::getName() const noexcept
 {
     return NAME;
@@ -132,13 +130,20 @@ void SequenceLogicalOperator::serialize(SerializableOperator& serializableOperat
         serializableOperator.add_children_ids(child.getId().getRawValue());
     }
 
+    (*serializableOperator.mutable_config())[ConfigParameters::SEQUENCE_SOURCE] = descriptorConfigTypeToProto(EnumWrapper(source));
     serializableOperator.mutable_operator_()->CopyFrom(proto);
 }
 
 LogicalOperatorRegistryReturnType
 LogicalOperatorGeneratedRegistrar::RegisterSequenceLogicalOperator(LogicalOperatorRegistryArguments arguments)
 {
-    auto logicalOperator = SequenceLogicalOperator();
-    return logicalOperator.withInferredSchema(arguments.inputSchemas);
+    auto sequenceSourceVariant = arguments.config.at(SequenceLogicalOperator::ConfigParameters::SEQUENCE_SOURCE);
+    if (std::holds_alternative<EnumWrapper>(sequenceSourceVariant))
+    {
+        auto sequenceSource = std::get<EnumWrapper>(sequenceSourceVariant);
+        auto logicalOperator = SequenceLogicalOperator(sequenceSource.asEnum<SequenceLogicalOperator::SequenceSource>().value());
+        return logicalOperator.withInferredSchema(arguments.inputSchemas);
+    }
+    throw UnknownLogicalOperator();
 }
 }

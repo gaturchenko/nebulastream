@@ -26,26 +26,6 @@
 #include <ErrorHandling.hpp>
 #include <SerializableVariantDescriptor.pb.h>
 
-// MedianAggregationLogicalFunction::MedianAggregationLogicalFunction(const FieldAccessLogicalFunction& field)
-//     : WindowAggregationLogicalFunction(
-//           field.getDataType(),
-//           DataTypeProvider::provideDataType(partialAggregateStampType),
-//           DataTypeProvider::provideDataType(finalAggregateStampType),
-//           field)
-// {
-// }
-//
-// MedianAggregationLogicalFunction::MedianAggregationLogicalFunction(
-//     const FieldAccessLogicalFunction& field, FieldAccessLogicalFunction asField)
-//     : WindowAggregationLogicalFunction(
-//           field.getDataType(),
-//           DataTypeProvider::provideDataType(partialAggregateStampType),
-//           DataTypeProvider::provideDataType(finalAggregateStampType),
-//           field,
-//           std::move(asField))
-// {
-// }
-
 namespace NES
 {
 ArrayAggregationLogicalFunction::ArrayAggregationLogicalFunction(const FieldAccessLogicalFunction& field)

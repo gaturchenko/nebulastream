@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <Configurations/Descriptor.hpp>
 #include <DataTypes/Schema.hpp>
 #include <Identifiers/Identifiers.hpp>
 #include <Operators/LogicalOperator.hpp>
@@ -31,7 +32,13 @@ namespace NES
 class SequenceLogicalOperator
 {
 public:
-    explicit SequenceLogicalOperator();
+    enum class SequenceSource : uint8_t
+    {
+        AGGREGATION,
+        INFERENCE
+    };
+
+    explicit SequenceLogicalOperator(SequenceSource source) : source(source) {};
 
     [[nodiscard]] bool operator==(const SequenceLogicalOperator& rhs) const;
 
@@ -51,7 +58,21 @@ public:
 
     [[nodiscard]] SequenceLogicalOperator withInferredSchema(std::vector<Schema> inputSchemas) const;
 
+    [[nodiscard]] SequenceSource getSequenceSource() const { return source; };
+
+    struct ConfigParameters
+    {
+        static inline const DescriptorConfig::ConfigParameter<EnumWrapper, SequenceSource> SEQUENCE_SOURCE{
+            "sequenceSource",
+            std::nullopt,
+            [](const std::unordered_map<std::string, std::string>& config)
+            { return DescriptorConfig::tryGet(SEQUENCE_SOURCE, config); }};
+        static inline std::unordered_map<std::string, DescriptorConfig::ConfigParameterContainer> parameterMap
+            = DescriptorConfig::createConfigParameterContainerMap(SEQUENCE_SOURCE);
+    };
+
 private:
+    SequenceSource source;
     static constexpr std::string_view NAME = "SEQUENCE";
 
     std::vector<LogicalOperator> children;

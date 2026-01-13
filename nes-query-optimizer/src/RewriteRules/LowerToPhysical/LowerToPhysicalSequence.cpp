@@ -15,6 +15,7 @@
 #include <RewriteRules/LowerToPhysical/LowerToPhysicalSequence.hpp>
 
 #include <memory>
+#include <InputFormatters/InputFormatterTupleBufferRefProvider.hpp>
 #include <MemoryLayout/RowLayout.hpp>
 #include <Nautilus/Interface/BufferRef/RowTupleBufferRef.hpp>
 #include <Operators/LogicalOperator.hpp>
@@ -26,7 +27,7 @@
 #include <RewriteRuleRegistry.hpp>
 #include <SequenceOperatorHandler.hpp>
 #include <SequencePhysicalOperator.hpp>
-#include <SinkPhysicalOperator.hpp>
+#include <Operators/Sources/SourceDescriptorLogicalOperator.hpp>
 
 namespace NES
 {
@@ -34,22 +35,55 @@ namespace NES
 RewriteRuleResultSubgraph LowerToPhysicalSequence::apply(LogicalOperator logicalOperator)
 {
     PRECONDITION(logicalOperator.tryGetAs<SequenceLogicalOperator>(), "Expected a SequenceLogicalOperator");
-    auto sink = logicalOperator.getAs<SequenceLogicalOperator>();
+    auto sequence = logicalOperator.getAs<SequenceLogicalOperator>();
 
-    auto schema = logicalOperator.getInputSchemas().at(0);
+    const auto schema = logicalOperator.getInputSchemas().at(0);
+    auto memoryProvider = TupleBufferRef::create(conf.operatorBufferSize.getValue(), schema);
 
-    auto layout = std::make_shared<RowLayout>(conf.operatorBufferSize.getValue(), schema);
-    const auto memoryProvider = std::make_shared<RowTupleBufferRef>(layout);
+    if (sequence->getSequenceSource() == SequenceLogicalOperator::SequenceSource::INFERENCE && conf.inferenceConfiguration.batchSize.getValue() == 1)
+    {
+        if (sequence.getChildren().at(0).tryGetAs<SourceDescriptorLogicalOperator>().has_value())
+        {
+            const auto source = sequence.getChildren().at(0).getAs<SourceDescriptorLogicalOperator>();
+            const auto inputFormatterConfig = source->getSourceDescriptor().getParserConfig();
+            if (toUpperCase(inputFormatterConfig.parserType) != "NATIVE")
+            {
+                auto memoryProviderFormatter = TupleBufferRef::create(conf.operatorBufferSize.getValue(), schema);
+                memoryProvider = provideInputFormatterTupleBufferRef(inputFormatterConfig, memoryProviderFormatter);
+            }
+        }
+        auto physicalOperator = ScanPhysicalOperator(memoryProvider);
+
+        auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
+            physicalOperator,
+            sequence.getInputSchemas()[0],
+            sequence.getOutputSchema(),
+            PhysicalOperatorWrapper::PipelineLocation::SCAN);
+
+        return {.root = wrapper, .leafs = {wrapper}};
+    }
 
     auto operatorHandlerId = getNextOperatorHandlerId();
     auto handler = std::make_shared<Runtime::Execution::Operators::SequenceOperatorHandler>();
+
+    if (sequence.getChildren().at(0).tryGetAs<SourceDescriptorLogicalOperator>().has_value())
+    {
+        const auto source = sequence.getChildren().at(0).getAs<SourceDescriptorLogicalOperator>();
+        const auto inputFormatterConfig = source->getSourceDescriptor().getParserConfig();
+        if (toUpperCase(inputFormatterConfig.parserType) != "NATIVE")
+        {
+            auto memoryProviderFormatter = TupleBufferRef::create(conf.operatorBufferSize.getValue(), schema);
+            memoryProvider = provideInputFormatterTupleBufferRef(inputFormatterConfig, memoryProviderFormatter);
+        }
+    }
+
     auto physicalOperator = Runtime::Execution::Operators::SequencePhysicalOperator(
-        operatorHandlerId, ScanPhysicalOperator(memoryProvider));
+            operatorHandlerId, ScanPhysicalOperator(memoryProvider));
 
     auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
         physicalOperator,
-        sink.getInputSchemas()[0],
-        sink.getOutputSchema(),
+        sequence.getInputSchemas()[0],
+        sequence.getOutputSchema(),
         operatorHandlerId,
         handler,
         PhysicalOperatorWrapper::PipelineLocation::SCAN);

@@ -85,7 +85,7 @@ void IREEBatchInferenceOperatorHandler::emitBatchesToProbe(
     pipelineCtx->emitBuffer(tupleBuffer);
     batch.setState(BatchState::MARKED_AS_EMITTED);
 
-    NES_TRACE(
+    NES_DEBUG(
         "Emitted batch {} with watermarkTs {} sequenceNumber {} originId {} tuples {}",
         batch.batchId,
         tupleBuffer.getWatermark(),
@@ -105,7 +105,13 @@ std::shared_ptr<Batch> IREEBatchInferenceOperatorHandler::createNewBatch() const
 
 std::shared_ptr<Batch> IREEBatchInferenceOperatorHandler::getBatch(uint64_t batchId) const
 {
-    return batches.rlock()->at(batchId);
+    auto batchesReadLock = batches.rlock();
+
+    if (batchesReadLock->contains(batchId))
+    {
+        return batchesReadLock->at(batchId);
+    }
+    return nullptr;
 }
 
 Batch* IREEBatchInferenceOperatorHandler::getOrCreateNewBatch() const
