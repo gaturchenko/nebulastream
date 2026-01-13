@@ -85,7 +85,7 @@ void IREEBatchInferenceOperatorHandler::emitBatchesToProbe(
     pipelineCtx->emitBuffer(tupleBuffer);
     batch.setState(BatchState::MARKED_AS_EMITTED);
 
-    NES_DEBUG(
+    NES_TRACE(
         "Emitted batch {} with watermarkTs {} sequenceNumber {} originId {} tuples {}",
         batch.batchId,
         tupleBuffer.getWatermark(),
