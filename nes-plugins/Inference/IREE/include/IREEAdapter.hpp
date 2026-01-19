@@ -48,7 +48,6 @@ public:
 
     void copyResultTo(std::span<std::byte> content)
     {
-        PRECONDITION(outputSize == content.size(), "Output size does not match");
         std::ranges::copy_n(outputData.get(), std::min(content.size(), outputSize), content.data());
     }
 
@@ -60,11 +59,57 @@ public:
     template <class T>
     void infer()
     {
-        runtimeWrapper.execute(functionName, inputData.get(), inputSize, reinterpret_cast<T*>(outputData.get()));
+        auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize);
+        runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()));
+    }
+
+    template <class T>
+    size_t inferCombine(size_t outputSize)
+    {
+        auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize);
+
+        runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()), sizeof(T), outputSize, missIndices);
+        missIndices.clear();
+
+        return cacheMap.size();
+    }
+
+    void updateCacheMapIndices(uint64_t keyIdx, int rowIdx)
+    {
+        if (std::none_of(cacheMap.begin(), cacheMap.end(), [&](const auto& p) { return p.first == keyIdx; }))
+        {
+            cacheMap.emplace_back(std::make_pair(keyIdx, rowIdx));
+        }
+    }
+
+    uint64_t getCacheMapKey(size_t idx)
+    {
+        return cacheMap.at(idx).first;
+    }
+
+    uint64_t getCacheMapValue(size_t idx)
+    {
+        return cacheMap.at(idx).second;
+    }
+
+    void clearCacheMap()
+    {
+        cacheMap.clear();
+    }
+
+    void appendMissIdx(int idx)
+    {
+        missIndices.insert(idx);
+    }
+
+    size_t getMissIndicesSize()
+    {
+        return missIndices.size();
     }
 
     std::unique_ptr<std::byte[]> inputData{};
     std::unique_ptr<std::byte[]> outputData{};
+    std::unique_ptr<std::byte[]> cacheProbeTuple{};
 
     size_t inputSize;
     size_t outputSize;
@@ -74,6 +119,7 @@ public:
 private:
     std::string functionName;
     IREERuntimeWrapper runtimeWrapper;
+
     std::unordered_map<NES::DataType, iree_hal_element_types_t> dtypeMap = {
         {NES::DataTypeProvider::provideDataType(NES::DataType::Type::UINT8), IREE_HAL_ELEMENT_TYPE_UINT_8},
         {NES::DataTypeProvider::provideDataType(NES::DataType::Type::UINT16), IREE_HAL_ELEMENT_TYPE_UINT_16},
@@ -84,8 +130,10 @@ private:
         {NES::DataTypeProvider::provideDataType(NES::DataType::Type::INT32), IREE_HAL_ELEMENT_TYPE_INT_32},
         {NES::DataTypeProvider::provideDataType(NES::DataType::Type::INT64), IREE_HAL_ELEMENT_TYPE_INT_64},
         {NES::DataTypeProvider::provideDataType(NES::DataType::Type::FLOAT32), IREE_HAL_ELEMENT_TYPE_FLOAT_32},
-        {NES::DataTypeProvider::provideDataType(NES::DataType::Type::FLOAT64), IREE_HAL_ELEMENT_TYPE_FLOAT_64},
-    };
+        {NES::DataTypeProvider::provideDataType(NES::DataType::Type::FLOAT64), IREE_HAL_ELEMENT_TYPE_FLOAT_64}};
+
+    std::vector<std::pair<uint64_t, int>> cacheMap;
+    std::set<int> missIndices;
 };
 
 }

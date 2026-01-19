@@ -37,10 +37,10 @@ nautilus::val<bool*> PredictionCacheSecondChance::getSecondChanceBit(const nauti
     return secondChanceBitRef;
 }
 
-void PredictionCacheSecondChance::updateValues(const PredictionCache::PredictionCacheUpdate& updateFunction)
+void PredictionCacheSecondChance::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementIndex * sizeOfEntry;
-    updateFunction(PredictionCacheEntryToReplace, replacementIndex);
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + pos * sizeOfEntry;
+    updateFunction(PredictionCacheEntryToReplace, pos);
 }
 
 nautilus::val<uint64_t> PredictionCacheSecondChance::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
@@ -58,17 +58,18 @@ nautilus::val<uint64_t> PredictionCacheSecondChance::updateKeys(const nautilus::
     /// If we find such a slice, we set the second chance bit to true, replace the slice and return the data structure.
     /// We must start at the current replacement index, as we have to replace the oldest entry.
     incrementNumberOfMisses();
-    auto secondChanceBit = getSecondChanceBit(replacementIndex);
+    auto secondChanceBit = getSecondChanceBit(localReplacementIndex);
     while (*secondChanceBit == true)
     {
         *secondChanceBit = false;
-        replacementIndex = (replacementIndex + 1) % numberOfEntries;
-        secondChanceBit = getSecondChanceBit(replacementIndex);
+        localReplacementIndex = (localReplacementIndex + 1) % numberOfEntries;
+        secondChanceBit = getSecondChanceBit(localReplacementIndex);
     }
 
     /// Replacing the slice and returning the data structure.
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementIndex * sizeOfEntry;
-    updateFunction(PredictionCacheEntryToReplace, replacementIndex);
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
+    updateFunction(PredictionCacheEntryToReplace, localReplacementIndex);
+    replacementIndex = localReplacementIndex;
     *secondChanceBit = true;
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
@@ -90,19 +91,20 @@ PredictionCacheSecondChance::getDataStructureRef(
     /// If we find such a slice, we set the second chance bit to true, replace the slice and return the data structure.
     /// We must start at the current replacement index, as we have to replace the oldest entry.
     incrementNumberOfMisses();
-    auto secondChanceBit = getSecondChanceBit(replacementIndex);
+    auto secondChanceBit = getSecondChanceBit(localReplacementIndex);
     while (*secondChanceBit == true)
     {
         *secondChanceBit = false;
-        replacementIndex = (replacementIndex + 1) % numberOfEntries;
-        secondChanceBit = getSecondChanceBit(replacementIndex);
+        localReplacementIndex = (localReplacementIndex + 1) % numberOfEntries;
+        secondChanceBit = getSecondChanceBit(localReplacementIndex);
     }
 
     /// Replacing the slice and returning the data structure.
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementIndex * sizeOfEntry;
-    const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, replacementIndex);
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
+    const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, localReplacementIndex);
+    replacementIndex = localReplacementIndex;
     *secondChanceBit = true;
-    return getDataStructure(replacementIndex);
+    return getDataStructure(localReplacementIndex);
 }
 
 }

@@ -58,7 +58,7 @@ void IREERuntimeWrapper::setup(iree_const_byte_span_t compiledModel)
     this->session = std::move(ireeSession);
 }
 
-void IREERuntimeWrapper::execute(std::string functionName, void* inputData, size_t inputSize, void* outputData)
+iree_hal_buffer_view_t* IREERuntimeWrapper::execute(std::string functionName, void* inputData, size_t inputSize)
 {
     iree_runtime_call_t call;
     // Cache the function after the first call such that initializing subsequent calls is cheaper
@@ -131,11 +131,20 @@ void IREERuntimeWrapper::execute(std::string functionName, void* inputData, size
     }
     // iree_hal_buffer_view_fprint(stdout, outputView, 4096, iree_allocator_system());
     // std::cout << '\n';
+    iree_runtime_call_deinitialize(&call);
+
+    return outputView;
+}
+
+void IREERuntimeWrapper::copyOutput(iree_hal_buffer_view_t* outputView, void* outputData)
+{
     std::unique_ptr<iree_hal_buffer_view_t, decltype(&iree_hal_buffer_view_release)> outputBuffer(
-        outputView, &iree_hal_buffer_view_release);
+                outputView, &iree_hal_buffer_view_release);
+    // iree_hal_buffer_view_fprint(stdout, outputView, 4096, iree_allocator_system());
+    // std::cout << '\n';
 
     int outputSize = iree_hal_buffer_view_byte_length(outputBuffer.get());
-    status = iree_hal_device_transfer_d2h(
+    iree_status_t status = iree_hal_device_transfer_d2h(
         iree_runtime_session_device(session.get()),
         iree_hal_buffer_view_buffer(outputBuffer.get()),
         0,
@@ -148,8 +157,34 @@ void IREERuntimeWrapper::execute(std::string functionName, void* inputData, size
     {
         throw InferenceRuntime("Model Execution failed. Could not copy output tensor");
     }
+}
 
-    iree_runtime_call_deinitialize(&call);
+void IREERuntimeWrapper::copyOutput(iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices)
+{
+    std::unique_ptr<iree_hal_buffer_view_t, decltype(&iree_hal_buffer_view_release)> outputBuffer(
+                outputView, &iree_hal_buffer_view_release);
+
+    int size = iree_hal_buffer_view_byte_length(outputBuffer.get());
+    auto predictionBuffer = std::make_unique<std::byte[]>(size);
+
+    iree_status_t status = iree_hal_device_transfer_d2h(
+        iree_runtime_session_device(session.get()),
+        iree_hal_buffer_view_buffer(outputBuffer.get()),
+        0,
+        predictionBuffer.get(),
+        size,
+        IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
+        iree_infinite_timeout());
+
+    if (!iree_status_is_ok(status))
+    {
+        throw InferenceRuntime("Model Execution failed. Could not copy output tensor");
+    }
+
+    for (const int idx : missIndices)
+    {
+        std::memcpy(static_cast<std::byte*>(outputData) + idx * dtypeSize, predictionBuffer.get() + idx * dtypeSize, outputSize);
+    }
 }
 
 void IREERuntimeWrapper::setInputShape(std::vector<size_t> inputShape)

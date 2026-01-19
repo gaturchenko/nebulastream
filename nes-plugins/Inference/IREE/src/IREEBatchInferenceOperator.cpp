@@ -20,7 +20,6 @@
 #include <Nautilus/Interface/Record.hpp>
 #include <QueryExecutionConfiguration.hpp>
 #include <nautilus/function.hpp>
-#include <ranges>
 
 namespace NES::QueryCompilation::PhysicalOperators
 {
@@ -38,7 +37,7 @@ void addValueToModelProxy(int index, T value, void* inferModelHandler, WorkerThr
 }
 
 template <class T>
-float getValueFromModelProxy(int index, void* inferModelHandler, WorkerThreadId thread)
+T getValueFromModelProxy(int index, void* inferModelHandler, WorkerThreadId thread)
 {
     auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
     auto adapter = handler->getIREEAdapter(thread);
@@ -120,7 +119,7 @@ void IREEBatchInferenceOperator::performInference(
                 nautilus::invoke(
                     IREEBatchInference::addValueToModelProxy<T>,
                     rowIdx,
-                    inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<float>>(),
+                    inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
                     operatorHandler,
                     executionCtx.workerThreadId);
                 ++rowIdx;
@@ -136,7 +135,7 @@ void IREEBatchInferenceOperator::performInference(
                 IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
                 operatorHandler,
                 executionCtx.workerThreadId);
-            ++rowIdx;
+            rowIdx += inputs.size();
         }
     }
 
@@ -183,7 +182,7 @@ void IREEBatchInferenceOperator::writeOutputRecord(
                 executionCtx.workerThreadId);
 
             record.write(outputFieldNames.at(0), output);
-            ++rowIdx;
+            rowIdx += outputFieldNames.size();
         }
         executeChild(executionCtx, record);
     }

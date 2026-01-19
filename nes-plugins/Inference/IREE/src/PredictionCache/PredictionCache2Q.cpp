@@ -52,11 +52,11 @@ void PredictionCache2Q::movePredictionCacheEntryToLRUQueue(const nautilus::val<u
     *ageBit = nautilus::val<uint64_t>(0);
 }
 
-void PredictionCache2Q::updateValues(const PredictionCache::PredictionCacheUpdate& updateFunction)
+void PredictionCache2Q::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
-    const nautilus::val<uint64_t> fifoReplacementOffset = fifoReplacementIndex * sizeOfEntry;
+    const nautilus::val<uint64_t> fifoReplacementOffset = pos * sizeOfEntry;
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfFifoEntries + fifoReplacementOffset;
-    updateFunction(PredictionCacheEntryToReplace, lruQueueSize + fifoReplacementIndex);
+    updateFunction(PredictionCacheEntryToReplace, lruQueueSize + pos);
 }
 
 nautilus::val<uint64_t> PredictionCache2Q::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
@@ -110,6 +110,7 @@ nautilus::val<uint64_t> PredictionCache2Q::updateKeys(const nautilus::val<std::b
     const nautilus::val<uint64_t> fifoReplacementOffset = fifoReplacementIndex * sizeOfEntry;
     const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfFifoEntries + fifoReplacementOffset;
     updateFunction(predictionCacheEntryToReplace, lruQueueSize + fifoReplacementIndex);
+    replacementIndex = fifoReplacementIndex;
 
     /// Before returning the data structure, we need to update the replacement index.
     fifoReplacementIndex = (fifoReplacementIndex + 1) % fifoQueueSize;
@@ -168,6 +169,7 @@ PredictionCache2Q::getDataStructureRef(const nautilus::val<std::byte*>& record, 
     const nautilus::val<uint64_t> fifoReplacementOffset = fifoReplacementIndex * sizeOfEntry;
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfFifoEntries + fifoReplacementOffset;
     const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, lruQueueSize + fifoReplacementIndex);
+    replacementIndex = fifoReplacementIndex;
 
     /// Before returning the data structure, we need to update the replacement index.
     fifoReplacementIndex = (fifoReplacementIndex + 1) % fifoQueueSize;

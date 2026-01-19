@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <set>
 #include <vector>
 #include <iree/runtime/api.h>
 
@@ -30,9 +31,14 @@ public:
     , session(nullptr, &iree_runtime_session_release)
     , function{} {};
     void setup(iree_const_byte_span_t compiledModel);
-    void execute(std::string functionName, void* inputData, size_t inputSize, void* outputData);
+    iree_hal_buffer_view_t* execute(std::string functionName, void* inputData, size_t inputSize);
+
+    void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData);
+    void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices);
+
     void setInputShape(std::vector<size_t> inputShape);
     void setNDim(size_t nDim);
+
     void setInputDtype(iree_hal_element_types_t dtype);
     void setOutputDtype(iree_hal_element_types_t dtype);
 

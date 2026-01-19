@@ -37,23 +37,10 @@ nautilus::val<uint64_t*> PredictionCacheLRU::getAgeBit(const nautilus::val<uint6
     return ageBitRef;
 }
 
-void PredictionCacheLRU::updateValues(const PredictionCache::PredictionCacheUpdate& updateFunction)
+void PredictionCacheLRU::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
-    nautilus::val<uint64_t> maxAge = 0;
-    nautilus::val<uint64_t> maxAgeIndex = 0;
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
-    {
-        auto ageBit = getAgeBit(i);
-        const auto newAgeBit = nautilus::val<uint64_t>(*ageBit) + nautilus::val<uint64_t>(1);
-        if (newAgeBit > maxAge)
-        {
-            maxAge = newAgeBit;
-            maxAgeIndex = i;
-        }
-    }
-
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + maxAgeIndex * sizeOfEntry;
-    updateFunction(PredictionCacheEntryToReplace, maxAgeIndex);
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + pos * sizeOfEntry;
+    updateFunction(PredictionCacheEntryToReplace, pos);
 }
 
 nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
@@ -90,6 +77,7 @@ nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::
     /// Additionally, we have to reset the age bit of the replaced entry.
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + maxAgeIndex * sizeOfEntry;
     updateFunction(PredictionCacheEntryToReplace, maxAgeIndex);
+    replacementIndex = maxAgeIndex;
     *getAgeBit(maxAgeIndex) = 0;
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
@@ -129,6 +117,7 @@ PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     /// Additionally, we have to reset the age bit of the replaced entry.
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + maxAgeIndex * sizeOfEntry;
     const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, maxAgeIndex);
+    replacementIndex = maxAgeIndex;
     *getAgeBit(maxAgeIndex) = 0;
     return dataStructure;
 }

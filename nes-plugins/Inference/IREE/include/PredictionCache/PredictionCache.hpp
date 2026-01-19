@@ -13,6 +13,7 @@
 */
 
 #pragma once
+
 #include <functional>
 #include <IREEInferenceLocalState.hpp>
 #include <PredictionCache/PredictionCacheEntry.hpp>
@@ -20,7 +21,6 @@
 #include <Nautilus/Util.hpp>
 #include <nautilus/val.hpp>
 #include <nautilus/val_ptr.hpp>
-#include <utility>
 
 namespace NES
 {
@@ -54,17 +54,19 @@ public:
     getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction) = 0;
     virtual nautilus::val<uint64_t>
     updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction) = 0;
-    virtual void updateValues(const PredictionCache::PredictionCacheUpdate& updateFunction) = 0;
+    virtual void updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction) = 0;
 
     virtual nautilus::val<std::byte*> getRecord(const nautilus::val<uint64_t>& pos);
+    virtual nautilus::val<std::byte*> getDataStructure(const nautilus::val<uint64_t>& pos);
 
     nautilus::val<uint64_t*> getHitsRef();
     nautilus::val<uint64_t*> getMissesRef();
+    nautilus::val<uint64_t> getReplacementIndex();
 
     static constexpr uint64_t NOT_FOUND = UINT64_MAX;
+    nautilus::val<uint64_t> replacementIndex;
 
 protected:
-    virtual nautilus::val<std::byte*> getDataStructure(const nautilus::val<uint64_t>& pos);
     void incrementNumberOfHits();
     void incrementNumberOfMisses();
 

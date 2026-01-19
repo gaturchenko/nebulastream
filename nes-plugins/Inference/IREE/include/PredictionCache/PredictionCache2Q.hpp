@@ -1,5 +1,5 @@
 /*
-Licensed under the Apache License, Version 2.0 (the "License");
+    Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
 
@@ -13,6 +13,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 */
 
 #pragma once
+
 #include <PredictionCache/PredictionCache.hpp>
 
 namespace NES
@@ -79,7 +80,7 @@ public:
     nautilus::val<std::byte*>
     getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction) override;
     nautilus::val<uint64_t> updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
-    void updateValues(const PredictionCache::PredictionCacheUpdate& updateFunction) override;
+    void updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
 
 private:
     /// Moves the entry from fifoPos to lruPos and sets the age bit to 0

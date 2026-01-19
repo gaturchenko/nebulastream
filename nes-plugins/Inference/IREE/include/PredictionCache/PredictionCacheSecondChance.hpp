@@ -13,6 +13,7 @@
 */
 
 #pragma once
+
 #include <PredictionCache/PredictionCacheFIFO.hpp>
 
 namespace NES
@@ -53,7 +54,7 @@ public:
     nautilus::val<std::byte*>
     getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction) override;
     nautilus::val<uint64_t> updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
-    void updateValues(const PredictionCache::PredictionCacheUpdate& updateFunction) override;
+    void updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
 
 private:
     nautilus::val<bool*> getSecondChanceBit(const nautilus::val<uint64_t>& pos);

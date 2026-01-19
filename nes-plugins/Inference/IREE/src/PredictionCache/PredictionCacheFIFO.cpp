@@ -14,10 +14,8 @@
 
 #include <PredictionCache/PredictionCacheFIFO.hpp>
 
-#include <cstdint>
 #include <Nautilus/Interface/TimestampRef.hpp>
 #include <PredictionCache/PredictionCache.hpp>
-#include <Time/Timestamp.hpp>
 #include <nautilus/val.hpp>
 
 namespace NES
@@ -30,14 +28,14 @@ PredictionCacheFIFO::PredictionCacheFIFO(
     const nautilus::val<uint64_t*>& hitsRef,
     const nautilus::val<uint64_t*>& missesRef,
     const nautilus::val<size_t>& inputSize)
-    : PredictionCache(operatorHandler, numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize), replacementIndex(0)
+    : PredictionCache(operatorHandler, numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize), localReplacementIndex(0)
 {
 }
 
-void PredictionCacheFIFO::updateValues(const PredictionCache::PredictionCacheUpdate& updateFunction)
+void PredictionCacheFIFO::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
-    const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + replacementIndex * sizeOfEntry;
-    updateFunction(predictionCacheEntryToReplace, replacementIndex);
+    const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + pos * sizeOfEntry;
+    updateFunction(predictionCacheEntryToReplace, pos);
 }
 
 nautilus::val<uint64_t> PredictionCacheFIFO::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
@@ -53,11 +51,12 @@ nautilus::val<uint64_t> PredictionCacheFIFO::updateKeys(const nautilus::val<std:
     incrementNumberOfMisses();
 
     /// As we are in the FIFO cache, we need to replace the oldest entry with the new one.
-    const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + replacementIndex * sizeOfEntry;
-    updateFunction(predictionCacheEntryToReplace, replacementIndex);
+    const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
+    updateFunction(predictionCacheEntryToReplace, localReplacementIndex);
+    replacementIndex = localReplacementIndex;
 
     /// Before returning the data structure, we need to update the replacement index.
-    replacementIndex = (replacementIndex + 1) % numberOfEntries;
+    localReplacementIndex = (localReplacementIndex + 1) % numberOfEntries;
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
@@ -75,11 +74,12 @@ PredictionCacheFIFO::getDataStructureRef(const nautilus::val<std::byte*>& record
     incrementNumberOfMisses();
 
     /// As we are in the FIFO cache, we need to replace the oldest entry with the new one.
-    const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + replacementIndex * sizeOfEntry;
-    const auto dataStructure = replacementFunction(predictionCacheEntryToReplace, replacementIndex);
+    const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
+    const auto dataStructure = replacementFunction(predictionCacheEntryToReplace, localReplacementIndex);
+    replacementIndex = localReplacementIndex;
 
     /// Before returning the data structure, we need to update the replacement index.
-    replacementIndex = (replacementIndex + 1) % numberOfEntries;
+    localReplacementIndex = (localReplacementIndex + 1) % numberOfEntries;
     return dataStructure;
 }
 }

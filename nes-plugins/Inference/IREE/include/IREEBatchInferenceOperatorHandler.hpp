@@ -84,6 +84,7 @@ public:
     };
 
     const int8_t* getStartOfPredictionCacheEntries(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const override;
+    uint64_t getBatchSize(){ return batchSize; }
 
     mutable uint64_t batchId = 0;
     mutable uint64_t tuplesSeen = 0;

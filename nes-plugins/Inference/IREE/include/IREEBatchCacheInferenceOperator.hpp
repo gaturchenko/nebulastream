@@ -64,7 +64,7 @@ private:
 
 protected:
     template <class T>
-    nautilus::val<std::byte*> performInference(
+    void performInference(
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
         ExecutionContext& executionCtx) const;
@@ -73,8 +73,8 @@ protected:
     void writeOutputRecord(
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
-        ExecutionContext& executionCtx,
-        const nautilus::val<std::byte*>&) const;
+        ExecutionContext& executionCtx) const;
+        // const nautilus::val<std::byte*>& prediction) const;
 };
 
 }

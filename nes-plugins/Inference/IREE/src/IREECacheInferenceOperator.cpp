@@ -26,7 +26,6 @@
 #include <QueryExecutionConfiguration.hpp>
 #include <Runtime/AbstractBufferProvider.hpp>
 #include <nautilus/function.hpp>
-#include <ranges>
 
 namespace NES::QueryCompilation::PhysicalOperators
 {
@@ -118,7 +117,7 @@ nautilus::val<std::byte*> IREECacheInferenceOperator::performInference(
     {
         for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
         {
-            invoke(
+            nautilus::invoke(
                 IREECacheInference::addValueToModelProxy<T>,
                 nautilus::val<int>(i),
                 inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
@@ -130,7 +129,7 @@ nautilus::val<std::byte*> IREECacheInferenceOperator::performInference(
     {
         VarVal value = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
         auto varSizedValue = value.cast<VariableSizedData>();
-        invoke(
+        nautilus::invoke(
             IREECacheInference::copyVarSizedToModelProxy,
             varSizedValue.getContent(),
             IREECacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
@@ -138,7 +137,7 @@ nautilus::val<std::byte*> IREECacheInferenceOperator::performInference(
             executionCtx.workerThreadId);
     }
 
-    auto inputDataVal = invoke(
+    auto inputDataVal = nautilus::invoke(
         +[](void* inferModelHandler, WorkerThreadId thread)
         {
             auto handler = static_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
@@ -151,7 +150,7 @@ nautilus::val<std::byte*> IREECacheInferenceOperator::performInference(
         [&](
             const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
         {
-            return invoke(
+            return nautilus::invoke(
                 +[](PredictionCacheEntry* predictionCacheEntry, void* opHandlerPtr, WorkerThreadId thread)
                 {
                     auto handler = static_cast<IREEInferenceOperatorHandler*>(opHandlerPtr);
@@ -185,7 +184,7 @@ void IREECacheInferenceOperator::writeOutputRecord(
     {
         for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
         {
-            const VarVal result = VarVal(invoke(
+            const VarVal result = VarVal(nautilus::invoke(
                 IREECacheInference::getValueFromModelProxy<T>,
                 nautilus::val<int>(i), inferModelHandler, executionCtx.workerThreadId, prediction));
             record.write(outputFieldNames.at(i), result);
@@ -194,7 +193,7 @@ void IREECacheInferenceOperator::writeOutputRecord(
     else
     {
         auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
-        invoke(
+        nautilus::invoke(
             IREECacheInference::copyVarSizedFromModelProxy,
             output.getContent(), output.getContentSize(), inferModelHandler, executionCtx.workerThreadId, prediction);
         record.write(outputFieldNames.at(0), output);
@@ -253,7 +252,7 @@ void IREECacheInferenceOperator::execute(ExecutionContext& executionCtx, NES::Re
 void IREECacheInferenceOperator::setup(ExecutionContext& executionCtx, CompilationContext&) const
 {
     const auto globalOperatorHandler = executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex);
-    invoke(
+    nautilus::invoke(
         +[](OperatorHandler* opHandler, PipelineExecutionContext* pec) { opHandler->start(*pec, 0); },
         globalOperatorHandler,
         executionCtx.pipelineContext);
@@ -281,7 +280,7 @@ void IREECacheInferenceOperator::setup(ExecutionContext& executionCtx, Compilati
             break;
     }
 
-    invoke(
+    nautilus::invoke(
         +[](IREEInferenceOperatorHandler* opHandler,
             AbstractBufferProvider* bufferProvider,
             const uint64_t sizeOfEntryVal,
@@ -298,14 +297,14 @@ void IREECacheInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
     PhysicalOperatorConcept::open(executionCtx, recordBuffer);
     const auto globalOperatorHandler = executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex);
 
-    const auto startOfEntries = invoke(
+    const auto startOfEntries = nautilus::invoke(
         +[](const IREEInferenceOperatorHandler* opHandler, const WorkerThreadId workerThreadId)
         {
             return opHandler->getStartOfPredictionCacheEntries(
                 IREEInferenceOperatorHandler::StartPredictionCacheEntriesIREEInference{workerThreadId});
         }, globalOperatorHandler, executionCtx.workerThreadId);
 
-    const auto inputSize = invoke(
+    const auto inputSize = nautilus::invoke(
         +[](void* inferModelHandler, WorkerThreadId thread)
         {
             auto handler = static_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
@@ -325,7 +324,7 @@ void IREECacheInferenceOperator::close(ExecutionContext& executionCtx, RecordBuf
 
 void IREECacheInferenceOperator::terminate(ExecutionContext& executionCtx) const
 {
-    invoke(
+    nautilus::invoke(
         +[](OperatorHandler* opHandler, PipelineExecutionContext* pec) { opHandler->stop(QueryTerminationType::Graceful, *pec); },
         executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex),
         executionCtx.pipelineContext);
