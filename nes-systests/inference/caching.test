@@ -1,8 +1,8 @@
-GlobalConfiguration worker.query_engine.number_of_worker_threads: [1]
-GlobalConfiguration worker.default_query_execution.operator_buffer_size: [230]
+#GlobalConfiguration worker.default_query_execution.operator_buffer_size: [190]
+GlobalConfiguration worker.default_query_execution.inference.number_of_entries_prediction_cache: [3]
 
-CREATE LOGICAL SOURCE streamFloat(p1 FLOAT32, p2 FLOAT32, p3 FLOAT32, p4 FLOAT32);
-CREATE PHYSICAL SOURCE FOR streamFloat TYPE File;
+CREATE LOGICAL SOURCE streamFloat32(f1 FLOAT32, f2 FLOAT32, f3 FLOAT32, f4 FLOAT32);
+CREATE PHYSICAL SOURCE FOR streamFloat32 TYPE File;
 ATTACH INLINE
 1.0,10.0,100.0,1000.0
 2.0,20.0,200.0,2000.0
@@ -25,39 +25,385 @@ ATTACH INLINE
 12.0,120.0,1200.0,12000.0
 11.0,110.0,1100.0,11000.0
 
-CREATE SINK classificationThreeSeparate(setosa FLOAT32, versicolor FLOAT32, virginica FLOAT32) TYPE File;
+CREATE SINK classificationThreeSeparate(p1 FLOAT32, p2 FLOAT32, p3 FLOAT32) TYPE File;
 
-Configuration worker.default_query_execution.inference.batch_size: [1]
-Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
-Configuration worker.default_query_execution.inference.number_of_entries_prediction_cache: [4]
+CREATE LOGICAL SOURCE solarPowerSource(timestamp UINT64, value FLOAT32);
+CREATE PHYSICAL SOURCE FOR solarPowerSource TYPE File;
+ATTACH INLINE
+1574897607000,94.1
+1574897611000,94.1
+1574897615000,93.2
+1574897619000,93.2
+1574897623000,92.1
+1574897627000,92.1
+1574897631000,92.1
+1574897635000,94.5
+1574897639000,94.5
+1574897643000,93.2
+1574897647000,93.2
+1574897651000,93.2
+1574897655000,94.5
+1574897659000,94.5
+1574897663000,93.0
+1574897667000,93.0
+1574897671000,93.0
+1574897675000,97.6
+1574897679000,97.6
+1574897683000,96.1
+1574897687000,96.1
+1574897691000,96.1
+1574897695000,96.1
+1574897699000,96.1
+1574897703000,94.6
+1574897707000,94.6
+1574897711000,94.6
+1574897715000,95.7
+1574897719000,95.7
+1574897723000,95.7
 
-CREATE MODEL irisCache(
-    PATH "TESTDATA/model/dummy_model.onnx"
+CREATE SINK solarPowerVarsizedChecksum(powerProdNext8Sec VARSIZED) TYPE Checksum;
+
+CREATE MODEL linearFloat32(
+    PATH "TESTDATA/model/linear_f32.onnx"
     INPUTS (FLOAT32, FLOAT32, FLOAT32, FLOAT32)
-    OUTPUTS (setosa FLOAT32, versicolor FLOAT32, virginica FLOAT32)
+    OUTPUTS (p1 FLOAT32, p2 FLOAT32, p3 FLOAT32)
 );
 
-SELECT setosa, versicolor, virginica
-FROM (SELECT INFER_MODEL(irisCache, (p1,p2,p3,p4)) FROM streamFloat)
+CREATE MODEL dLinear(
+    PATH "TESTDATA/model/solar_power/pretrained/dlinear/dlinear_solar_size_60_stride_4.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext8Sec VARSIZED)
+);
+
+# FIFO
+Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
 INTO classificationThreeSeparate;
 ----
-1.0,1.0,10.0
-2.0,2.0,20.0
-1.0,1.0,10.0
-3.0,3.0,30.0
-2.0,2.0,20.0
-4.0,4.0,40.0
-5.0,5.0,50.0
-4.0,4.0,40.0
-6.0,6.0,60.0
-5.0,5.0,50.0
-7.0,7.0,70.0
-8.0,8.0,80.0
-7.0,7.0,70.0
-9.0,9.0,90.0
-8.0,8.0,80.0
-10.0,10.0,100.0
-11.0,11.0,110.0
-10.0,10.0,100.0
-12.0,12.0,120.0
-11.0,11.0,110.0
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.batch_size: [4]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
+INTO classificationThreeSeparate;
+----
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480
+
+Configuration worker.query_engine.number_of_worker_threads: [1]
+Configuration worker.default_query_execution.inference.batch_size: [2]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480
+
+# LFU
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LFU]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
+INTO classificationThreeSeparate;
+----
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.batch_size: [4]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LFU]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
+INTO classificationThreeSeparate;
+----
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LFU]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480
+
+Configuration worker.default_query_execution.inference.batch_size: [2]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LFU]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480
+
+# LRU
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LRU]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
+INTO classificationThreeSeparate;
+----
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.batch_size: [4]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LRU]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
+INTO classificationThreeSeparate;
+----
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LRU]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480
+
+Configuration worker.default_query_execution.inference.batch_size: [2]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [LRU]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480
+
+# Second chance
+Configuration worker.default_query_execution.inference.prediction_cache_type: [SECOND_CHANCE]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
+INTO classificationThreeSeparate;
+----
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.batch_size: [4]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [SECOND_CHANCE]
+
+SELECT p1, p2, p3
+FROM (SELECT INFER_MODEL(linearFloat32, (f1, f2, f3, f4)) FROM streamFloat32)
+INTO classificationThreeSeparate;
+----
+9630.0,10741.0,11852.0
+19260.0,21482.0,23704.0
+9630.0,10741.0,11852.0
+28890.0,32223.0,35556.0
+19260.0,21482.0,23704.0
+38520.0,42964.0,47408.0
+48150.0,53705.0,59260.0
+38520.0,42964.0,47408.0
+57780.0,64446.0,71112.0
+48150.0,53705.0,59260.0
+67410.0,75187.0,82964.0
+77040.0,85928.0,94816.0
+67410.0,75187.0,82964.0
+86670.0,96669.0,106668.0
+77040.0,85928.0,94816.0
+96300.0,107410.0,118520.0
+105930.0,118151.0,130372.0
+96300.0,107410.0,118520.0
+115560.0,128892.0,142224.0
+105930.0,118151.0,130372.0
+
+Configuration worker.default_query_execution.inference.prediction_cache_type: [SECOND_CHANCE]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480
+
+Configuration worker.default_query_execution.inference.batch_size: [2]
+Configuration worker.default_query_execution.inference.prediction_cache_type: [SECOND_CHANCE]
+
+SELECT powerProdNext8Sec FROM (
+    SELECT INFER_MODEL(dLinear, (value_60_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_60_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+    )
+) INTO solarPowerVarsizedChecksum;
+----
+44,4480

@@ -52,6 +52,14 @@ void IREEBatchInferenceOperatorHandler::stop(QueryTerminationType, PipelineExecu
     threadLocalAdapters.clear();
 }
 
+void IREEBatchInferenceOperatorHandler::allocateBuffers(size_t tupleSize)
+{
+    for (size_t threadId = 0; threadId < numberOfWorkerThreads; ++threadId)
+    {
+        threadLocalAdapters.at(threadId)->allocateBuffers(tupleSize);
+    }
+}
+
 const Nebuli::Inference::Model& IREEBatchInferenceOperatorHandler::getModel() const
 {
     return model;

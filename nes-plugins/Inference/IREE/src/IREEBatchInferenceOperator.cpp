@@ -44,18 +44,20 @@ T getValueFromModelProxy(int index, void* inferModelHandler, WorkerThreadId thre
     return adapter->getResultAt<T>(index);
 }
 
-void copyVarSizedToModelProxy(std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
+template <class T>
+void copyVarSizedToModelProxy(int index, std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
 {
     auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
     auto adapter = handler->getIREEAdapter(thread);
-    adapter->addModelInput(std::span{content, size});
+    adapter->addModelInputBatch<T>(index, std::span{content, size});
 }
 
-void copyVarSizedFromModelProxy(std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
+template <class T>
+void copyVarSizedFromModelProxy(int index, std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
 {
     auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
     auto adapter = handler->getIREEAdapter(thread);
-    adapter->copyResultTo(std::span{content, size});
+    adapter->copyResultToBatch<T>(index, std::span{content, size});
 }
 
 template <class T>
@@ -130,7 +132,8 @@ void IREEBatchInferenceOperator::performInference(
             VarVal value = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
             auto varSizedValue = value.cast<VariableSizedData>();
             nautilus::invoke(
-                IREEBatchInference::copyVarSizedToModelProxy,
+                IREEBatchInference::copyVarSizedToModelProxy<T>,
+                rowIdx,
                 varSizedValue.getContent(),
                 IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
                 operatorHandler,
@@ -175,7 +178,8 @@ void IREEBatchInferenceOperator::writeOutputRecord(
             auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
 
             nautilus::invoke(
-                IREEBatchInference::copyVarSizedFromModelProxy,
+                IREEBatchInference::copyVarSizedFromModelProxy<T>,
+                rowIdx,
                 output.getContent(),
                 output.getContentSize(),
                 operatorHandler,

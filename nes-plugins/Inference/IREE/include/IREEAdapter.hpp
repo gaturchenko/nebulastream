@@ -26,17 +26,126 @@ namespace NES
 class IREEAdapter
 {
 public:
+    enum InputBufferSizeReduction : uint8_t
+    {
+        NONE = 1,
+        LOW = 2,
+        MEDIUM = 4,
+        HIGH = 8
+    };
+
     static std::shared_ptr<IREEAdapter> create();
 
     IREEAdapter() = default;
 
-    void initializeModel(Nebuli::Inference::Model& model, uint64_t batch_size);
+    void initializeModel(Nebuli::Inference::Model& model, uint64_t batchSize);
 
     template <class T>
     void addModelInput(size_t index, T value)
     {
         PRECONDITION(index < inputSize / sizeof(T), "Index is too large");
         std::bit_cast<T*>(inputData.get())[index] = value;
+    }
+
+    void addModelInput(std::span<std::byte> content)
+    {
+        std::ranges::copy_n(content.data(), std::min(content.size(), inputSize), inputData.get());
+    }
+
+    template <class T>
+    void addModelInputPartial(T value)
+    {
+        const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
+        const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
+        const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
+        
+        if (bytesProcessed < thresholdHigh)
+        {
+            currentReductionLevel = HIGH;
+            std::bit_cast<T*>(inputDataEighth.get())[bytesProcessed / sizeof(T)] = value;
+            bytesProcessed += sizeof(T);
+        }
+        else if (bytesProcessed < thresholdMedium)
+        {
+            if (currentReductionLevel != MEDIUM)
+            {
+                std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
+                currentReductionLevel = MEDIUM;
+            }
+            std::bit_cast<T*>(inputDataFourth.get())[bytesProcessed / sizeof(T)] = value;
+            bytesProcessed += sizeof(T);
+        }
+        else if (bytesProcessed < thresholdLow)
+        {
+            if (currentReductionLevel != LOW)
+            {
+                std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
+                currentReductionLevel = LOW;
+            }
+            std::bit_cast<T*>(inputDataHalf.get())[bytesProcessed / sizeof(T)] = value;
+            bytesProcessed += sizeof(T);
+        }
+        else
+        {
+            if (currentReductionLevel != NONE)
+            {
+                std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
+                currentReductionLevel = NONE;
+            }
+            std::bit_cast<T*>(inputData.get())[bytesProcessed / sizeof(T)] = value;
+            bytesProcessed += sizeof(T);
+        }
+    }
+
+    template <class T>
+    void addModelInputBatchPartial(size_t index, std::span<std::byte> content)
+    {
+        const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
+        const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
+        const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
+
+        if (bytesProcessed < thresholdHigh && bytesProcessed + content.size() <= thresholdHigh)
+        {
+            currentReductionLevel = HIGH;
+            std::ranges::copy_n(content.data(), content.size(), inputDataEighth.get() + index * sizeof(T));
+            bytesProcessed += content.size();
+        }
+        else if (bytesProcessed < thresholdMedium && bytesProcessed + content.size() <= thresholdMedium)
+        {
+            if (currentReductionLevel != MEDIUM)
+            {
+                std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
+                currentReductionLevel = MEDIUM;
+            }
+            std::ranges::copy_n(content.data(), content.size(), inputDataFourth.get() + index * sizeof(T));
+            bytesProcessed += content.size();
+        }
+        else if (bytesProcessed < thresholdLow && bytesProcessed + content.size() <= thresholdLow)
+        {
+            if (currentReductionLevel != LOW)
+            {
+                std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
+                currentReductionLevel = LOW;
+            }
+            std::ranges::copy_n(content.data(), content.size(), inputDataHalf.get() + index * sizeof(T));
+            bytesProcessed += content.size();
+        }
+        else
+        {
+            if (currentReductionLevel != NONE)
+            {
+                std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
+                currentReductionLevel = NONE;
+            }
+            std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * sizeof(T));
+            bytesProcessed += content.size();
+        }
+    }
+
+    template <class T>
+    void addModelInputBatch(size_t index, std::span<std::byte> content)
+    {
+        std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * sizeof(T));
     }
 
     template <class T>
@@ -48,30 +157,58 @@ public:
 
     void copyResultTo(std::span<std::byte> content)
     {
+        PRECONDITION(outputSize == content.size(), "Output size does not match");
         std::ranges::copy_n(outputData.get(), std::min(content.size(), outputSize), content.data());
     }
 
-    void addModelInput(std::span<std::byte> content)
+    template <class T>
+    void copyResultToBatch(size_t index, std::span<std::byte> content)
     {
-        std::ranges::copy_n(content.data(), std::min(content.size(), inputSize), inputData.get());
+        std::ranges::copy_n(outputData.get() + index * sizeof(T), content.size(), content.data());
     }
 
     template <class T>
     void infer()
     {
-        auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize);
+        auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
         runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()));
     }
 
     template <class T>
-    size_t inferCombine(size_t outputSize)
+    size_t inferCombine(size_t outputSize, size_t outputFields)
     {
-        auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize);
+        iree_hal_buffer_view_t* ireeOutputBV = nullptr;
+        switch (currentReductionLevel)
+        {
+            default:
+                ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
+                break;
+            case LOW:
+                ireeOutputBV = runtimeWrapper.execute(functionName, inputDataHalf.get(), std::ceil(1 / float(LOW) * inputSize), currentReductionLevel);
+                break;
+            case MEDIUM:
+                ireeOutputBV = runtimeWrapper.execute(functionName, inputDataFourth.get(), std::ceil(1 / float(MEDIUM) * inputSize), currentReductionLevel);
+                break;
+            case HIGH:
+                ireeOutputBV = runtimeWrapper.execute(functionName, inputDataEighth.get(), std::ceil(1 / float(HIGH) * inputSize), currentReductionLevel);
+                break;
+        }
+        runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()), sizeof(T), outputSize, missIndices, outputFields);
 
-        runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()), sizeof(T), outputSize, missIndices);
         missIndices.clear();
+        currentReductionLevel = NONE;
+        bytesProcessed = 0;
 
         return cacheMap.size();
+    }
+
+    void allocateBuffers(size_t tupleSize)
+    {
+        cacheProbeTuple = std::make_unique<std::byte[]>(tupleSize);
+
+        inputDataHalf = std::make_unique<std::byte[]>(std::ceil(1 / float(LOW) * inputSize));
+        inputDataFourth = std::make_unique<std::byte[]>(std::ceil(1 / float(MEDIUM) * inputSize));
+        inputDataEighth = std::make_unique<std::byte[]>(std::ceil(1 / float(HIGH) * inputSize));
     }
 
     void updateCacheMapIndices(uint64_t keyIdx, int rowIdx)
@@ -107,9 +244,17 @@ public:
         return missIndices.size();
     }
 
+    /// input for IREE runtime
     std::unique_ptr<std::byte[]> inputData{};
     std::unique_ptr<std::byte[]> outputData{};
+
+    /// helper objects for the BatchCache operator
     std::unique_ptr<std::byte[]> cacheProbeTuple{};
+    std::unique_ptr<std::byte[]> inputDataHalf{};
+    std::unique_ptr<std::byte[]> inputDataFourth{};
+    std::unique_ptr<std::byte[]> inputDataEighth{};
+    InputBufferSizeReduction currentReductionLevel = NONE;
+    uint64_t bytesProcessed = 0;
 
     size_t inputSize;
     size_t outputSize;

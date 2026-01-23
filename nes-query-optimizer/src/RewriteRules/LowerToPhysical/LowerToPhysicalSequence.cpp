@@ -64,7 +64,7 @@ RewriteRuleResultSubgraph LowerToPhysicalSequence::apply(LogicalOperator logical
     }
 
     auto operatorHandlerId = getNextOperatorHandlerId();
-    auto handler = std::make_shared<Runtime::Execution::Operators::SequenceOperatorHandler>();
+    auto handler = std::make_shared<SequenceOperatorHandler>();
 
     if (sequence.getChildren().at(0).tryGetAs<SourceDescriptorLogicalOperator>().has_value())
     {
@@ -77,7 +77,7 @@ RewriteRuleResultSubgraph LowerToPhysicalSequence::apply(LogicalOperator logical
         }
     }
 
-    auto physicalOperator = Runtime::Execution::Operators::SequencePhysicalOperator(
+    auto physicalOperator = SequencePhysicalOperator(
             operatorHandlerId, ScanPhysicalOperator(memoryProvider));
 
     auto wrapper = std::make_shared<PhysicalOperatorWrapper>(

@@ -14,14 +14,13 @@
 
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <Runtime/Execution/OperatorHandler.hpp>
 #include <Runtime/QueryTerminationType.hpp>
 #include <Runtime/TupleBuffer.hpp>
 #include <Sequencing/Sequencer.hpp>
 
-namespace NES::Runtime::Execution::Operators
+namespace NES
 {
 
 class SequenceOperatorHandler final : public OperatorHandler

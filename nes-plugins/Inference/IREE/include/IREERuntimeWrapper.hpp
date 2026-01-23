@@ -27,14 +27,13 @@ public:
     IREERuntimeWrapper()
     : nDim(0)
     , instance(nullptr, &iree_runtime_instance_release)
-    , device(nullptr, &iree_hal_device_release)
     , session(nullptr, &iree_runtime_session_release)
     , function{} {};
     void setup(iree_const_byte_span_t compiledModel);
-    iree_hal_buffer_view_t* execute(std::string functionName, void* inputData, size_t inputSize);
+    iree_hal_buffer_view_t* execute(std::string functionName, void* inputData, size_t inputSize, uint8_t scaleFactor);
 
     void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData);
-    void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices);
+    void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices, size_t outputFields);
 
     void setInputShape(std::vector<size_t> inputShape);
     void setNDim(size_t nDim);
@@ -47,8 +46,8 @@ private:
     size_t nDim;
     iree_hal_element_types_t inputDtype;
     iree_hal_element_types_t outputDtype;
+
     std::unique_ptr<iree_runtime_instance_t, decltype(&iree_runtime_instance_release)> instance;
-    std::unique_ptr<iree_hal_device_t, decltype(&iree_hal_device_release)> device;
     std::unique_ptr<iree_runtime_session_t, decltype(&iree_runtime_session_release)> session;
     iree_vm_function_t function;
 };

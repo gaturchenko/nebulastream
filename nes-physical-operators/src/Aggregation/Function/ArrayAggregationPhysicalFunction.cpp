@@ -88,7 +88,7 @@ Record ArrayAggregationPhysicalFunction::lower(
         },
         pagedVectorPtr);
 
-    auto entrySize = bufferRefPagedVector->getMemoryLayout()->getSchema().getSizeOfSchemaInBytes();
+    auto entrySize = inputType.getSizeInBytes();
 
     auto variableSized = pipelineMemoryProvider.arena.allocateVariableSizedData(numberOfEntries * entrySize);
 

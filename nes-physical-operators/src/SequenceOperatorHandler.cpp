@@ -21,7 +21,7 @@
 #include <Runtime/TupleBuffer.hpp>
 #include <ErrorHandling.hpp>
 
-namespace NES::Runtime::Execution::Operators
+namespace NES
 {
 
 std::optional<TupleBuffer*> SequenceOperatorHandler::getNextBuffer(TupleBuffer* tupleBuffer)

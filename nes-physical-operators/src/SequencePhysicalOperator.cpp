@@ -25,7 +25,7 @@
 #include <SequenceOperatorHandler.hpp>
 #include <function.hpp>
 
-namespace NES::Runtime::Execution::Operators
+namespace NES
 {
 
 void SequencePhysicalOperator::open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const

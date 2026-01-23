@@ -14,14 +14,12 @@
 
 #pragma once
 
-#include <cstddef>
-#include <memory>
 #include <utility>
 #include <Nautilus/Interface/RecordBuffer.hpp>
 #include <PhysicalOperator.hpp>
 #include <ScanPhysicalOperator.hpp>
 
-namespace NES::Runtime::Execution::Operators
+namespace NES
 {
 
 /**
