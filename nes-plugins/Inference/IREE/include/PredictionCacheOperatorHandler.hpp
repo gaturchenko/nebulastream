@@ -43,8 +43,12 @@ public:
 
     virtual const int8_t* getStartOfPredictionCacheEntries(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const = 0;
 
+    virtual uint64_t getReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const = 0;
+    virtual void setReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs, uint64_t idx) = 0;
+
 protected:
     std::vector<TupleBuffer> predictionCacheEntriesBufferForWorkerThreads;
+    std::vector<uint64_t> predictionCacheReplacementPosForWorkerThreads;
     std::atomic<bool> hasPredictionCacheCreated{false};
 };
 

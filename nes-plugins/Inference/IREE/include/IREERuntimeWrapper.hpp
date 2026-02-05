@@ -33,7 +33,7 @@ public:
     iree_hal_buffer_view_t* execute(std::string functionName, void* inputData, size_t inputSize, uint8_t scaleFactor);
 
     void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData);
-    void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices, size_t outputFields);
+    void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices, size_t outputFields, bool isVarSizedOutput);
 
     void setInputShape(std::vector<size_t> inputShape);
     void setNDim(size_t nDim);

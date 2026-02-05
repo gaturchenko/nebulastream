@@ -21,7 +21,6 @@
 
 namespace NES
 {
-
 IREEBatchInferenceOperatorHandler::IREEBatchInferenceOperatorHandler(
     const std::vector<OriginId>& inputOrigins,
     OriginId outputOriginId,
@@ -94,7 +93,7 @@ void IREEBatchInferenceOperatorHandler::emitBatchesToProbe(
     batch.setState(BatchState::MARKED_AS_EMITTED);
 
     NES_TRACE(
-        "Emitted batch {} with watermarkTs {} sequenceNumber {} originId {} tuples {}",
+        "Emitted batch {} with watermarkTs {} {} originId {} tuples {}",
         batch.batchId,
         tupleBuffer.getWatermark(),
         tupleBuffer.getSequenceDataAsString(),
@@ -181,18 +180,42 @@ void IREEBatchInferenceOperatorHandler::allocatePredictionCacheEntries(
         INVARIANT(bufferOpt.has_value(), "Buffer provider should return a buffer");
         std::ranges::fill(bufferOpt.value().getAvailableMemoryArea(), std::byte{0});
         predictionCacheEntriesBufferForWorkerThreads.emplace_back(bufferOpt.value());
+        predictionCacheReplacementPosForWorkerThreads.emplace_back(uint64_t{0});
     }
 }
 
 const int8_t* IREEBatchInferenceOperatorHandler::getStartOfPredictionCacheEntries(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const
 {
-    PRECONDITION(threadLocalAdapters.size() > 0, "Number of worker threads should be set before calling this method");
+    PRECONDITION(!threadLocalAdapters.empty(), "Number of worker threads should be set before calling this method");
     const auto startPredictionCacheEntriesIREE = dynamic_cast<const StartPredictionCacheEntriesIREEInference&>(startPredictionCacheEntriesArgs);
     const auto pos = startPredictionCacheEntriesIREE.workerThreadId % predictionCacheEntriesBufferForWorkerThreads.size();
     INVARIANT(
         not predictionCacheEntriesBufferForWorkerThreads.empty() and pos < predictionCacheEntriesBufferForWorkerThreads.size(),
         "Position should be smaller than the size of the predictionCacheEntriesBufferForWorkerThreads");
     return predictionCacheEntriesBufferForWorkerThreads.at(pos).getAvailableMemoryArea<int8_t>().data();
+}
+
+uint64_t IREEBatchInferenceOperatorHandler::getReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const
+{
+    PRECONDITION(!threadLocalAdapters.empty(), "Number of worker threads should be set before calling this method");
+    const auto startPredictionCacheEntriesIREE = dynamic_cast<const StartPredictionCacheEntriesIREEInference&>(startPredictionCacheEntriesArgs);
+    const auto pos = startPredictionCacheEntriesIREE.workerThreadId % predictionCacheReplacementPosForWorkerThreads.size();
+    INVARIANT(
+        not predictionCacheReplacementPosForWorkerThreads.empty() and pos < predictionCacheReplacementPosForWorkerThreads.size(),
+        "Position should be smaller than the size of the predictionCacheReplacementPosForWorkerThreads");
+    return predictionCacheReplacementPosForWorkerThreads.at(pos);
+}
+
+void
+IREEBatchInferenceOperatorHandler::setReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs, uint64_t idx)
+{
+    PRECONDITION(!threadLocalAdapters.empty(), "Number of worker threads should be set before calling this method");
+    const auto startPredictionCacheEntriesIREE = dynamic_cast<const StartPredictionCacheEntriesIREEInference&>(startPredictionCacheEntriesArgs);
+    const auto pos = startPredictionCacheEntriesIREE.workerThreadId % predictionCacheReplacementPosForWorkerThreads.size();
+    INVARIANT(
+        not predictionCacheReplacementPosForWorkerThreads.empty() and pos < predictionCacheReplacementPosForWorkerThreads.size(),
+        "Position should be smaller than the size of the predictionCacheReplacementPosForWorkerThreads");
+    predictionCacheReplacementPosForWorkerThreads[pos] = idx;
 }
 
 std::function<std::vector<std::shared_ptr<Slice>>(SliceStart, SliceEnd)>

@@ -86,6 +86,10 @@ public:
     };
 
     const int8_t* getStartOfPredictionCacheEntries(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const override;
+
+    uint64_t getReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const override;
+    void setReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs, uint64_t idx) override;
+
     uint64_t getBatchSize(){ return batchSize; }
 
     mutable uint64_t batchId = 0;

@@ -30,6 +30,22 @@ PredictionCacheLRU::PredictionCacheLRU(
 {
 }
 
+nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
+{
+    nautilus::val<uint64_t> maxAge = 0;
+    nautilus::val<uint64_t> maxAgeIndex = 0;
+    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
+    {
+        auto ageBit = getAgeBit(i);
+        if (*ageBit > maxAge)
+        {
+            maxAge = *ageBit;
+            maxAgeIndex = i;
+        }
+    }
+    return maxAgeIndex;
+}
+
 nautilus::val<uint64_t*> PredictionCacheLRU::getAgeBit(const nautilus::val<uint64_t>& pos)
 {
     const auto PredictionCacheEntry = startOfEntries + pos * sizeOfEntry;

@@ -63,6 +63,9 @@ public:
     nautilus::val<uint64_t*> getMissesRef();
     nautilus::val<uint64_t> getReplacementIndex();
 
+    virtual nautilus::val<uint64_t> getReplacementPos() = 0;
+    virtual void setReplacementPos(nautilus::val<uint64_t> pos) = 0;
+
     static constexpr uint64_t NOT_FOUND = UINT64_MAX;
     nautilus::val<uint64_t> replacementIndex;
 

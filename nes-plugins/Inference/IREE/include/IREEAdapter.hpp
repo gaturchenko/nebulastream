@@ -59,93 +59,91 @@ public:
         const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
         const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
         
-        if (bytesProcessed < thresholdHigh)
+        if (inputDataEighth != nullptr && bytesProcessed < thresholdHigh)
         {
             currentReductionLevel = HIGH;
             std::bit_cast<T*>(inputDataEighth.get())[bytesProcessed / sizeof(T)] = value;
             bytesProcessed += sizeof(T);
         }
-        else if (bytesProcessed < thresholdMedium)
+        else if (inputDataFourth != nullptr && bytesProcessed < thresholdMedium)
         {
-            if (currentReductionLevel != MEDIUM)
+            if (currentReductionLevel == HIGH)
             {
                 std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
-                currentReductionLevel = MEDIUM;
             }
+            currentReductionLevel = MEDIUM;
             std::bit_cast<T*>(inputDataFourth.get())[bytesProcessed / sizeof(T)] = value;
             bytesProcessed += sizeof(T);
         }
-        else if (bytesProcessed < thresholdLow)
+        else if (inputDataHalf != nullptr && bytesProcessed < thresholdLow)
         {
-            if (currentReductionLevel != LOW)
+            if (currentReductionLevel == MEDIUM)
             {
                 std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
-                currentReductionLevel = LOW;
             }
+            currentReductionLevel = LOW;
             std::bit_cast<T*>(inputDataHalf.get())[bytesProcessed / sizeof(T)] = value;
             bytesProcessed += sizeof(T);
         }
         else
         {
-            if (currentReductionLevel != NONE)
+            if (currentReductionLevel == LOW)
             {
                 std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
-                currentReductionLevel = NONE;
             }
+            currentReductionLevel = NONE;
             std::bit_cast<T*>(inputData.get())[bytesProcessed / sizeof(T)] = value;
             bytesProcessed += sizeof(T);
         }
     }
 
-    template <class T>
-    void addModelInputBatchPartial(size_t index, std::span<std::byte> content)
+    void addModelInputBatchPartial(int index, std::span<std::byte> content, size_t tupleSize)
     {
         const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
         const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
         const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
 
-        if (bytesProcessed < thresholdHigh && bytesProcessed + content.size() <= thresholdHigh)
+        if (inputDataEighth != nullptr && bytesProcessed + tupleSize <= thresholdHigh)
         {
             currentReductionLevel = HIGH;
-            std::ranges::copy_n(content.data(), content.size(), inputDataEighth.get() + index * sizeof(T));
+            std::ranges::copy_n(content.data(), content.size(), inputDataEighth.get() + bytesProcessed);
             bytesProcessed += content.size();
         }
-        else if (bytesProcessed < thresholdMedium && bytesProcessed + content.size() <= thresholdMedium)
+        else if (inputDataFourth != nullptr && bytesProcessed + tupleSize <= thresholdMedium)
         {
-            if (currentReductionLevel != MEDIUM)
+            if (currentReductionLevel == HIGH)
             {
                 std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
-                currentReductionLevel = MEDIUM;
             }
-            std::ranges::copy_n(content.data(), content.size(), inputDataFourth.get() + index * sizeof(T));
+            currentReductionLevel = MEDIUM;
+            std::ranges::copy_n(content.data(), content.size(), inputDataFourth.get() + bytesProcessed);
             bytesProcessed += content.size();
         }
-        else if (bytesProcessed < thresholdLow && bytesProcessed + content.size() <= thresholdLow)
+        else if (inputDataHalf != nullptr && bytesProcessed + tupleSize <= thresholdLow)
         {
-            if (currentReductionLevel != LOW)
+            if (currentReductionLevel == MEDIUM)
             {
                 std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
-                currentReductionLevel = LOW;
             }
-            std::ranges::copy_n(content.data(), content.size(), inputDataHalf.get() + index * sizeof(T));
+            currentReductionLevel = LOW;
+            std::ranges::copy_n(content.data(), content.size(), inputDataHalf.get() + bytesProcessed);
             bytesProcessed += content.size();
         }
         else
         {
-            if (currentReductionLevel != NONE)
+            if (currentReductionLevel == LOW)
             {
                 std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
-                currentReductionLevel = NONE;
             }
-            std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * sizeof(T));
+            currentReductionLevel = NONE;
+            std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * tupleSize);
             bytesProcessed += content.size();
         }
     }
 
-    template <class T>
-    void addModelInputBatch(size_t index, std::span<std::byte> content)
+    void addModelInputBatch(int index, std::span<std::byte> content, size_t tupleSize)
     {
-        std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * sizeof(T));
+        std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * tupleSize);
     }
 
     template <class T>
@@ -161,10 +159,9 @@ public:
         std::ranges::copy_n(outputData.get(), std::min(content.size(), outputSize), content.data());
     }
 
-    template <class T>
     void copyResultToBatch(size_t index, std::span<std::byte> content)
     {
-        std::ranges::copy_n(outputData.get() + index * sizeof(T), content.size(), content.data());
+        std::ranges::copy_n(outputData.get() + index * content.size(), content.size(), content.data());
     }
 
     template <class T>
@@ -175,7 +172,7 @@ public:
     }
 
     template <class T>
-    size_t inferCombine(size_t outputSize, size_t outputFields)
+    size_t inferCombine(size_t outputSize, size_t outputFields, bool isVarSizedOutput)
     {
         iree_hal_buffer_view_t* ireeOutputBV = nullptr;
         switch (currentReductionLevel)
@@ -193,7 +190,7 @@ public:
                 ireeOutputBV = runtimeWrapper.execute(functionName, inputDataEighth.get(), std::ceil(1 / float(HIGH) * inputSize), currentReductionLevel);
                 break;
         }
-        runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()), sizeof(T), outputSize, missIndices, outputFields);
+        runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()), sizeof(T), outputSize, missIndices, outputFields, isVarSizedOutput);
 
         missIndices.clear();
         currentReductionLevel = NONE;
@@ -206,16 +203,37 @@ public:
     {
         cacheProbeTuple = std::make_unique<std::byte[]>(tupleSize);
 
-        inputDataHalf = std::make_unique<std::byte[]>(std::ceil(1 / float(LOW) * inputSize));
-        inputDataFourth = std::make_unique<std::byte[]>(std::ceil(1 / float(MEDIUM) * inputSize));
-        inputDataEighth = std::make_unique<std::byte[]>(std::ceil(1 / float(HIGH) * inputSize));
+        const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
+        const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
+        const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
+
+        /// we only allocate smaller buffers if at least 1 tuple fits into memory
+        if (tupleSize <= thresholdLow)
+        {
+            inputDataHalf = std::make_unique<std::byte[]>(thresholdLow);
+        }
+        if (tupleSize <= thresholdMedium)
+        {
+            inputDataFourth = std::make_unique<std::byte[]>(thresholdMedium);
+        }
+        if (tupleSize <= thresholdHigh)
+        {
+            inputDataEighth = std::make_unique<std::byte[]>(thresholdHigh);
+        }
     }
 
     void updateCacheMapIndices(uint64_t keyIdx, int rowIdx)
     {
-        if (std::none_of(cacheMap.begin(), cacheMap.end(), [&](const auto& p) { return p.first == keyIdx; }))
+        auto it = std::find_if(cacheMap.begin(), cacheMap.end(),
+            [&](const auto& p) { return p.first == keyIdx; });
+
+        if (it != cacheMap.end())
         {
-            cacheMap.emplace_back(std::make_pair(keyIdx, rowIdx));
+            it->second = rowIdx;
+        }
+        else
+        {
+            cacheMap.emplace_back(keyIdx, rowIdx);
         }
     }
 

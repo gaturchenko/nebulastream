@@ -294,6 +294,11 @@ void IREECacheInferenceOperator::setup(ExecutionContext& executionCtx, Compilati
 
 void IREECacheInferenceOperator::open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const
 {
+    nautilus::invoke(
+        +[](uint64_t n)
+        {
+            NES_DEBUG("Tuples {}", n)
+        }, recordBuffer.getNumRecords());
     PhysicalOperatorConcept::open(executionCtx, recordBuffer);
     const auto globalOperatorHandler = executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex);
 
@@ -312,13 +317,30 @@ void IREECacheInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
             return adapter->inputSize;
         }, globalOperatorHandler, executionCtx.workerThreadId);
 
+    const auto replacementIndex = nautilus::invoke(
+        +[](const IREEInferenceOperatorHandler* opHandler, const WorkerThreadId workerThreadId)
+        {
+            return opHandler->getReplacementPos(
+                IREEInferenceOperatorHandler::StartPredictionCacheEntriesIREEInference{workerThreadId});
+        }, globalOperatorHandler, executionCtx.workerThreadId);
+
     auto predictionCache = NES::Util::createPredictionCache(
         predictionCacheOptions, globalOperatorHandler, startOfEntries, inputSize);
+    predictionCache->setReplacementPos(replacementIndex);
     executionCtx.setLocalOperatorState(id, std::move(predictionCache));
 }
 
 void IREECacheInferenceOperator::close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const
 {
+    auto* predictionCache = dynamic_cast<PredictionCache*>(executionCtx.getLocalState(id));
+    auto inferModelHandler = predictionCache->getOperatorHandler();
+
+    nautilus::invoke(
+        +[](IREEInferenceOperatorHandler* opHandler, uint64_t pos, const WorkerThreadId workerThreadId)
+        {
+            opHandler->setReplacementPos(IREEInferenceOperatorHandler::StartPredictionCacheEntriesIREEInference{workerThreadId}, pos);
+        }, inferModelHandler, predictionCache->getReplacementPos(), executionCtx.workerThreadId);
+
     PhysicalOperatorConcept::close(executionCtx, recordBuffer);
 }
 

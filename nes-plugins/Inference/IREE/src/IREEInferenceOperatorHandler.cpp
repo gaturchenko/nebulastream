@@ -73,6 +73,7 @@ void IREEInferenceOperatorHandler::allocatePredictionCacheEntries(
         INVARIANT(bufferOpt.has_value(), "Buffer provider should return a buffer");
         std::ranges::fill(bufferOpt.value().getAvailableMemoryArea(), std::byte{0});
         predictionCacheEntriesBufferForWorkerThreads.emplace_back(bufferOpt.value());
+        predictionCacheReplacementPosForWorkerThreads.emplace_back(uint64_t{0});
     }
 }
 
@@ -86,6 +87,29 @@ const int8_t* IREEInferenceOperatorHandler::getStartOfPredictionCacheEntries(con
         "Position should be smaller than the size of the predictionCacheEntriesBufferForWorkerThreads");
 
     return reinterpret_cast<const int8_t*>(predictionCacheEntriesBufferForWorkerThreads.at(pos).getAvailableMemoryArea().data());
+}
+
+uint64_t IREEInferenceOperatorHandler::getReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const
+{
+    PRECONDITION(!threadLocalAdapters.empty(), "Number of worker threads should be set before calling this method");
+    const auto startPredictionCacheEntriesIREE = dynamic_cast<const StartPredictionCacheEntriesIREEInference&>(startPredictionCacheEntriesArgs);
+    const auto pos = startPredictionCacheEntriesIREE.workerThreadId % predictionCacheReplacementPosForWorkerThreads.size();
+    INVARIANT(
+        not predictionCacheReplacementPosForWorkerThreads.empty() and pos < predictionCacheReplacementPosForWorkerThreads.size(),
+        "Position should be smaller than the size of the predictionCacheReplacementPosForWorkerThreads");
+    return predictionCacheReplacementPosForWorkerThreads.at(pos);
+}
+
+void
+IREEInferenceOperatorHandler::setReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs, uint64_t idx)
+{
+    PRECONDITION(!threadLocalAdapters.empty(), "Number of worker threads should be set before calling this method");
+    const auto startPredictionCacheEntriesIREE = dynamic_cast<const StartPredictionCacheEntriesIREEInference&>(startPredictionCacheEntriesArgs);
+    const auto pos = startPredictionCacheEntriesIREE.workerThreadId % predictionCacheReplacementPosForWorkerThreads.size();
+    INVARIANT(
+        not predictionCacheReplacementPosForWorkerThreads.empty() and pos < predictionCacheReplacementPosForWorkerThreads.size(),
+        "Position should be smaller than the size of the predictionCacheReplacementPosForWorkerThreads");
+    predictionCacheReplacementPosForWorkerThreads[pos] = idx;
 }
 
 }

@@ -40,6 +40,11 @@ PredictionCache2Q::PredictionCache2Q(
 {
 }
 
+nautilus::val<uint64_t> PredictionCache2Q::getReplacementPos()
+{
+    return fifoReplacementIndex;
+}
+
 void PredictionCache2Q::movePredictionCacheEntryToLRUQueue(const nautilus::val<uint64_t>& fifoPos, const nautilus::val<uint64_t>& lruPos)
 {
     /// Moving by copying the data from the fifoPos to the lruPos

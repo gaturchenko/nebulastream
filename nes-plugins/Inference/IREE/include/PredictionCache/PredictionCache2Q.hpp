@@ -81,6 +81,8 @@ public:
     getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction) override;
     nautilus::val<uint64_t> updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
     void updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
+    nautilus::val<uint64_t> getReplacementPos() override;
+    void setReplacementPos(nautilus::val<uint64_t>) override { /* noop */ }
 
 private:
     /// Moves the entry from fifoPos to lruPos and sets the age bit to 0

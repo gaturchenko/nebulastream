@@ -57,9 +57,9 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
 
         /// if the batch size is 1, then we simply use the inference operator with PipelineLocation::INTERMEDIATE
         /// else, add the batching operator (custom emit) and batch inference operator (custom scan)
+        std::shared_ptr<NES::PhysicalOperatorWrapper> wrapper = nullptr;
         if (batchSize.getValue() == 1)
         {
-            std::shared_ptr<NES::PhysicalOperatorWrapper> wrapper = nullptr;
             auto handler = std::make_shared<NES::IREEInferenceOperatorHandler>(model);
 
             switch (predictionCacheType.getValue())
@@ -80,7 +80,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 
-                    auto wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
+                    wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
                         ireeOperator,
                         logicalOperator->getInputSchemas().at(0),
                         logicalOperator->getOutputSchema(),
@@ -114,7 +114,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 
-                    auto wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
+                    wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
                         ireeOperator,
                         logicalOperator->getInputSchemas().at(0),
                         logicalOperator->getOutputSchema(),
@@ -146,7 +146,6 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
             auto batchingWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
                 batchingOperator, inputSchema, inputSchema, handlerId, handler, NES::PhysicalOperatorWrapper::PipelineLocation::EMIT);
 
-            std::shared_ptr<NES::PhysicalOperatorWrapper> ireeWrapper = nullptr;
             switch (predictionCacheType.getValue())
             {
                 case NES::Configurations::PredictionCacheType::NONE: {
@@ -166,7 +165,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 
-                    auto ireeWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
+                    wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
                         ireeOperator,
                         inputSchema,
                         logicalOperator->getOutputSchema(),
@@ -174,7 +173,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                         handler,
                         NES::PhysicalOperatorWrapper::PipelineLocation::SCAN,
                         std::vector{batchingWrapper});
-                    return {ireeWrapper, {batchingWrapper}};
+                    return {wrapper, {batchingWrapper}};
                 }
                 case NES::Configurations::PredictionCacheType::TWO_QUEUES:
                 case NES::Configurations::PredictionCacheType::FIFO:
@@ -200,7 +199,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 
-                    auto ireeWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
+                    wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
                         ireeOperator,
                         inputSchema,
                         logicalOperator->getOutputSchema(),
@@ -208,7 +207,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                         handler,
                         NES::PhysicalOperatorWrapper::PipelineLocation::SCAN,
                         std::vector{batchingWrapper});
-                    return {ireeWrapper, {batchingWrapper}};
+                    return {wrapper, {batchingWrapper}};
                 }
             }
         }

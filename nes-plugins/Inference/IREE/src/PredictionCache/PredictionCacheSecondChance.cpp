@@ -30,6 +30,16 @@ PredictionCacheSecondChance::PredictionCacheSecondChance(
 {
 }
 
+nautilus::val<uint64_t> PredictionCacheSecondChance::getReplacementPos()
+{
+    return localReplacementIndex;
+}
+
+void PredictionCacheSecondChance::setReplacementPos(nautilus::val<uint64_t> pos)
+{
+    localReplacementIndex = pos;
+}
+
 nautilus::val<bool*> PredictionCacheSecondChance::getSecondChanceBit(const nautilus::val<uint64_t>& pos)
 {
     const auto PredictionCacheEntry = startOfEntries + pos * sizeOfEntry;

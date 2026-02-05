@@ -32,6 +32,16 @@ PredictionCacheFIFO::PredictionCacheFIFO(
 {
 }
 
+nautilus::val<uint64_t> PredictionCacheFIFO::getReplacementPos()
+{
+    return localReplacementIndex;
+}
+
+void PredictionCacheFIFO::setReplacementPos(nautilus::val<uint64_t> pos)
+{
+    localReplacementIndex = pos;
+}
+
 void PredictionCacheFIFO::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
     const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + pos * sizeOfEntry;

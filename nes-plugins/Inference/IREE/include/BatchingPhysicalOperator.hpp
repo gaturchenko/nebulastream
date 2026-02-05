@@ -34,7 +34,7 @@ public:
 
     void execute(ExecutionContext& executionCtx, Record& record) const override;
 
-    void open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
+    void open(ExecutionContext& executionCtx, RecordBuffer&) const override;
     void close(ExecutionContext& executionCtx, RecordBuffer&) const override;
 
     void setup(ExecutionContext&, CompilationContext&) const override { /*noop*/ };

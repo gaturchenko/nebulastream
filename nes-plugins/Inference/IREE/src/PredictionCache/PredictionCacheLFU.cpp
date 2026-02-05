@@ -28,6 +28,22 @@ PredictionCacheLFU::PredictionCacheLFU(
 {
 }
 
+nautilus::val<uint64_t> PredictionCacheLFU::getReplacementPos()
+{
+    nautilus::val<uint64_t> minFrequency = UINT64_MAX;
+    nautilus::val<uint64_t> minFrequencyIndex = 0;
+    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
+    {
+        nautilus::val<uint64_t> frequency{*getFrequency(i)};
+        if (frequency < minFrequency)
+        {
+            minFrequency = frequency;
+            minFrequencyIndex = i;
+        }
+    }
+    return minFrequencyIndex;
+}
+
 void PredictionCacheLFU::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + pos * sizeOfEntry;

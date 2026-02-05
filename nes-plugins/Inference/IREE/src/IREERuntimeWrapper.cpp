@@ -103,8 +103,15 @@ iree_hal_buffer_view_t* IREERuntimeWrapper::execute(std::string functionName, vo
         iree_make_const_byte_span(inputData, inputSize),
         // Buffer view + storage are returned and owned by the caller:
         &view);
-    // iree_hal_buffer_view_fprint(stdout, view, 4096, iree_allocator_system());
-    // std::cout << '\n';
+
+    /// print the input tensor in debug
+    #ifndef NO_ASSERT
+        char inputString[4096];
+        iree_host_size_t inputLength = 0;
+        iree_hal_buffer_view_format(view, 4096, IREE_ARRAYSIZE(inputString), inputString, &inputLength);
+        NES_DEBUG("Model input: {}", inputString)
+    #endif
+
     std::unique_ptr<iree_hal_buffer_view_t, decltype(&iree_hal_buffer_view_release)> inputBuffer(view, &iree_hal_buffer_view_release);
 
     if (!iree_status_is_ok(status))
@@ -130,8 +137,15 @@ iree_hal_buffer_view_t* IREERuntimeWrapper::execute(std::string functionName, vo
     {
         throw InferenceRuntime("Model Execution failed. Could not add output buffer");
     }
-    // iree_hal_buffer_view_fprint(stdout, outputView, 4096, iree_allocator_system());
-    // std::cout << '\n';
+
+    /// print the output tensor in debug
+    #ifndef NO_ASSERT
+        char outputString[4096];
+        iree_host_size_t outputLength = 0;
+        iree_hal_buffer_view_format(outputView, 4096, IREE_ARRAYSIZE(outputString), outputString, &outputLength);
+        NES_DEBUG("Model output: {}", outputString)
+    #endif
+
     iree_runtime_call_deinitialize(&call);
 
     return outputView;
@@ -159,7 +173,7 @@ void IREERuntimeWrapper::copyOutput(iree_hal_buffer_view_t* outputView, void* ou
 }
 
 void IREERuntimeWrapper::copyOutput(
-    iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices, size_t outputFields)
+    iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices, size_t outputFields, bool isVarSizedOutput)
 {
     std::unique_ptr<iree_hal_buffer_view_t, decltype(&iree_hal_buffer_view_release)> outputBuffer(
                 outputView, &iree_hal_buffer_view_release);
@@ -167,14 +181,29 @@ void IREERuntimeWrapper::copyOutput(
     int outputViewIdx = 0;
     for (const int idx : missIndices)
     {
-        iree_status_t status = iree_hal_device_transfer_d2h(
-            iree_runtime_session_device(session.get()),
-            iree_hal_buffer_view_buffer(outputBuffer.get()),
-            outputViewIdx * dtypeSize,
-            static_cast<std::byte*>(outputData) + idx * dtypeSize,
-            outputSize,
-            IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
-            iree_infinite_timeout());
+        iree_status_t status;
+        if (!isVarSizedOutput)
+        {
+            status = iree_hal_device_transfer_d2h(
+                iree_runtime_session_device(session.get()),
+                iree_hal_buffer_view_buffer(outputBuffer.get()),
+                outputViewIdx * dtypeSize,
+                static_cast<std::byte*>(outputData) + idx * dtypeSize,
+                outputSize,
+                IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
+                iree_infinite_timeout());
+        }
+        else
+        {
+            status = iree_hal_device_transfer_d2h(
+                iree_runtime_session_device(session.get()),
+                iree_hal_buffer_view_buffer(outputBuffer.get()),
+                outputViewIdx * outputSize,
+                static_cast<std::byte*>(outputData) + idx * outputSize,
+                outputSize,
+                IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
+                iree_infinite_timeout());
+        }
 
         if (!iree_status_is_ok(status))
         {
