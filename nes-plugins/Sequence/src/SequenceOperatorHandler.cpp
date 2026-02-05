@@ -36,7 +36,7 @@ std::optional<TupleBuffer*> SequenceOperatorHandler::getNextBuffer(TupleBuffer* 
 
 std::optional<TupleBuffer*> SequenceOperatorHandler::markBufferAsDone(TupleBuffer* tupleBuffer)
 {
-    INVARIANT(tupleBuffer == std::addressof(currentBuffer), "Not sure where this pointer is comming from");
+    INVARIANT(tupleBuffer == std::addressof(currentBuffer), "Not sure where this pointer is coming from");
     auto optNextBuffer
         = sequencer.advanceAndGetNext(SequenceData(tupleBuffer->getSequenceNumber(), tupleBuffer->getChunkNumber(), tupleBuffer->isLastChunk()));
     if (optNextBuffer)
