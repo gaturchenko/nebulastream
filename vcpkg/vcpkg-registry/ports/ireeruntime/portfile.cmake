@@ -3,21 +3,22 @@ vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO iree-org/iree
-    REF "1a6681936a78138f7ae2b0fd9309d28dfe01ac5b"
-    SHA512 d6f3c21b16493d07ab3169062c38771e6b36fc2e6942e2240b35aafd4cc8292af93f171308d452e35124d5065f04f690146041dc8a9b31326873707c21f465bd
+    REF "ae97779f59a81bc56f804927be57749bb22548fa"
+    SHA512 536be2e9e7069afe8558da548c46c3d35d07ceb37f6fec44df4ca7ff1826412fb91de52a8732c50083d5e9a4fea9a692f9e87fcd68b7795debe6426f05e091ce
     PATCHES
         0001-Install-only-runtime.patch
         0002-fixup-install-destination.patch
         0003-do-not-enable-null-driver-in-debug.patch
         0004-remove-benchmark.patch
         0005-include-check_c_source_compiles.patch
+        0006-disable-libbacktrace.patch
 )
 
 vcpkg_from_github(
         OUT_SOURCE_PATH SOURCE_PATH_STABLEHLO
         REPO iree-org/stablehlo
-        REF "938dad6025bec570a67e584ef0a4f040b99f5544"
-        SHA512 934338f103093e75e7b5a5140ec599b09a08ee790c68697a48b3e30b8fb4485d6c51fbcbc0bb1dcd20a0baedb5e9c3a207316f30130ec6fb562b809a8916d3cc
+        REF "6fabd27b15885179a3b6a601ea1e4171f2ed2c91"
+        SHA512 03c55aec6d333064b276b283d2ef85e1714d293124c14264cbe442386b17aa3d6de81bd57165a1a84f712739058e7d0de724345e966c08b2b243b9b6ffc52f23
 )
 
 vcpkg_from_github(
