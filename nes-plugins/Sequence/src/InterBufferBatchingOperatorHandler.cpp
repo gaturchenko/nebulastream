@@ -14,6 +14,7 @@
 
 #include <InterBufferBatchingOperatorHandler.hpp>
 
+#include <MemoryLayout/MemoryLayout.hpp>
 #include <PipelineExecutionContext.hpp>
 
 namespace NES
@@ -42,6 +43,18 @@ void InterBufferBatchingOperatorHandler::createNewTupleBufferRef(PipelineExecuti
     tupleBuffer.withWLock([&](TupleBuffer& tb)
     {
         tb = pipelineExecutionContext.allocateTupleBuffer();
+    });
+}
+
+VariableSizedAccess InterBufferBatchingOperatorHandler::writeToTupleBuffer(
+    AbstractBufferProvider* bufferProvider,
+    const int8_t* varSizedPtr,
+    uint32_t varSizedValueLength)
+{
+    return tupleBuffer.withWLock([&](TupleBuffer& tb)
+    {
+        const std::span varSizedValueSpan{varSizedPtr, varSizedPtr + varSizedValueLength};
+        return MemoryLayout::writeVarSized<MemoryLayout::PREPEND_NONE>(tb, *bufferProvider, std::as_bytes(varSizedValueSpan));
     });
 }
 

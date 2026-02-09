@@ -16,6 +16,8 @@
 
 #include <InterBufferBatchingOperatorHandler.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
+#include <Nautilus/Interface/BufferRef/RowTupleBufferRef.hpp>
+#include <Nautilus/Interface/VariableSizedAccessRef.hpp>
 
 namespace NES
 {
@@ -69,7 +71,31 @@ void InterBufferBatchingOperator::execute(ExecutionContext& executionCtx, Record
             }, operatorHandler, executionCtx.pipelineContext);
     }
 
-    bufferRef->writeRecord(outputIndex, buffer, record, executionCtx.pipelineMemoryProvider.bufferProvider);
+    const auto memoryLayout = dynamic_cast<RowLayout*>(bufferRef->getMemoryLayout().get());
+    const auto bufferAddress = buffer.getMemArea();
+
+    auto tupleSize = memoryLayout->getTupleSize();
+    const auto recordOffset = bufferAddress + (tupleSize * outputIndex);
+
+    /// thread-safe writing to the TupleBuffer memory (for now only support/assume varsized data)
+    const auto schema = memoryLayout->getSchema();
+    const nautilus::val<uint64_t> varSizedOffset = 0;
+    for (nautilus::static_val<size_t> i = 0; i < schema.getNumberOfFields(); ++i)
+    {
+        auto fieldOffset = memoryLayout->getFieldOffset(i);
+        auto fieldAddress = recordOffset + nautilus::val<uint64_t>(fieldOffset);
+        const auto& value = record.read(schema.getFieldAt(i).name);
+        const auto varSizedValue = value.cast<VariableSizedData>();
+        const auto variableSizedAccess = nautilus::invoke(
+            +[](OperatorHandler* handler, AbstractBufferProvider* bufferProvider, const int8_t* varSizedPtr, uint32_t varSizedValueLength)
+            {
+                return dynamic_cast<InterBufferBatchingOperatorHandler*>(handler)->writeToTupleBuffer(bufferProvider, varSizedPtr, varSizedValueLength);
+            }, operatorHandler, executionCtx.pipelineMemoryProvider.bufferProvider, varSizedValue.getReference(), varSizedValue.getTotalSize());
+        auto fieldReferenceCastedU64 = static_cast<nautilus::val<uint64_t*>>(fieldAddress);
+        *fieldReferenceCastedU64 = variableSizedAccess.convertToValue();
+    }
+
+    // bufferRef->writeRecord(outputIndex, buffer, record, executionCtx.pipelineMemoryProvider.bufferProvider);
 
     /// increment the output index stored in the handler
     nautilus::invoke(

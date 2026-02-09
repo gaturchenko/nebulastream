@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <Runtime/AbstractBufferProvider.hpp>
 #include <Runtime/TupleBuffer.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
 #include <folly/Synchronized.h>
@@ -31,10 +32,10 @@ public:
 
     TupleBuffer* getTupleBufferRef();
     void createNewTupleBufferRef(PipelineExecutionContext& pipelineExecutionContext);
+    VariableSizedAccess writeToTupleBuffer(AbstractBufferProvider* bufferProvider, const int8_t* varSizedPtr, uint32_t varSizedValueLength);
     void emitTupleBuffer(PipelineExecutionContext* pipelineExecutionContext);
 
     std::atomic<uint64_t> outputIndex = 0;
-    mutable std::mutex tupleBufferLock;
     SequenceNumber sequenceNumber = SequenceNumber(1);
 
 private:

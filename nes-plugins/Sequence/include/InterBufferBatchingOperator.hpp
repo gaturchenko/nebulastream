@@ -27,13 +27,6 @@ public:
         std::shared_ptr<TupleBufferRef> bufferRef,
         uint64_t batchSize);
 
-
-    void emitRecordBuffer(
-        ExecutionContext& ctx,
-        RecordBuffer& recordBuffer,
-        const nautilus::val<uint64_t>& numRecords,
-        const PipelineExecutionContext::ContinuationPolicy policy) const;
-
     void setup(ExecutionContext& executionCtx, CompilationContext&) const override;
     void terminate(ExecutionContext& executionCtx) const override;
 
