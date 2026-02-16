@@ -18,6 +18,7 @@
 #include <Nautilus/Interface/RecordBuffer.hpp>
 #include <PhysicalOperator.hpp>
 #include <ScanPhysicalOperator.hpp>
+#include <WindowProbePhysicalOperator.hpp>
 
 namespace NES
 {
@@ -26,13 +27,25 @@ namespace NES
  * @brief This basic scan operator extracts records from a base tuple buffer according to a memory layout.
  * Furthermore, it supports projection pushdown to eliminate unneeded reads.
  */
-class SequencePhysicalOperator : public PhysicalOperatorConcept
+class SequencePhysicalOperator : public WindowProbePhysicalOperator
 {
 public:
-    explicit SequencePhysicalOperator(OperatorHandlerId operatorHandlerIndex, ScanPhysicalOperator scan)
-        : scan(std::move(scan)), operatorHandlerIndex(operatorHandlerIndex)
+    explicit SequencePhysicalOperator(
+        OperatorHandlerId operatorHandlerIndex,
+        ScanPhysicalOperator scan,
+        std::shared_ptr<TupleBufferRef> tupleBufferRef,
+        bool batchProcessing)
+        : WindowProbePhysicalOperator(operatorHandlerIndex)
+        , scan(std::move(scan))
+        , tupleBufferRef(std::move(tupleBufferRef))
+        , operatorHandlerIndex(operatorHandlerIndex)
+        , batchProcessing(batchProcessing)
     {
     }
+
+    void sequentialProcessing(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const;
+    void sequentialBatchProcessing(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const;
+    Record createRecord(const Record& featureRecord, const std::vector<Record::RecordFieldIdentifier>& projections) const;
 
     void open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
     void close(ExecutionContext&, RecordBuffer&) const override { /*NOOP*/ }
@@ -46,7 +59,9 @@ public:
 
 private:
     ScanPhysicalOperator scan;
+    std::shared_ptr<TupleBufferRef> tupleBufferRef;
     OperatorHandlerId operatorHandlerIndex;
+    bool batchProcessing;
 };
 
 }

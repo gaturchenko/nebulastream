@@ -14,36 +14,38 @@
 
 #pragma once
 
-#include <Identifiers/Identifiers.hpp>
-#include <Model.hpp>
+#include <optional>
 #include <Nautilus/Interface/PagedVector/PagedVector.hpp>
-#include <PredictionCache.hpp>
-#include <PredictionCacheOperatorHandler.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
+#include <Runtime/QueryTerminationType.hpp>
+#include <Runtime/TupleBuffer.hpp>
+#include <Sequencing/Sequencer.hpp>
 #include <WindowBasedOperatorHandler.hpp>
 
 namespace NES
 {
 
-class IREEAdapter;
 class Batch;
 
-class IREEBatchInferenceOperatorHandler final : public WindowBasedOperatorHandler, public PredictionCacheOperatorHandler
+class SequenceOperatorHandler final : public WindowBasedOperatorHandler
 {
 public:
-    IREEBatchInferenceOperatorHandler(
+    SequenceOperatorHandler(
         const std::vector<OriginId>& inputOrigins,
         OriginId outputOriginId,
-        Nebuli::Inference::Model model,
         uint64_t batchSize);
 
-    void start(PipelineExecutionContext& pipelineExecutionContext, uint32_t localStateVariableId) override;
-    void stop(QueryTerminationType terminationType, PipelineExecutionContext& pipelineExecutionContext) override;
+    std::optional<TupleBuffer*> getNextBuffer(TupleBuffer* tupleBuffer);
+    std::optional<TupleBuffer*> markBufferAsDone(TupleBuffer* tupleBuffer);
 
-    void allocateBuffers(size_t tupleSize);
-
-    [[nodiscard]] const Nebuli::Inference::Model& getModel() const;
-    [[nodiscard]] const std::shared_ptr<IREEAdapter>& getIREEAdapter(WorkerThreadId threadId) const;
+    void start(PipelineExecutionContext& pipelineExecutionContext, uint32_t) override
+    {
+        sequencer = {};
+        numberOfWorkerThreads = pipelineExecutionContext.getNumberOfWorkerThreads();
+        watermarkProcessorBuild = std::make_unique<MultiOriginWatermarkProcessor>(inputOrigins);
+        watermarkProcessorProbe = std::make_unique<MultiOriginWatermarkProcessor>(std::vector{outputOriginId});
+    }
+    void stop(QueryTerminationType, PipelineExecutionContext&) override { /*noop*/ }
 
     [[nodiscard]] Batch* getOrCreateNewBatch() const;
     [[nodiscard]] std::shared_ptr<Batch> getBatch(uint64_t batchId) const;
@@ -60,46 +62,17 @@ public:
         const std::map<WindowInfoAndSequenceNumber, std::vector<std::shared_ptr<Slice>>>& ,
         PipelineExecutionContext*) override { /*noop*/ };
 
-    void allocatePredictionCacheEntries(const uint64_t sizeOfEntry, const uint64_t numberOfEntries, AbstractBufferProvider* bufferProvider) override;
+    uint64_t getBatchSize() const { return batchSize; }
 
-    struct StartPredictionCacheEntriesIREEInference final : StartPredictionCacheEntriesArgs
-    {
-        explicit StartPredictionCacheEntriesIREEInference(const WorkerThreadId workerThreadId)
-            : StartPredictionCacheEntriesArgs(workerThreadId)
-        {
-        }
-
-        StartPredictionCacheEntriesIREEInference(StartPredictionCacheEntriesIREEInference&& other) = default;
-        StartPredictionCacheEntriesIREEInference& operator=(StartPredictionCacheEntriesIREEInference&& other) = default;
-
-        StartPredictionCacheEntriesIREEInference(const StartPredictionCacheEntriesIREEInference& other)
-            : StartPredictionCacheEntriesArgs(other.workerThreadId)
-        {
-        }
-
-        StartPredictionCacheEntriesIREEInference& operator=(const StartPredictionCacheEntriesIREEInference& other)
-        {
-            workerThreadId = other.workerThreadId;
-            return *this;
-        };
-
-        ~StartPredictionCacheEntriesIREEInference() override = default;
-    };
-
-    const int8_t* getStartOfPredictionCacheEntries(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const override;
-
-    uint64_t getReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const override;
-    void setReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs, uint64_t idx) override;
-
-    uint64_t getBatchSize(){ return batchSize; }
+    Sequencer<TupleBuffer> sequencer;
+    TupleBuffer currentBuffer;
 
     mutable uint64_t batchId = 0;
     mutable uint64_t tuplesSeen = 0;
     mutable folly::Synchronized<std::map<uint64_t, std::shared_ptr<Batch>>> batches;
+
 private:
-    Nebuli::Inference::Model model;
     uint64_t batchSize;
-    std::vector<std::shared_ptr<IREEAdapter>> threadLocalAdapters;
 };
 
 enum class BatchState : uint8_t

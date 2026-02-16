@@ -1,49 +1,49 @@
 # GlobalConfiguration enable_event_trace: [true]
-GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [131072]
-GlobalConfiguration worker.default_query_execution.operator_buffer_size: [16384]
-GlobalConfiguration worker.query_engine.number_of_worker_threads: [16]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [1000000]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [65536]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [4]
 
 CREATE LOGICAL SOURCE solarPowerSource(timestamp UINT64, value FLOAT64);
 CREATE PHYSICAL SOURCE FOR solarPowerSource TYPE File;
 ATTACH FILE large/solar_power/solar-power.csv
 
-CREATE SINK solarPowerVarsizedDiscard(powerProdNext8Sec VARSIZED) TYPE Discard;
+CREATE SINK solarPowerVarsizedDiscard(powerProdNext2Min VARSIZED) TYPE Discard;
 
 CREATE MODEL dLinear(
-    PATH "TESTDATA/model/solar_power/pretrained/dlinear/dlinear_solar_size_60_stride_4.onnx"
+    PATH "TESTDATA/model/solar_power/pretrained/dlinear/dlinear_solar_size_600_stride_60.onnx"
     INPUTS (VARSIZED)
-    OUTPUTS (powerProdNext8Sec VARSIZED)
+    OUTPUTS (powerProdNext2Min VARSIZED)
 );
 
-SELECT powerProdNext8Sec FROM (
-    SELECT INFER_MODEL(dLinear, (value_60_sec))
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(dLinear, (value_10_min))
     FROM (
-        SELECT ARRAY_AGG(value) AS value_60_sec
+        SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
-        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
     )
 ) INTO solarPowerVarsizedDiscard;
 ----
 
-Configuration worker.default_query_execution.inference.batch_size: [512]
-SELECT powerProdNext8Sec FROM (
-    SELECT INFER_MODEL(dLinear, (value_60_sec))
+Configuration worker.default_query_execution.inference.batch_size: [8]
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(dLinear, (value_10_min))
     FROM (
-        SELECT ARRAY_AGG(value) AS value_60_sec
+        SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
-        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
     )
 ) INTO solarPowerVarsizedDiscard;
 ----
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
 Configuration worker.default_query_execution.inference.number_of_entries_prediction_cache: [16]
-SELECT powerProdNext8Sec FROM (
-    SELECT INFER_MODEL(dLinear, (value_60_sec))
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(dLinear, (value_10_min))
     FROM (
-        SELECT ARRAY_AGG(value) AS value_60_sec
+        SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
-        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
     )
 ) INTO solarPowerVarsizedDiscard;
 ----
@@ -51,12 +51,12 @@ SELECT powerProdNext8Sec FROM (
 Configuration worker.default_query_execution.inference.batch_size: [512]
 Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
 Configuration worker.default_query_execution.inference.number_of_entries_prediction_cache: [16]
-SELECT powerProdNext8Sec FROM (
-    SELECT INFER_MODEL(dLinear, (value_60_sec))
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(dLinear, (value_10_min))
     FROM (
-        SELECT ARRAY_AGG(value) AS value_60_sec
+        SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
-        WINDOW SLIDING(timestamp, SIZE 60000 ms, ADVANCE BY 4000 ms)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
     )
 ) INTO solarPowerVarsizedDiscard;
 ----

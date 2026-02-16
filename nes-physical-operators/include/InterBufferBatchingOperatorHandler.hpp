@@ -25,20 +25,50 @@ namespace NES
 class InterBufferBatchingOperatorHandler : public OperatorHandler
 {
 public:
-    explicit InterBufferBatchingOperatorHandler() = default;
+    InterBufferBatchingOperatorHandler(uint64_t batchSize): batchSize(batchSize) {}
 
     void start(PipelineExecutionContext& pipelineExecutionContext, uint32_t) override;
     void stop(QueryTerminationType, PipelineExecutionContext&) override;
 
-    TupleBuffer* getTupleBufferRef();
-    void createNewTupleBufferRef(PipelineExecutionContext& pipelineExecutionContext);
-    VariableSizedAccess writeToTupleBuffer(AbstractBufferProvider* bufferProvider, const int8_t* varSizedPtr, uint32_t varSizedValueLength);
-    void emitTupleBuffer(PipelineExecutionContext* pipelineExecutionContext);
+    uint64_t getBatchSize() const;
 
-    std::atomic<uint64_t> outputIndex = 0;
+    int8_t* getTupleBufferRef();
+    void createNewTupleBufferRef(PipelineExecutionContext& pipelineExecutionContext);
+
+    VariableSizedAccess writeToTupleBuffer(
+        AbstractBufferProvider* bufferProvider,
+        const int8_t* varSizedPtr,
+        uint32_t varSizedValueLength,
+        PipelineExecutionContext* pipelineExecutionContext,
+        Timestamp watermarkTs,
+        OriginId originId,
+        Timestamp creationTs);
+
+    void emitTupleBuffer(
+        PipelineExecutionContext* pipelineExecutionContext,
+        Timestamp watermarkTs,
+        OriginId originId,
+        Timestamp creationTs,
+        bool createNewBuffer);
+
+    void emitTupleBuffer(
+        TupleBuffer& tb,
+        PipelineExecutionContext* pipelineExecutionContext,
+        Timestamp watermarkTs,
+        OriginId originId,
+        Timestamp creationTs);
+
+    void emitIfFullBatch(
+        PipelineExecutionContext* pipelineExecutionContext,
+        Timestamp watermarkTs,
+        OriginId originId,
+        Timestamp creationTs);
+
+    uint64_t outputIndex = 0;
     SequenceNumber sequenceNumber = SequenceNumber(1);
 
 private:
+    uint64_t batchSize;
     folly::Synchronized<TupleBuffer> tupleBuffer;
 };
 

@@ -143,7 +143,8 @@ public:
 
     void addModelInputBatch(int index, std::span<std::byte> content, size_t tupleSize)
     {
-        std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * tupleSize);
+        PRECONDITION(content.size() <= tupleSize, "Size of the varsized content cannot exceed the tuple size");
+        std::ranges::copy_n(content.data(), std::min(content.size(), tupleSize), inputData.get() + index * tupleSize);
     }
 
     template <class T>

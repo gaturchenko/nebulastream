@@ -241,32 +241,34 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                     printComma();
                     fmt::print(
                         file,
-                        R"x(    {{"args":{{"pipeline_id":{}}},"cat":"pipeline","name":"Pipeline {} (Query {})","ph":"E","pid":{},"tid":{},"ts":{}}})x",
+                        R"x(    {{"args":{{"pipeline_id":{}}},"cat":"pipeline","name":"Pipeline {} (Query {})","ph":"E","pid":{},"tid":{},"ts":{},"dur":{},"tuples":{}}})x",
                         pipelineStop.pipelineId.getRawValue(),
                         pipelineStop.pipelineId,
                         pipelineStop.queryId,
                         pid,
                         originalTid,
-                        timestampToMicroseconds(pipelineStop.timestamp));
+                        timestampToMicroseconds(pipelineStop.timestamp),
+                        pipelineDurations[pipelineStop.pipelineId],
+                        pipelineTuplesProcessed[pipelineStop.pipelineId]);
 
                     /// Remove from active pipelines
                     activePipelines.erase(pipelineStop.pipelineId);
                 },
                 [&](const TaskExecutionStart& taskStart)
                 {
-                    printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"pipeline_id":{},"task_id":{},"tuples":{}}},"cat":"task","name":"Task {} (Pipeline {}, Query {})","ph":"B","pid":{},"tid":{},"ts":{}}})x",
-                        taskStart.pipelineId.getRawValue(),
-                        taskStart.taskId.getRawValue(),
-                        taskStart.numberOfTuples,
-                        taskStart.taskId,
-                        taskStart.pipelineId,
-                        taskStart.queryId,
-                        pid,
-                        taskStart.threadId.getRawValue(),
-                        timestampToMicroseconds(taskStart.timestamp));
+                    // printComma();
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"pipeline_id":{},"task_id":{},"tuples":{}}},"cat":"task","name":"Task {} (Pipeline {}, Query {})","ph":"B","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskStart.pipelineId.getRawValue(),
+                    //     taskStart.taskId.getRawValue(),
+                    //     taskStart.numberOfTuples,
+                    //     taskStart.taskId,
+                    //     taskStart.pipelineId,
+                    //     taskStart.queryId,
+                    //     pid,
+                    //     taskStart.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskStart.timestamp));
 
                     /// Track this task for duration calculation
                     activeTasks.emplace(taskStart.taskId, taskStart.timestamp);
@@ -280,53 +282,55 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                         duration = timestampToMicroseconds(taskComplete.timestamp) - timestampToMicroseconds(it->second);
                         activeTasks.erase(it);
                     }
+                    pipelineDurations[taskComplete.pipelineId] += duration;
 
-                    printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","dur":{},"name":"Task {} (Pipeline {}, Query {})","ph":"E","pid":{},"tid":{},"ts":{}}})x",
-                        taskComplete.pipelineId.getRawValue(),
-                        taskComplete.taskId.getRawValue(),
-                        duration,
-                        taskComplete.taskId,
-                        taskComplete.pipelineId,
-                        taskComplete.queryId,
-                        pid,
-                        taskComplete.threadId.getRawValue(),
-                        timestampToMicroseconds(taskComplete.timestamp));
+                    // printComma();
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","dur":{},"name":"Task {} (Pipeline {}, Query {})","ph":"E","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskComplete.pipelineId.getRawValue(),
+                    //     taskComplete.taskId.getRawValue(),
+                    //     duration,
+                    //     taskComplete.taskId,
+                    //     taskComplete.pipelineId,
+                    //     taskComplete.queryId,
+                    //     pid,
+                    //     taskComplete.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskComplete.timestamp));
                 },
                 [&](const TaskEmit& taskEmit)
                 {
-                    printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"from_pipeline":{},"task_id":{},"to_pipeline":{},"tuples":{}}},"cat":"task","name":"Emit {}->{} (Task {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
-                        taskEmit.fromPipeline.getRawValue(),
-                        taskEmit.taskId.getRawValue(),
-                        taskEmit.toPipeline.getRawValue(),
-                        taskEmit.numberOfTuples,
-                        taskEmit.fromPipeline,
-                        taskEmit.toPipeline,
-                        taskEmit.taskId,
-                        taskEmit.queryId,
-                        pid,
-                        taskEmit.threadId.getRawValue(),
-                        timestampToMicroseconds(taskEmit.timestamp));
+                    pipelineTuplesProcessed[taskEmit.fromPipeline] += taskEmit.numberOfTuples;
+                    // printComma();
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"from_pipeline":{},"task_id":{},"to_pipeline":{},"tuples":{}}},"cat":"task","name":"Emit {}->{} (Task {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskEmit.fromPipeline.getRawValue(),
+                    //     taskEmit.taskId.getRawValue(),
+                    //     taskEmit.toPipeline.getRawValue(),
+                    //     taskEmit.numberOfTuples,
+                    //     taskEmit.fromPipeline,
+                    //     taskEmit.toPipeline,
+                    //     taskEmit.taskId,
+                    //     taskEmit.queryId,
+                    //     pid,
+                    //     taskEmit.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskEmit.timestamp));
                 },
                 [&](const TaskExpired& taskExpired)
                 {
-                    printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","name":"Task Expired {} (Pipeline {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
-                        taskExpired.pipelineId.getRawValue(),
-                        taskExpired.taskId.getRawValue(),
-                        taskExpired.taskId,
-                        taskExpired.pipelineId,
-                        taskExpired.queryId,
-                        pid,
-                        taskExpired.threadId.getRawValue(),
-                        timestampToMicroseconds(taskExpired.timestamp));
+                    // printComma();
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","name":"Task Expired {} (Pipeline {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskExpired.pipelineId.getRawValue(),
+                    //     taskExpired.taskId.getRawValue(),
+                    //     taskExpired.taskId,
+                    //     taskExpired.pipelineId,
+                    //     taskExpired.queryId,
+                    //     pid,
+                    //     taskExpired.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskExpired.timestamp));
 
                     /// Remove from active tasks if present
                     activeTasks.erase(taskExpired.taskId);

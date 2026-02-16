@@ -14,35 +14,40 @@
 
 #pragma once
 
-#include <EmitPhysicalOperator.hpp>
+#include <Nautilus/Interface/BufferRef/TupleBufferRef.hpp>
+#include <WindowBuildPhysicalOperator.hpp>
 
 namespace NES
 {
 
-class InterBufferBatchingOperator : public PhysicalOperatorConcept
+struct HandlerData
+{
+    OriginId outputOriginId;
+    std::vector<OriginId> inputOrigins;
+    uint64_t batchSize;
+};
+
+class InterBufferBatchingOperator : public WindowBuildPhysicalOperator
 {
 public:
     explicit InterBufferBatchingOperator(
         OperatorHandlerId operatorHandlerId,
-        std::shared_ptr<TupleBufferRef> bufferRef,
+        std::shared_ptr<TupleBufferRef> tupleBufferRef,
+        const std::vector<OriginId>& inputOrigins,
+        OriginId outputOriginId,
         uint64_t batchSize);
 
-    void setup(ExecutionContext& executionCtx, CompilationContext&) const override;
-    void terminate(ExecutionContext& executionCtx) const override;
+    void setup(ExecutionContext&, CompilationContext&) const override { /*noop*/ };
+    void terminate(ExecutionContext&) const override;
 
-    void open(ExecutionContext&, RecordBuffer&) const override { /* noop */ }
-    void close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
+    void open(ExecutionContext& executionCtx, RecordBuffer&) const override;
+    void close(ExecutionContext& executionCtx, RecordBuffer&) const override;
 
     void execute(ExecutionContext& executionCtx, Record& record) const override;
 
-    [[nodiscard]] std::optional<PhysicalOperator> getChild() const override;
-    void setChild(PhysicalOperator child) override;
-
+    HandlerData handlerData;
 private:
-    std::optional<PhysicalOperator> child;
-    std::shared_ptr<TupleBufferRef> bufferRef;
-    uint64_t batchSize;
-    OperatorHandlerId operatorHandlerId;
+    const std::shared_ptr<TupleBufferRef> tupleBufferRef;
 };
 
 }

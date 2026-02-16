@@ -22,7 +22,7 @@
 #include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
 #include <RewriteRules/AbstractRewriteRule.hpp>
 #include <SequencePhysicalOperator.hpp>
-#include <InterBufferBatchingOperatorHandler.hpp>
+#include <Traits/OutputOriginIdsTrait.hpp>
 #include <InterBufferBatchingOperator.hpp>
 #include <ErrorHandling.hpp>
 #include <PhysicalOperator.hpp>
@@ -58,25 +58,38 @@ struct LowerToPhysicalSequence : NES::AbstractRewriteRule
 
         const auto schema = logicalOperator.getInputSchemas().at(0);
         auto memoryProvider = NES::TupleBufferRef::create(conf.operatorBufferSize.getValue(), schema);
+        if (sequence.getChildren().at(0).tryGetAs<NES::SourceDescriptorLogicalOperator>().has_value())
+        {
+            const auto source = sequence.getChildren().at(0).getAs<NES::SourceDescriptorLogicalOperator>();
+            const auto inputFormatterConfig = source->getSourceDescriptor().getParserConfig();
+            if (NES::toUpperCase(inputFormatterConfig.parserType) != "NATIVE")
+            {
+                auto memoryProviderFormatter = NES::TupleBufferRef::create(conf.operatorBufferSize.getValue(), schema);
+                memoryProvider = provideInputFormatterTupleBufferRef(inputFormatterConfig, memoryProviderFormatter);
+            }
+        }
+
+        auto outputOriginIdsOpt = getTrait<NES::OutputOriginIdsTrait>(logicalOperator->getTraitSet());
+        auto inputOriginIdsOpt = getTrait<NES::OutputOriginIdsTrait>(logicalOperator->getChildren().at(0).getTraitSet());
+        PRECONDITION(outputOriginIdsOpt.has_value(), "Expected the outputOriginIds trait to be set");
+        PRECONDITION(inputOriginIdsOpt.has_value(), "Expected the inputOriginIds trait to be set");
+
+        auto& outputOriginIds = outputOriginIdsOpt.value();
+        auto outputOriginId = outputOriginIds[0];
+        auto inputOriginIds = inputOriginIdsOpt.value();
+
+        auto operatorHandlerId = NES::getNextOperatorHandlerId();
+        auto handler = std::make_shared<NES::SequenceOperatorHandler>(
+            inputOriginIds | std::ranges::to<std::vector>(), outputOriginId, conf.inferenceConfiguration.batchSize.getValue());
 
         std::shared_ptr<NES::PhysicalOperatorWrapper> customEmitWrapper = nullptr;
-
+        const auto batchSize = conf.inferenceConfiguration.batchSize.getValue();
         /// a sequence operator can be added to the query either from inference, or from a window agg that requires it
         if (sequence->getSequenceSource() == NES::SequenceLogicalOperator::SequenceSource::INFERENCE)
         {
             /// if the batch size is 1 we don't require sequential processing, so we lower to a regular scan
-            if (conf.inferenceConfiguration.batchSize.getValue() == 1)
+            if (batchSize == 1)
             {
-                if (sequence.getChildren().at(0).tryGetAs<NES::SourceDescriptorLogicalOperator>().has_value())
-                {
-                    const auto source = sequence.getChildren().at(0).getAs<NES::SourceDescriptorLogicalOperator>();
-                    const auto inputFormatterConfig = source->getSourceDescriptor().getParserConfig();
-                    if (NES::toUpperCase(inputFormatterConfig.parserType) != "NATIVE")
-                    {
-                        auto memoryProviderFormatter = NES::TupleBufferRef::create(conf.operatorBufferSize.getValue(), schema);
-                        memoryProvider = provideInputFormatterTupleBufferRef(inputFormatterConfig, memoryProviderFormatter);
-                    }
-                }
                 auto physicalOperator = NES::ScanPhysicalOperator(memoryProvider);
 
                 auto wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
@@ -94,36 +107,24 @@ struct LowerToPhysicalSequence : NES::AbstractRewriteRule
             if (findAggregationRecursively(child))
             {
                 const auto handlerId = NES::getNextOperatorHandlerId();
-                auto customEmit = NES::InterBufferBatchingOperator(handlerId, memoryProvider, conf.inferenceConfiguration.batchSize.getValue());
+                auto customEmit = NES::InterBufferBatchingOperator(
+                    handlerId, memoryProvider, inputOriginIds | std::ranges::to<std::vector>(), outputOriginId, batchSize);
+
                 customEmitWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
                     customEmit,
                     child.getInputSchemas()[0],
                     child.getOutputSchema(),
                     handlerId,
-                    std::make_shared<NES::InterBufferBatchingOperatorHandler>(),
+                    handler,
                     NES::PhysicalOperatorWrapper::PipelineLocation::EMIT);
             }
         }
 
-        auto operatorHandlerId = NES::getNextOperatorHandlerId();
-        auto handler = std::make_shared<NES::SequenceOperatorHandler>();
-
-        if (sequence.getChildren().at(0).tryGetAs<NES::SourceDescriptorLogicalOperator>().has_value())
-        {
-            const auto source = sequence.getChildren().at(0).getAs<NES::SourceDescriptorLogicalOperator>();
-            const auto inputFormatterConfig = source->getSourceDescriptor().getParserConfig();
-            if (NES::toUpperCase(inputFormatterConfig.parserType) != "NATIVE")
-            {
-                auto memoryProviderFormatter = NES::TupleBufferRef::create(conf.operatorBufferSize.getValue(), schema);
-                memoryProvider = provideInputFormatterTupleBufferRef(inputFormatterConfig, memoryProviderFormatter);
-            }
-        }
-
-        auto physicalOperator = NES::SequencePhysicalOperator(
-                operatorHandlerId, NES::ScanPhysicalOperator(memoryProvider));
-
         if (customEmitWrapper != nullptr)
         {
+            auto physicalOperator = NES::SequencePhysicalOperator(
+                operatorHandlerId, NES::ScanPhysicalOperator(memoryProvider), memoryProvider, true);
+
             auto wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
                 physicalOperator,
                 sequence.getInputSchemas()[0],
@@ -135,6 +136,9 @@ struct LowerToPhysicalSequence : NES::AbstractRewriteRule
 
             return {.root = wrapper, .leafs = {customEmitWrapper}};
         }
+
+        auto physicalOperator = NES::SequencePhysicalOperator(
+                operatorHandlerId, NES::ScanPhysicalOperator(memoryProvider), memoryProvider, false);
 
         auto wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
             physicalOperator,
