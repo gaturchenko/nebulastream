@@ -88,8 +88,7 @@ size_t applyModelProxy(void* inferModelHandler, WorkerThreadId thread, size_t ou
     return 0;
 }
 
-template <typename T>
-nautilus::val<T> min(const nautilus::val<T>& lhs, const nautilus::val<T>& rhs)
+nautilus::val<uint32_t> min(const nautilus::val<uint32_t>& lhs, const nautilus::val<uint32_t>& rhs)
 {
     return lhs < rhs ? lhs : rhs;
 }
@@ -162,15 +161,16 @@ void IREEBatchCacheInferenceOperator::performInference(
             VarVal value = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
             auto varSizedValue = value.cast<VariableSizedData>();
             cacheProbeTuple = nautilus::invoke(
-                +[](OperatorHandler* inferModelHandler, WorkerThreadId thread, std::byte* content, uint32_t size)
+                +[](OperatorHandler* inferModelHandler, WorkerThreadId thread, std::byte* content, uint32_t size, uint32_t tupleSize)
                 {
                     auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
                     auto adapter = handler->getIREEAdapter(thread);
 
-                    std::memcpy(adapter->cacheProbeTuple.get(), content, size);
+                    std::memcpy(adapter->cacheProbeTuple.get(), content, std::min(size, tupleSize));
                     return adapter->cacheProbeTuple.get();
                 }, operatorHandler, executionCtx.workerThreadId, varSizedValue.getContent(),
-                    IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(this->inputSize)));
+                    IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))),
+                    nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize)));
         }
 
         /// if the probe is successful, return the index of the key, otherwise return PredictionCache::NOT_FOUND, i.e., UINT64_MAX

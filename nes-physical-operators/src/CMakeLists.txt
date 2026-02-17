@@ -27,9 +27,7 @@ add_source_files(nes-physical-operators
         WindowBuildPhysicalOperator.cpp
         WindowProbePhysicalOperator.cpp
         SequencePhysicalOperator.cpp
-        SequenceOperatorHandler.cpp
-        InterBufferBatchingOperator.cpp
-        InterBufferBatchingOperatorHandler.cpp)
+        SequenceOperatorHandler.cpp)
 
 add_subdirectory(Aggregation)
 add_subdirectory(Watermark)

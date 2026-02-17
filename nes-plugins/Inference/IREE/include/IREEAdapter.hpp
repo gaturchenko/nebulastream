@@ -103,10 +103,12 @@ public:
         const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
         const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
 
+        const auto sizeToWrite = std::min(content.size(), tupleSize);
+
         if (inputDataEighth != nullptr && bytesProcessed + tupleSize <= thresholdHigh)
         {
             currentReductionLevel = HIGH;
-            std::ranges::copy_n(content.data(), content.size(), inputDataEighth.get() + bytesProcessed);
+            std::ranges::copy_n(content.data(), sizeToWrite, inputDataEighth.get() + bytesProcessed);
             bytesProcessed += content.size();
         }
         else if (inputDataFourth != nullptr && bytesProcessed + tupleSize <= thresholdMedium)
@@ -116,7 +118,7 @@ public:
                 std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
             }
             currentReductionLevel = MEDIUM;
-            std::ranges::copy_n(content.data(), content.size(), inputDataFourth.get() + bytesProcessed);
+            std::ranges::copy_n(content.data(), sizeToWrite, inputDataFourth.get() + bytesProcessed);
             bytesProcessed += content.size();
         }
         else if (inputDataHalf != nullptr && bytesProcessed + tupleSize <= thresholdLow)
@@ -126,7 +128,7 @@ public:
                 std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
             }
             currentReductionLevel = LOW;
-            std::ranges::copy_n(content.data(), content.size(), inputDataHalf.get() + bytesProcessed);
+            std::ranges::copy_n(content.data(), sizeToWrite, inputDataHalf.get() + bytesProcessed);
             bytesProcessed += content.size();
         }
         else
@@ -136,14 +138,13 @@ public:
                 std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
             }
             currentReductionLevel = NONE;
-            std::ranges::copy_n(content.data(), content.size(), inputData.get() + index * tupleSize);
+            std::ranges::copy_n(content.data(), sizeToWrite, inputData.get() + index * tupleSize);
             bytesProcessed += content.size();
         }
     }
 
     void addModelInputBatch(int index, std::span<std::byte> content, size_t tupleSize)
     {
-        PRECONDITION(content.size() <= tupleSize, "Size of the varsized content cannot exceed the tuple size");
         std::ranges::copy_n(content.data(), std::min(content.size(), tupleSize), inputData.get() + index * tupleSize);
     }
 

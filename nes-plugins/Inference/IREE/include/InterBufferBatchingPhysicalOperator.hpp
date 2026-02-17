@@ -20,22 +20,12 @@
 namespace NES
 {
 
-struct HandlerData
-{
-    OriginId outputOriginId;
-    std::vector<OriginId> inputOrigins;
-    uint64_t batchSize;
-};
-
-class InterBufferBatchingOperator : public WindowBuildPhysicalOperator
+class InterBufferBatchingPhysicalOperator : public WindowBuildPhysicalOperator
 {
 public:
-    explicit InterBufferBatchingOperator(
+    explicit InterBufferBatchingPhysicalOperator(
         OperatorHandlerId operatorHandlerId,
-        std::shared_ptr<TupleBufferRef> tupleBufferRef,
-        const std::vector<OriginId>& inputOrigins,
-        OriginId outputOriginId,
-        uint64_t batchSize);
+        std::shared_ptr<TupleBufferRef> tupleBufferRef);
 
     void setup(ExecutionContext&, CompilationContext&) const override { /*noop*/ };
     void terminate(ExecutionContext&) const override;
@@ -45,7 +35,6 @@ public:
 
     void execute(ExecutionContext& executionCtx, Record& record) const override;
 
-    HandlerData handlerData;
 private:
     const std::shared_ptr<TupleBufferRef> tupleBufferRef;
 };

@@ -13,25 +13,45 @@
 */
 
 #include <DataTypes/DataTypeProvider.hpp>
-#include <QueryExecutionConfiguration.hpp>
 #include <Functions/FunctionProvider.hpp>
 #include <Nautilus/Interface/BufferRef/TupleBufferRef.hpp>
 #include <Operators/LogicalOperator.hpp>
-#include <Traits/OutputOriginIdsTrait.hpp>
-#include <InferModelLogicalOperator.hpp>
+#include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
 #include <RewriteRules/AbstractRewriteRule.hpp>
-#include <RewriteRuleRegistry.hpp>
+#include <Traits/OutputOriginIdsTrait.hpp>
 #include <BatchingPhysicalOperator.hpp>
-#include <IREEBatchInferenceOperator.hpp>
 #include <IREEBatchCacheInferenceOperator.hpp>
+#include <IREEBatchInferenceOperator.hpp>
 #include <IREEBatchInferenceOperatorHandler.hpp>
-#include <IREEInferenceOperator.hpp>
 #include <IREECacheInferenceOperator.hpp>
+#include <IREEInferenceOperator.hpp>
 #include <IREEInferenceOperatorHandler.hpp>
-#include <iree/runtime/api.h>
+#include <InferModelLogicalOperator.hpp>
+#include <InterBufferBatchingPhysicalOperator.hpp>
+#include <QueryExecutionConfiguration.hpp>
+#include <RewriteRuleRegistry.hpp>
 
 struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
 {
+    bool findAggregationRecursively(const NES::LogicalOperator& child)
+    {
+        const auto children = child.getChildren();
+
+        if (children.empty())
+        {
+            return false;
+        }
+
+        const auto& firstChild = children.at(0);
+
+        if (firstChild.tryGetAs<NES::WindowedAggregationLogicalOperator>())
+        {
+            return true;
+        }
+
+        return findAggregationRecursively(firstChild);
+    }
+
     explicit LowerToPhysicalIREEInferenceOperator(NES::QueryExecutionConfiguration conf) : conf(std::move(conf)) { }
     NES::RewriteRuleResultSubgraph apply(NES::LogicalOperator logicalOperator) override
     {
@@ -142,9 +162,31 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
             auto handler = std::make_shared<NES::IREEBatchInferenceOperatorHandler>(
                 inputOriginIds | std::ranges::to<std::vector>(), outputOriginId, model, batchSize.getValue());
 
-            auto batchingOperator = NES::BatchingPhysicalOperator(handlerId, memoryProvider);
-            auto batchingWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
-                batchingOperator, inputSchema, inputSchema, handlerId, handler, NES::PhysicalOperatorWrapper::PipelineLocation::EMIT);
+            std::shared_ptr<NES::PhysicalOperatorWrapper> batchingWrapper = nullptr;
+
+            const auto child = inferModelOperator.getChildren().at(0);
+            if (findAggregationRecursively(child))
+            {
+                auto batchingOperator = NES::InterBufferBatchingPhysicalOperator(handlerId, memoryProvider);
+                batchingWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
+                    batchingOperator,
+                    inputSchema,
+                    inputSchema,
+                    handlerId,
+                    handler,
+                    NES::PhysicalOperatorWrapper::PipelineLocation::EMIT);
+            }
+            else
+            {
+                auto batchingOperator = NES::BatchingPhysicalOperator(handlerId, memoryProvider);
+                batchingWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
+                    batchingOperator,
+                    inputSchema,
+                    inputSchema,
+                    handlerId,
+                    handler,
+                    NES::PhysicalOperatorWrapper::PipelineLocation::EMIT);
+            }
 
             switch (predictionCacheType.getValue())
             {

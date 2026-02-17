@@ -1,7 +1,7 @@
-# GlobalConfiguration enable_event_trace: [true]
-GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [1000000]
-GlobalConfiguration worker.default_query_execution.operator_buffer_size: [65536]
-GlobalConfiguration worker.query_engine.number_of_worker_threads: [4]
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [131072]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [16384]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [16]
 
 CREATE LOGICAL SOURCE solarPowerSource(timestamp UINT64, value FLOAT64);
 CREATE PHYSICAL SOURCE FOR solarPowerSource TYPE File;
@@ -25,7 +25,7 @@ SELECT powerProdNext2Min FROM (
 ) INTO solarPowerVarsizedDiscard;
 ----
 
-Configuration worker.default_query_execution.inference.batch_size: [8]
+Configuration worker.default_query_execution.inference.batch_size: [512]
 SELECT powerProdNext2Min FROM (
     SELECT INFER_MODEL(dLinear, (value_10_min))
     FROM (

@@ -132,8 +132,7 @@ void IREEBatchInferenceOperator::performInference(
                 IREEBatchInference::copyVarSizedToModelProxy,
                 rowIdx,
                 varSizedValue.getContent(),
-                // IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
-                nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize)),
+                IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
                 nautilus::val<size_t>(inputSize),
                 operatorHandler,
                 executionCtx.workerThreadId);

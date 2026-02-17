@@ -12,27 +12,20 @@
     limitations under the License.
 */
 
-#include <InterBufferBatchingOperator.hpp>
+#include <InterBufferBatchingPhysicalOperator.hpp>
 
-#include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <Nautilus/Interface/BufferRef/RowTupleBufferRef.hpp>
+#include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <Nautilus/Interface/VariableSizedAccessRef.hpp>
-#include <SequenceOperatorHandler.hpp>
+#include <IREEBatchInferenceOperatorHandler.hpp>
 
 namespace NES
 {
 
-InterBufferBatchingOperator::InterBufferBatchingOperator(
+InterBufferBatchingPhysicalOperator::InterBufferBatchingPhysicalOperator(
     const OperatorHandlerId operatorHandlerId,
-    std::shared_ptr<TupleBufferRef> tupleBufferRef,
-    const std::vector<OriginId>& inputOrigins,
-    OriginId outputOriginId,
-    uint64_t batchSize)
+    std::shared_ptr<TupleBufferRef> tupleBufferRef)
     : WindowBuildPhysicalOperator(operatorHandlerId)
-    , handlerData{
-        .outputOriginId = outputOriginId,
-        .inputOrigins = std::move(inputOrigins),
-        .batchSize = batchSize}
     , tupleBufferRef(std::move(std::move(tupleBufferRef)))
 {
 }
@@ -45,7 +38,7 @@ void emitIBBatchesProxy(
     PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
 
-    auto* opHandler = dynamic_cast<SequenceOperatorHandler*>(ptrOpHandler);
+    auto* opHandler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(ptrOpHandler);
     ChunkNumber::Underlying chunkNumber = ChunkNumber::INITIAL;
 
     std::vector<std::shared_ptr<Batch>> batchesToBeEmitted;
@@ -83,7 +76,7 @@ void emitLastBatchProxy(
     PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
 
-    auto* opHandler = dynamic_cast<SequenceOperatorHandler*>(ptrOpHandler);
+    auto* opHandler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(ptrOpHandler);
     ChunkNumber::Underlying chunkNumber = ChunkNumber::INITIAL;
 
     std::vector<std::shared_ptr<Batch>> batchesToBeEmitted;
@@ -112,7 +105,7 @@ void emitLastBatchProxy(
     }
 }
 
-void InterBufferBatchingOperator::execute(ExecutionContext& executionCtx, Record& record) const
+void InterBufferBatchingPhysicalOperator::execute(ExecutionContext& executionCtx, Record& record) const
 {
     auto* const localState = dynamic_cast<WindowOperatorBuildLocalState*>(executionCtx.getLocalState(id));
     auto operatorHandler = localState->getOperatorHandler();
@@ -121,7 +114,7 @@ void InterBufferBatchingOperator::execute(ExecutionContext& executionCtx, Record
         +[](OperatorHandler* ptrOpHandler)
         {
             PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
-            const auto* opHandler = dynamic_cast<SequenceOperatorHandler*>(ptrOpHandler);
+            const auto* opHandler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(ptrOpHandler);
             return opHandler->getOrCreateNewBatch();
         }, operatorHandler);
 
@@ -136,13 +129,13 @@ void InterBufferBatchingOperator::execute(ExecutionContext& executionCtx, Record
     batchPagedVectorRef.writeRecord(record, executionCtx.pipelineMemoryProvider.bufferProvider);
 }
 
-void InterBufferBatchingOperator::open(ExecutionContext& executionCtx, RecordBuffer&) const
+void InterBufferBatchingPhysicalOperator::open(ExecutionContext& executionCtx, RecordBuffer&) const
 {
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
     executionCtx.setLocalOperatorState(id, std::make_unique<WindowOperatorBuildLocalState>(operatorHandler));
 }
 
-void InterBufferBatchingOperator::close(ExecutionContext& executionCtx, RecordBuffer&) const
+void InterBufferBatchingPhysicalOperator::close(ExecutionContext& executionCtx, RecordBuffer&) const
 {
     auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
     nautilus::invoke(
@@ -152,7 +145,7 @@ void InterBufferBatchingOperator::close(ExecutionContext& executionCtx, RecordBu
         executionCtx.watermarkTs);
 }
 
-void InterBufferBatchingOperator::terminate(ExecutionContext& executionCtx) const
+void InterBufferBatchingPhysicalOperator::terminate(ExecutionContext& executionCtx) const
 {
     auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
     nautilus::invoke(

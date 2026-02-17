@@ -23,7 +23,6 @@
 #include <RewriteRules/AbstractRewriteRule.hpp>
 #include <SequencePhysicalOperator.hpp>
 #include <Traits/OutputOriginIdsTrait.hpp>
-#include <InterBufferBatchingOperator.hpp>
 #include <ErrorHandling.hpp>
 #include <PhysicalOperator.hpp>
 #include <RewriteRuleRegistry.hpp>
@@ -69,20 +68,9 @@ struct LowerToPhysicalSequence : NES::AbstractRewriteRule
             }
         }
 
-        auto outputOriginIdsOpt = getTrait<NES::OutputOriginIdsTrait>(logicalOperator->getTraitSet());
-        auto inputOriginIdsOpt = getTrait<NES::OutputOriginIdsTrait>(logicalOperator->getChildren().at(0).getTraitSet());
-        PRECONDITION(outputOriginIdsOpt.has_value(), "Expected the outputOriginIds trait to be set");
-        PRECONDITION(inputOriginIdsOpt.has_value(), "Expected the inputOriginIds trait to be set");
-
-        auto& outputOriginIds = outputOriginIdsOpt.value();
-        auto outputOriginId = outputOriginIds[0];
-        auto inputOriginIds = inputOriginIdsOpt.value();
-
         auto operatorHandlerId = NES::getNextOperatorHandlerId();
-        auto handler = std::make_shared<NES::SequenceOperatorHandler>(
-            inputOriginIds | std::ranges::to<std::vector>(), outputOriginId, conf.inferenceConfiguration.batchSize.getValue());
+        auto handler = std::make_shared<NES::SequenceOperatorHandler>();
 
-        std::shared_ptr<NES::PhysicalOperatorWrapper> customEmitWrapper = nullptr;
         const auto batchSize = conf.inferenceConfiguration.batchSize.getValue();
         /// a sequence operator can be added to the query either from inference, or from a window agg that requires it
         if (sequence->getSequenceSource() == NES::SequenceLogicalOperator::SequenceSource::INFERENCE)
@@ -100,45 +88,9 @@ struct LowerToPhysicalSequence : NES::AbstractRewriteRule
 
                 return {.root = wrapper, .leafs = {wrapper}};
             }
-
-            /// if the batch size is greater than 1, we need to check whether there is a prior window aggregation
-            /// if there is, we will have to batch across buffers, because the probe pipeline will yield a single-tuple buffer
-            const auto child = sequence.getChildren().at(0);
-            if (findAggregationRecursively(child))
-            {
-                const auto handlerId = NES::getNextOperatorHandlerId();
-                auto customEmit = NES::InterBufferBatchingOperator(
-                    handlerId, memoryProvider, inputOriginIds | std::ranges::to<std::vector>(), outputOriginId, batchSize);
-
-                customEmitWrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
-                    customEmit,
-                    child.getInputSchemas()[0],
-                    child.getOutputSchema(),
-                    handlerId,
-                    handler,
-                    NES::PhysicalOperatorWrapper::PipelineLocation::EMIT);
-            }
         }
 
-        if (customEmitWrapper != nullptr)
-        {
-            auto physicalOperator = NES::SequencePhysicalOperator(
-                operatorHandlerId, NES::ScanPhysicalOperator(memoryProvider), memoryProvider, true);
-
-            auto wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
-                physicalOperator,
-                sequence.getInputSchemas()[0],
-                sequence.getOutputSchema(),
-                operatorHandlerId,
-                handler,
-                NES::PhysicalOperatorWrapper::PipelineLocation::SCAN,
-                std::vector{customEmitWrapper});
-
-            return {.root = wrapper, .leafs = {customEmitWrapper}};
-        }
-
-        auto physicalOperator = NES::SequencePhysicalOperator(
-                operatorHandlerId, NES::ScanPhysicalOperator(memoryProvider), memoryProvider, false);
+        auto physicalOperator = NES::SequencePhysicalOperator(operatorHandlerId, NES::ScanPhysicalOperator(memoryProvider));
 
         auto wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
             physicalOperator,

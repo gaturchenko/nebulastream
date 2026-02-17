@@ -40,7 +40,6 @@
 #include <SinkPhysicalOperator.hpp>
 #include <SequencePhysicalOperator.hpp>
 #include <SequenceOperatorHandler.hpp>
-#include <InterBufferBatchingOperator.hpp>
 
 namespace NES::QueryCompilation::PipeliningPhase
 {
@@ -91,55 +90,6 @@ std::shared_ptr<Pipeline> createNewPipelineWithScan(
         = std::make_shared<Pipeline>(createScanOperator(*prevPipeline, wrappedOpAfterScan.getInputSchema(), configuredBufferSize));
     prevPipeline->addSuccessor(newPipeline, prevPipeline);
     pipelineMap[wrappedOpAfterScan.getPhysicalOperator().getId()] = newPipeline;
-    newPipeline->appendOperator(wrappedOpAfterScan.getPhysicalOperator());
-    return newPipeline;
-}
-
-std::shared_ptr<Pipeline> createNewPipelineWithSequence(
-    const std::shared_ptr<Pipeline>& prevPipeline,
-    OperatorPipelineMap& pipelineMap,
-    const PhysicalOperatorWrapper& wrappedOpAfterScan,
-    const uint64_t configuredBufferSize,
-    HandlerData handlerData)
-{
-    const auto inputSchema = wrappedOpAfterScan.getInputSchema();
-    INVARIANT(inputSchema.has_value(), "Wrapped operator has no input schema");
-
-    if (inputSchema.value().getSizeOfSchemaInBytes() > configuredBufferSize)
-    {
-        throw TuplesTooLargeForPipelineBufferSize(
-            "Got pipeline with an input schema size of {}, which is larger than the configured buffer size of the pipeline, which is {}",
-            inputSchema.value().getSizeOfSchemaInBytes(),
-            configuredBufferSize);
-    }
-
-    auto operatorHandlerId = getNextOperatorHandlerId();
-    auto handler = std::make_shared<SequenceOperatorHandler>(
-        handlerData.inputOrigins, handlerData.outputOriginId, handlerData.batchSize);
-
-    const auto memoryProvider = TupleBufferRef::create(configuredBufferSize, inputSchema.value());
-
-    std::shared_ptr<Pipeline> newPipeline = nullptr;
-    if (prevPipeline->isSourcePipeline())
-    {
-        const auto inputFormatterConfig = prevPipeline->getRootOperator().get<SourcePhysicalOperator>().getDescriptor().getParserConfig();
-        if (toUpperCase(inputFormatterConfig.parserType) != "NATIVE")
-        {
-            newPipeline = std::make_shared<Pipeline>(
-                SequencePhysicalOperator(operatorHandlerId,
-                    ScanPhysicalOperator(provideInputFormatterTupleBufferRef(inputFormatterConfig, memoryProvider)),
-                    memoryProvider, false));
-        }
-    }
-    else
-    {
-        newPipeline = std::make_shared<Pipeline>(
-        SequencePhysicalOperator(operatorHandlerId, ScanPhysicalOperator(memoryProvider), memoryProvider, false));
-    }
-
-    prevPipeline->addSuccessor(newPipeline, prevPipeline);
-    pipelineMap[wrappedOpAfterScan.getPhysicalOperator().getId()] = newPipeline;
-    newPipeline->getOperatorHandlers().emplace(operatorHandlerId, handler);
     newPipeline->appendOperator(wrappedOpAfterScan.getPhysicalOperator());
     return newPipeline;
 }
@@ -225,21 +175,6 @@ void buildPipelineRecursively(
                 const OperatorHandlerId operatorHandlerIndex = opWrapper->getHandlerId().value();
                 newPipeline->getOperatorHandlers().emplace(operatorHandlerIndex, opWrapper->getHandler().value());
             }
-
-            for (auto& child : opWrapper->getChildren())
-            {
-                buildPipelineRecursively(child, opWrapper, newPipeline, pipelineMap, PipelinePolicy::ForceNew, configuredBufferSize);
-            }
-        }
-        else if (opWrapper->getPhysicalOperator().tryGet<InterBufferBatchingOperator>().has_value())
-        {
-            auto interBufferOp = opWrapper->getPhysicalOperator().get<InterBufferBatchingOperator>();
-            addDefaultEmit(currentPipeline, *prevOpWrapper, configuredBufferSize);
-
-            auto newPipeline = createNewPipelineWithSequence(
-                currentPipeline, pipelineMap, *opWrapper, configuredBufferSize, interBufferOp.handlerData);
-            const OperatorHandlerId operatorHandlerIndex = opWrapper->getHandlerId().value();
-            newPipeline->getOperatorHandlers().emplace(operatorHandlerIndex, opWrapper->getHandler().value());
 
             for (auto& child : opWrapper->getChildren())
             {
@@ -384,7 +319,7 @@ std::shared_ptr<PipelinedQueryPlan> apply(const PhysicalPlan& physicalPlan)
         }
     }
 
-    NES_DEBUG("Constructed pipeline plan with {} root pipelines.\n{}", pipelinedPlan->getPipelines().size(), *pipelinedPlan);
+    NES_INFO("Constructed pipeline plan with {} root pipelines.\n{}", pipelinedPlan->getPipelines().size(), *pipelinedPlan);
     return pipelinedPlan;
 }
 }
