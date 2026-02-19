@@ -39,7 +39,7 @@ void IREEInferenceOperatorHandler::stop(QueryTerminationType, PipelineExecutionC
     if (model.getInputs()[0].isType(DataType::Type::VARSIZED))
     {
         uint64_t misses{0};
-        for (auto adapter : threadLocalAdapters) { misses += adapter->misses; }
+        for (const auto& adapter : threadLocalAdapters) { misses += adapter->misses; }
         NES_INFO("{{\"pipeline_id\": {}, \"misses\": {}}}", pipelineExecutionContext.getPipelineId(), misses)
     }
     threadLocalAdapters.clear();

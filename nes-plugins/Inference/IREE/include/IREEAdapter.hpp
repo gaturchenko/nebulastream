@@ -183,12 +183,15 @@ public:
                 ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
                 break;
             case LOW:
+                lowReductions += 1;
                 ireeOutputBV = runtimeWrapper.execute(functionName, inputDataHalf.get(), std::ceil(1 / float(LOW) * inputSize), currentReductionLevel);
                 break;
             case MEDIUM:
+                mediumReductions += 1;
                 ireeOutputBV = runtimeWrapper.execute(functionName, inputDataFourth.get(), std::ceil(1 / float(MEDIUM) * inputSize), currentReductionLevel);
                 break;
             case HIGH:
+                highReductions += 1;
                 ireeOutputBV = runtimeWrapper.execute(functionName, inputDataEighth.get(), std::ceil(1 / float(HIGH) * inputSize), currentReductionLevel);
                 break;
         }
@@ -280,6 +283,10 @@ public:
     size_t outputSize;
 
     uint64_t misses;
+    uint64_t lowReductions;
+    uint64_t mediumReductions;
+    uint64_t highReductions;
+    uint64_t fullReductions;
 
 private:
     std::string functionName;

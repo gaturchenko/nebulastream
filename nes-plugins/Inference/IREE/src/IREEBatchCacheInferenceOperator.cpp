@@ -64,6 +64,7 @@ void copyVarSizedToModelProxy(int index, std::byte* content, uint32_t size, size
     /// we need to write the row index of the tuple so as to know where to insert it in the output byte array after the model call
     adapter->updateCacheMapIndices(keyIdx, index);
     adapter->appendMissIdx(index);
+    adapter->misses += 1;
 
     adapter->addModelInputBatchPartial(index, std::span{content, size}, tupleSize);
 }
@@ -85,6 +86,7 @@ size_t applyModelProxy(void* inferModelHandler, WorkerThreadId thread, size_t ou
     {
         return adapter->inferCombine<T>(outputSize, outputFields, isVarSizedOutput);
     }
+    adapter->fullReductions += 1;
     return 0;
 }
 
@@ -556,6 +558,14 @@ IREEBatchCacheInferenceOperator::createRecord(const Record& featureRecord, const
         record.write(fieldName, featureRecord.read(fieldName));
     }
     return record;
+}
+
+void IREEBatchCacheInferenceOperator::terminate(ExecutionContext& executionCtx) const
+{
+    nautilus::invoke(
+        +[](OperatorHandler* opHandler, PipelineExecutionContext* pec) { opHandler->stop(QueryTerminationType::Graceful, *pec); },
+        executionCtx.getGlobalOperatorHandler(operatorHandlerId),
+        executionCtx.pipelineContext);
 }
 
 }

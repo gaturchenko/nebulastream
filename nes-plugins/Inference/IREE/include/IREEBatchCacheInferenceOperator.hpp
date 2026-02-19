@@ -42,6 +42,7 @@ public:
     void open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
     void close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
     void setup(ExecutionContext& executionCtx, CompilationContext&) const override;
+    void terminate(ExecutionContext& executionCtx) const override;
 
     [[nodiscard]] Record createRecord(const Record& featureRecord, const std::vector<Record::RecordFieldIdentifier>& projections) const;
 
