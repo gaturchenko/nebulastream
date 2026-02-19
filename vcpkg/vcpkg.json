@@ -22,20 +22,6 @@
           ]
         }
       ]
-    },
-    "opencv": {
-      "description": "opencv",
-      "dependencies": [
-        {
-          "name": "opencv4",
-          "default-features": false,
-          "features": [
-            "calib3d",
-            "jpeg",
-            "png"
-          ]
-        }
-      ]
     }
   },
   "dependencies": [
@@ -75,7 +61,6 @@
     }
   ],
   "default-features": [
-    "opencv",
     "mqtt"
   ]
 }
