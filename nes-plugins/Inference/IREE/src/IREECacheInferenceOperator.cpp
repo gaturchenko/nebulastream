@@ -17,6 +17,7 @@
 #include <IREECacheInferenceOperator.hpp>
 #include <IREEInferenceOperatorHandler.hpp>
 #include <Nautilus/Interface/Record.hpp>
+#include <PredictionCache/PredictionCacheAlwaysMiss.hpp>
 #include <PredictionCache/PredictionCache2Q.hpp>
 #include <PredictionCache/PredictionCacheFIFO.hpp>
 #include <PredictionCache/PredictionCacheLFU.hpp>
@@ -277,6 +278,9 @@ void IREECacheInferenceOperator::setup(ExecutionContext& executionCtx, Compilati
             break;
         case Configurations::PredictionCacheType::TWO_QUEUES:
             sizeOfEntry = sizeof(PredictionCacheEntry2Q);
+            break;
+        case Configurations::PredictionCacheType::ALWAYS_MISS:
+            sizeOfEntry = sizeof(PredictionCacheEntryAlwaysMiss);
             break;
     }
 

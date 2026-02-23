@@ -26,6 +26,7 @@ namespace NES::Configurations
 enum class PredictionCacheType : uint8_t
 {
     NONE,
+    ALWAYS_MISS,
     TWO_QUEUES,
     FIFO,
     LFU,

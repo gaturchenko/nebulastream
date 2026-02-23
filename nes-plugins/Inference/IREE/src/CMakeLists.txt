@@ -23,6 +23,7 @@ add_plugin_as_library(InferenceModel RewriteRule nes-query-optimizer iree_infere
         BatchingPhysicalOperator.cpp
         InterBufferBatchingPhysicalOperator.cpp
         PredictionCache/PredictionCache.cpp
+        PredictionCache/PredictionCacheAlwaysMiss.cpp
         PredictionCache/PredictionCache2Q.cpp
         PredictionCache/PredictionCacheFIFO.cpp
         PredictionCache/PredictionCacheLFU.cpp

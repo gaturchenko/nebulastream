@@ -12,6 +12,7 @@
     limitations under the License.
 */
 
+#include <PredictionCache/PredictionCacheAlwaysMiss.hpp>
 #include <PredictionCache/PredictionCache2Q.hpp>
 #include <PredictionCache/PredictionCacheFIFO.hpp>
 #include <PredictionCache/PredictionCacheLFU.hpp>
@@ -111,6 +112,16 @@ std::unique_ptr<PredictionCache> createPredictionCache(
                 startOfLRUEntries,
                 fifoQueueSize,
                 lruQueueSize,
+                inputSize);
+        }
+        case NES::Configurations::PredictionCacheType::ALWAYS_MISS: {
+            return std::make_unique<PredictionCacheAlwaysMiss>(
+                globalOperatorHandler,
+                predictionCacheOptions.numberOfEntries,
+                sizeof(PredictionCacheEntry2Q),
+                predictionCacheEntries,
+                hitsRef,
+                missesRef,
                 inputSize);
         }
     }

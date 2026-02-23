@@ -114,7 +114,8 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                 case NES::Configurations::PredictionCacheType::FIFO:
                 case NES::Configurations::PredictionCacheType::LFU:
                 case NES::Configurations::PredictionCacheType::LRU:
-                case NES::Configurations::PredictionCacheType::SECOND_CHANCE: {
+                case NES::Configurations::PredictionCacheType::SECOND_CHANCE:
+                case NES::Configurations::PredictionCacheType::ALWAYS_MISS: {
                     NES_DEBUG("Lower InferModel operator to IREECacheInferenceOperator");
                     NES::Configurations::PredictionCacheOptions predictionCacheOptions{
                         predictionCacheType.getValue(),
@@ -221,7 +222,8 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                 case NES::Configurations::PredictionCacheType::FIFO:
                 case NES::Configurations::PredictionCacheType::LFU:
                 case NES::Configurations::PredictionCacheType::LRU:
-                case NES::Configurations::PredictionCacheType::SECOND_CHANCE: {
+                case NES::Configurations::PredictionCacheType::SECOND_CHANCE:
+                case NES::Configurations::PredictionCacheType::ALWAYS_MISS: {
                     NES_DEBUG("Lower InferModel operator to IREEBatchCacheInferenceOperator");
                     NES::Configurations::PredictionCacheOptions predictionCacheOptions{
                         predictionCacheType.getValue(),

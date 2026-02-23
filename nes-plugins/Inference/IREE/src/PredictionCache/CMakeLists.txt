@@ -12,6 +12,7 @@
 
 add_source_files(nes-physical-operators
         PredictionCache.cpp
+        PredictionCacheAlwaysMiss.cpp
         PredictionCache2Q.cpp
         PredictionCacheFIFO.cpp
         PredictionCacheLFU.cpp
