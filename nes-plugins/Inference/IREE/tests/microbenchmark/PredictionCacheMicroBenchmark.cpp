@@ -137,7 +137,7 @@ std::string createNewCsvHeaderLine()
 
 using BenchmarkData = std::vector<std::unique_ptr<std::byte[]>>;
 
-[[maybe_unused]] std::unique_ptr<std::byte[]>
+std::unique_ptr<std::byte[]>
 createRecord(const size_t recordSize, const uint64_t id, std::mt19937_64& rng)
 {
     auto record = std::make_unique<std::byte[]>(recordSize);
@@ -154,7 +154,7 @@ createRecord(const size_t recordSize, const uint64_t id, std::mt19937_64& rng)
     return record;
 }
 
-[[maybe_unused]] BenchmarkData createBenchmarkData(
+BenchmarkData createBenchmarkData(
     const uint64_t cacheSize,
     const size_t totalRecords,
     const HitMissRatio ratio,
@@ -217,7 +217,7 @@ createRecord(const size_t recordSize, const uint64_t id, std::mt19937_64& rng)
     return records;
 }
 
-[[maybe_unused]] size_t getPredictionCacheEntrySize(const NES::Configurations::PredictionCacheOptions& predictionCacheOptions)
+size_t getPredictionCacheEntrySize(const NES::Configurations::PredictionCacheOptions& predictionCacheOptions)
 {
     switch (predictionCacheOptions.predictionCacheType)
     {
@@ -238,7 +238,7 @@ createRecord(const size_t recordSize, const uint64_t id, std::mt19937_64& rng)
     std::unreachable();
 }
 
-[[maybe_unused]] auto createPredictionCacheFillFunction(
+auto createPredictionCacheFillFunction(
     const nautilus::engine::NautilusEngine& nautilusEngine, const NES::Configurations::PredictionCacheOptions& predictionCacheOptions)
 {
     return nautilusEngine.registerFunction(std::function(
