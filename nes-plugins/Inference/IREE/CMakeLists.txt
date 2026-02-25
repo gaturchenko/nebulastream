@@ -23,3 +23,5 @@ add_plugin(iris_label PhysicalFunction nes-physical-operators IrisLabelExecutabl
 
 add_plugin(SpeechRecognitionLabel LogicalFunction nes-logical-operators SpeechRecognitionLabelLogicalFunction.cpp)
 add_plugin(SpeechRecognitionLabel PhysicalFunction nes-physical-operators SpeechRecognitionLabelExecutableFunction.cpp)
+
+add_tests_if_enabled(tests)
