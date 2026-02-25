@@ -267,10 +267,12 @@ auto createPredictionCacheFillFunction(
 
                         const auto recordRef = NES::getMemberRef(predictionCacheEntryToReplace, &NES::PredictionCacheEntry::record);
                         const auto recordSizeRef = NES::getMemberRef(predictionCacheEntryToReplace, &NES::PredictionCacheEntry::recordSize);
+
                         *NES::getMemberWithOffset<std::byte*>(recordRef, 0) = inputDataVal;
+                        *NES::getMemberWithOffset<std::size_t>(recordSizeRef, 0) = nautilus::val<std::size_t>(TUPLE_SIZE);
 
                         const auto dataStructureRef = NES::getMemberRef(predictionCacheEntryToReplace, &NES::PredictionCacheEntry::dataStructure);
-                        *NES::getMemberWithOffset<std::byte*>(dataStructureRef, 0) = nautilus::val<std::byte*>(std::make_unique<std::byte[]>(TUPLE_SIZE).get());
+                        *NES::getMemberWithOffset<std::byte*>(dataStructureRef, 0) = nautilus::val<std::byte*>(nullptr);
 
                         return predictionCacheEntryToReplace;
                     });
