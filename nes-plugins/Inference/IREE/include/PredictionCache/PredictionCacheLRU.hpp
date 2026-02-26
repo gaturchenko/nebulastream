@@ -78,5 +78,8 @@ public:
 
 private:
     nautilus::val<uint64_t*> getAgeBit(const nautilus::val<uint64_t>& pos);
+
+    /// Monotonic access counter used as a timestamp for LRU tracking.
+    nautilus::val<uint64_t> accessCounter;
 };
 }

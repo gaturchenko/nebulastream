@@ -27,23 +27,24 @@ PredictionCacheLRU::PredictionCacheLRU(
     const nautilus::val<uint64_t*>& missesRef,
     const nautilus::val<size_t>& inputSize)
     : PredictionCache(operatorHandler, numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize)
+    , accessCounter(0)
 {
 }
 
 nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
 {
-    nautilus::val<uint64_t> maxAge = 0;
-    nautilus::val<uint64_t> maxAgeIndex = 0;
+    nautilus::val<uint64_t> minAge = UINT64_MAX;
+    nautilus::val<uint64_t> minAgeIndex = 0;
     for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
     {
         auto ageBit = getAgeBit(i);
-        if (*ageBit > maxAge)
+        if (*ageBit < minAge)
         {
-            maxAge = *ageBit;
-            maxAgeIndex = i;
+            minAge = *ageBit;
+            minAgeIndex = i;
         }
     }
-    return maxAgeIndex;
+    return minAgeIndex;
 }
 
 nautilus::val<uint64_t*> PredictionCacheLRU::getAgeBit(const nautilus::val<uint64_t>& pos)
@@ -61,80 +62,50 @@ void PredictionCacheLRU::updateValues(const nautilus::val<uint64_t>& pos, const 
 
 nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
-    /// First, we have to increment all age bits by one.
-    nautilus::val<uint64_t> maxAge = 0;
-    nautilus::val<uint64_t> maxAgeIndex = 0;
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
-    {
-        auto ageBit = getAgeBit(i);
-        const auto newAgeBit = nautilus::val<uint64_t>(*ageBit) + nautilus::val<uint64_t>(1);
-        *ageBit = newAgeBit;
-        if (newAgeBit > maxAge)
-        {
-            maxAge = newAgeBit;
-            maxAgeIndex = i;
-        }
-    }
-
-    /// Second, we check if the timestamp is already in the cache. If this is the case, we reset its age bit
+    /// First, we check if the record is already in the cache. If this is the case, we update its access timestamp.
     if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
-        auto ageBit = getAgeBit(dataStructurePos);
-        const auto newAgeBit = nautilus::val<uint64_t>(0);
-        *ageBit = newAgeBit;
+        accessCounter = accessCounter + 1;
+        *getAgeBit(dataStructurePos) = accessCounter;
         return dataStructurePos;
     }
 
-    /// If the timestamp is not in the cache, we have a cache miss.
+    /// If the record is not in the cache, we have a cache miss.
     incrementNumberOfMisses();
 
-    /// Third, we have to replace the entry with the highest age bit, as we are in the LRU cache.
-    /// Additionally, we have to reset the age bit of the replaced entry.
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + maxAgeIndex * sizeOfEntry;
-    updateFunction(PredictionCacheEntryToReplace, maxAgeIndex);
-    replacementIndex = maxAgeIndex;
-    *getAgeBit(maxAgeIndex) = 0;
+    /// Second, we have to replace the least-recently-used entry.
+    const auto replacementPos = getReplacementPos();
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementPos * sizeOfEntry;
+    updateFunction(PredictionCacheEntryToReplace, replacementPos);
+    replacementIndex = replacementPos;
+    accessCounter = accessCounter + 1;
+    *getAgeBit(replacementPos) = accessCounter;
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
 nautilus::val<std::byte*>
 PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction)
 {
-    /// First, we have to increment all age bits by one.
-    nautilus::val<uint64_t> maxAge = 0;
-    nautilus::val<uint64_t> maxAgeIndex = 0;
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
-    {
-        auto ageBit = getAgeBit(i);
-        const auto newAgeBit = nautilus::val<uint64_t>(*ageBit) + nautilus::val<uint64_t>(1);
-        *ageBit = newAgeBit;
-        if (newAgeBit > maxAge)
-        {
-            maxAge = newAgeBit;
-            maxAgeIndex = i;
-        }
-    }
-
-    /// Second, we check if the timestamp is already in the cache. If this is the case, we reset its age bit
+    /// First, we check if the record is already in the cache. If this is the case, we update its access timestamp.
     if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
-        auto ageBit = getAgeBit(dataStructurePos);
-        const auto newAgeBit = nautilus::val<uint64_t>(0);
-        *ageBit = newAgeBit;
+        accessCounter = accessCounter + 1;
+        *getAgeBit(dataStructurePos) = accessCounter;
         return getDataStructure(dataStructurePos);
     }
 
-    /// If the timestamp is not in the cache, we have a cache miss.
+    /// If the record is not in the cache, we have a cache miss.
     incrementNumberOfMisses();
 
-    /// Third, we have to replace the entry with the highest age bit, as we are in the LRU cache.
-    /// Additionally, we have to reset the age bit of the replaced entry.
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + maxAgeIndex * sizeOfEntry;
-    const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, maxAgeIndex);
-    replacementIndex = maxAgeIndex;
-    *getAgeBit(maxAgeIndex) = 0;
+    /// Second, we have to replace the least-recently-used entry.
+    const auto replacementPos = getReplacementPos();
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementPos * sizeOfEntry;
+    const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, replacementPos);
+    replacementIndex = replacementPos;
+    accessCounter = accessCounter + 1;
+    *getAgeBit(replacementPos) = accessCounter;
     return dataStructure;
 }
 }

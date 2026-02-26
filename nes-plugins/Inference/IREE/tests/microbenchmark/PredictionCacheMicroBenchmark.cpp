@@ -43,12 +43,14 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 namespace
 {
 
 size_t constexpr TUPLE_SIZE = 32;
+int constexpr WARMUP_RUNS = 3;
 
 enum class HitMissRatio
 {
@@ -154,10 +156,194 @@ createRecord(const size_t recordSize, const uint64_t id, std::mt19937_64& rng)
     return record;
 }
 
+enum class SimCachePolicy : uint8_t
+{
+    FIFO,
+    LFU,
+    LRU,
+    SECOND_CHANCE
+};
+
+struct SimCacheSlot
+{
+    bool occupied = false;
+    uint64_t key = 0;
+    uint64_t age = 0;
+    uint64_t frequency = 0;
+    bool secondChance = false;
+};
+
+class SimCache
+    {
+    public:
+        SimCache(const SimCachePolicy policy, const size_t capacity)
+            : policy(policy), capacity(capacity), slots(capacity)
+        {
+        }
+
+        bool canHit() const { return !residentKeys.empty(); }
+
+        uint64_t pickRandomResidentKey(std::mt19937_64& rng) const
+        {
+            std::uniform_int_distribution<size_t> dist(0, residentKeys.size() - 1);
+            return residentKeys[dist(rng)];
+        }
+
+        bool access(const uint64_t key)
+        {
+            if (capacity == 0)
+            {
+                return false;
+            }
+
+            if (policy == SimCachePolicy::LRU)
+            {
+                uint64_t maxAge = 0;
+                size_t maxAgeIndex = 0;
+                for (size_t i = 0; i < capacity; ++i)
+                {
+                    const uint64_t newAge = slots[i].age + 1;
+                    slots[i].age = newAge;
+                    if (newAge > maxAge)
+                    {
+                        maxAge = newAge;
+                        maxAgeIndex = i;
+                    }
+                }
+
+                const auto it = keyToSlot.find(key);
+                if (it != keyToSlot.end())
+                {
+                    slots[it->second].age = 0;
+                    return true;
+                }
+
+                replaceAt(maxAgeIndex, key);
+                slots[maxAgeIndex].age = 0;
+                return false;
+            }
+
+            const auto it = keyToSlot.find(key);
+            if (it != keyToSlot.end())
+            {
+                const size_t idx = it->second;
+                switch (policy)
+                {
+                    case SimCachePolicy::FIFO:
+                        break;
+                    case SimCachePolicy::LFU:
+                        slots[idx].frequency += 1;
+                        break;
+                    case SimCachePolicy::SECOND_CHANCE:
+                        slots[idx].secondChance = true;
+                        break;
+                    case SimCachePolicy::LRU:
+                        break;
+                }
+                return true;
+            }
+
+            switch (policy)
+            {
+                case SimCachePolicy::FIFO:
+                {
+                    const size_t idx = replacementIndex;
+                    replaceAt(idx, key);
+                    replacementIndex = (replacementIndex + 1) % capacity;
+                    return false;
+                }
+                case SimCachePolicy::LFU:
+                {
+                    uint64_t minFrequency = UINT64_MAX;
+                    size_t minFrequencyIndex = 0;
+                    for (size_t i = 0; i < capacity; ++i)
+                    {
+                        if (slots[i].frequency < minFrequency)
+                        {
+                            minFrequency = slots[i].frequency;
+                            minFrequencyIndex = i;
+                        }
+                    }
+                    replaceAt(minFrequencyIndex, key);
+                    slots[minFrequencyIndex].frequency = 1;
+                    return false;
+                }
+                case SimCachePolicy::SECOND_CHANCE:
+                {
+                    while (slots[replacementIndex].secondChance)
+                    {
+                        slots[replacementIndex].secondChance = false;
+                        replacementIndex = (replacementIndex + 1) % capacity;
+                    }
+                    replaceAt(replacementIndex, key);
+                    slots[replacementIndex].secondChance = true;
+                    return false;
+                }
+                case SimCachePolicy::LRU:
+                    break;
+            }
+            return false;
+        }
+
+    private:
+        void removeResidentKey(const uint64_t key)
+        {
+            auto slotIt = keyToSlot.find(key);
+            if (slotIt != keyToSlot.end())
+            {
+                keyToSlot.erase(slotIt);
+            }
+
+            auto indexIt = keyToResidentIndex.find(key);
+            if (indexIt == keyToResidentIndex.end())
+            {
+                return;
+            }
+            const size_t index = indexIt->second;
+            const size_t lastIndex = residentKeys.size() - 1;
+            if (index != lastIndex)
+            {
+                const uint64_t lastKey = residentKeys[lastIndex];
+                residentKeys[index] = lastKey;
+                keyToResidentIndex[lastKey] = index;
+            }
+            residentKeys.pop_back();
+            keyToResidentIndex.erase(indexIt);
+        }
+
+        void addResidentKey(const uint64_t key)
+        {
+            keyToResidentIndex.emplace(key, residentKeys.size());
+            residentKeys.push_back(key);
+        }
+
+        void replaceAt(const size_t index, const uint64_t key)
+        {
+            if (slots[index].occupied)
+            {
+                removeResidentKey(slots[index].key);
+            }
+
+            slots[index].occupied = true;
+            slots[index].key = key;
+            keyToSlot[key] = index;
+            addResidentKey(key);
+        }
+
+        SimCachePolicy policy;
+        size_t capacity;
+        std::vector<SimCacheSlot> slots;
+        size_t replacementIndex = 0;
+        std::vector<uint64_t> residentKeys;
+        std::unordered_map<uint64_t, size_t> keyToSlot;
+        std::unordered_map<uint64_t, size_t> keyToResidentIndex;
+    };
+
 BenchmarkData createBenchmarkData(
     const uint64_t cacheSize,
     const size_t totalRecords,
     const HitMissRatio ratio,
+    const NES::Configurations::PredictionCacheType predictionCacheType,
     const size_t recordSize = TUPLE_SIZE,
     const uint64_t seed = 0xC0FFEEULL)
 {
@@ -177,41 +363,108 @@ BenchmarkData createBenchmarkData(
         throw std::invalid_argument("cacheSize must be greater than 0 when hits are requested");
     }
 
-    const size_t numHits = static_cast<size_t>((totalRecords * hitPercentage) / 100);
-    const size_t numMisses = totalRecords - numHits;
+    size_t numHits = static_cast<size_t>((totalRecords * hitPercentage) / 100);
+    size_t numMisses = totalRecords - numHits;
 
-    std::mt19937_64 rng(seed);
-
-    const size_t hotSetSize = static_cast<size_t>(cacheSize);
-    BenchmarkData hotSet;
-    hotSet.reserve(hotSetSize);
-    for (size_t i = 0; i < hotSetSize; ++i)
+    if (numMisses == 0 && totalRecords > 0)
     {
-        hotSet.emplace_back(createRecord(recordSize, static_cast<uint64_t>(i), rng));
+        /// Cold cache cannot yield a 100% hit rate; force one miss to seed residency.
+        numMisses = 1;
+        numHits = totalRecords - 1;
     }
 
-    std::vector<uint8_t> accessPattern(totalRecords, 0);
-    std::fill_n(accessPattern.begin(), numHits, static_cast<uint8_t>(1));
-    std::shuffle(accessPattern.begin(), accessPattern.end(), rng);
+    const auto resolveSimCachePolicy = [](const NES::Configurations::PredictionCacheType type)
+    {
+        switch (type)
+        {
+            case NES::Configurations::PredictionCacheType::FIFO:
+                return SimCachePolicy::FIFO;
+            case NES::Configurations::PredictionCacheType::LFU:
+                return SimCachePolicy::LFU;
+            case NES::Configurations::PredictionCacheType::LRU:
+                return SimCachePolicy::LRU;
+            case NES::Configurations::PredictionCacheType::SECOND_CHANCE:
+                return SimCachePolicy::SECOND_CHANCE;
+            case NES::Configurations::PredictionCacheType::ALWAYS_MISS:
+            case NES::Configurations::PredictionCacheType::NONE:
+            case NES::Configurations::PredictionCacheType::TWO_QUEUES:
+                throw std::invalid_argument("PredictionCacheType is invalid for benchmark data generation");
+        }
+    };
+
+    const SimCachePolicy simPolicy = resolveSimCachePolicy(predictionCacheType);
+
+    std::mt19937_64 rngPattern(seed);
+    std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
+
+    SimCache simCache(simPolicy, static_cast<size_t>(cacheSize));
+    std::vector<uint64_t> accessKeys;
+    accessKeys.reserve(totalRecords);
+
+    size_t remainingHits = numHits;
+    size_t remainingMisses = numMisses;
+    std::uniform_real_distribution<double> pickRatio(0.0, 1.0);
+    uint64_t nextMissKey = 0;
+
+    for (size_t i = 0; i < totalRecords; ++i)
+    {
+        const size_t remaining = totalRecords - i;
+        const bool canHit = simCache.canHit();
+
+        bool chooseHit = false;
+        if (remainingHits == 0)
+        {
+            chooseHit = false;
+        }
+        else if (remainingMisses == 0)
+        {
+            chooseHit = canHit;
+        }
+        else if (!canHit)
+        {
+            chooseHit = false;
+        }
+        else
+        {
+            const double hitProbability = static_cast<double>(remainingHits) / static_cast<double>(remaining);
+            chooseHit = pickRatio(rngPattern) < hitProbability;
+        }
+
+        uint64_t key = 0;
+        if (chooseHit)
+        {
+            key = simCache.pickRandomResidentKey(rngPattern);
+            remainingHits--;
+        }
+        else
+        {
+            key = nextMissKey++;
+            remainingMisses--;
+        }
+
+        const bool observedHit = simCache.access(key);
+        (void)observedHit;
+        accessKeys.emplace_back(key);
+    }
 
     BenchmarkData records;
     records.reserve(totalRecords);
 
-    std::uniform_int_distribution<size_t> hotDist(0, hotSet.empty() ? 0 : hotSet.size() - 1);
-    uint64_t missId = cacheSize;
-    for (const uint8_t isHit : accessPattern)
+    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
+    keyTemplates.reserve(static_cast<size_t>(nextMissKey));
+
+    for (const uint64_t key : accessKeys)
     {
-        if (isHit != 0)
+        const size_t keyIndex = static_cast<size_t>(key);
+        while (keyTemplates.size() <= keyIndex)
         {
-            const auto& hotRecord = hotSet[hotDist(rng)];
-            auto record = std::make_unique<std::byte[]>(recordSize);
-            std::memcpy(record.get(), hotRecord.get(), recordSize);
-            records.emplace_back(std::move(record));
+            const uint64_t newKey = keyTemplates.size();
+            keyTemplates.emplace_back(createRecord(recordSize, newKey, rngData));
         }
-        else
-        {
-            records.emplace_back(createRecord(recordSize, missId++, rng));
-        }
+
+        auto record = std::make_unique<std::byte[]>(recordSize);
+        std::memcpy(record.get(), keyTemplates[keyIndex].get(), recordSize);
+        records.emplace_back(std::move(record));
     }
 
     return records;
@@ -221,6 +474,7 @@ size_t getPredictionCacheEntrySize(const NES::Configurations::PredictionCacheOpt
 {
     switch (predictionCacheOptions.predictionCacheType)
     {
+        case NES::Configurations::PredictionCacheType::ALWAYS_MISS:
         case NES::Configurations::PredictionCacheType::NONE:
         case NES::Configurations::PredictionCacheType::TWO_QUEUES:
             throw std::runtime_error("PredictionCacheType is invalid");
@@ -232,8 +486,6 @@ size_t getPredictionCacheEntrySize(const NES::Configurations::PredictionCacheOpt
             return sizeof(NES::PredictionCacheEntryLRU);
         case NES::Configurations::PredictionCacheType::SECOND_CHANCE:
             return sizeof(NES::PredictionCacheEntrySecondChance);
-        case NES::Configurations::PredictionCacheType::ALWAYS_MISS:
-            return sizeof(NES::PredictionCacheEntryAlwaysMiss);
     }
     std::unreachable();
 }
@@ -289,7 +541,7 @@ runBenchmark(const BenchmarkParameters& benchmarkParams, const int numReps, Benc
     auto predictionCacheFunction = createPredictionCacheFillFunction(nautilusEngine, benchmarkParams.predictionCacheOptions);
 
     std::vector<BenchmarkRunMeasurements> benchmarkRunMeasurements;
-    for (auto rep = 0; rep < numReps; ++rep)
+    for (auto rep = 0; rep < numReps + WARMUP_RUNS; ++rep)
     {
         std::vector<std::byte*> benchmarkDataRefs;
         benchmarkDataRefs.reserve(benchmarkData.size());
@@ -317,7 +569,10 @@ runBenchmark(const BenchmarkParameters& benchmarkParams, const int numReps, Benc
         const auto hits = *reinterpret_cast<uint64_t*>(predictionCacheMemory.data());
         const auto misses = *reinterpret_cast<uint64_t*>(predictionCacheMemory.data() + sizeof(hits));
 
-        benchmarkRunMeasurements.emplace_back(duration_cast<std::chrono::microseconds>(duration), hits, misses);
+        if (rep >= WARMUP_RUNS)
+        {
+            benchmarkRunMeasurements.emplace_back(duration_cast<std::chrono::microseconds>(duration), hits, misses);
+        }
     }
 
     return benchmarkRunMeasurements;
@@ -370,7 +625,7 @@ private:
 int main()
 {
     constexpr auto allPredictionCacheTypes = magic_enum::enum_values<NES::Configurations::PredictionCacheType>();
-    const auto allPredictionCacheSizes = {100};
+    const auto allPredictionCacheSizes =  {100, 1'000}; // {10'000};
     const auto allHitsMissesRatios = magic_enum::enum_values<HitMissRatio>();
     constexpr auto REPS = 10;
 
@@ -400,16 +655,16 @@ int main()
     {
         for (const auto& hitMissRatio: allHitsMissesRatios)
         {
-            auto benchmarkData = createBenchmarkData(predictionCacheSize, 1'000'000, hitMissRatio);
-
             for (const auto& predictionCacheType: allPredictionCacheTypes)
             {
                 if (predictionCacheType == NES::Configurations::PredictionCacheType::NONE
-                    || predictionCacheType == NES::Configurations::PredictionCacheType::TWO_QUEUES)
+                    || predictionCacheType == NES::Configurations::PredictionCacheType::TWO_QUEUES
+                    || predictionCacheType == NES::Configurations::PredictionCacheType::ALWAYS_MISS)
                 {
                     continue;
                 }
 
+                auto benchmarkData = createBenchmarkData(predictionCacheSize, 1'000'000, hitMissRatio, predictionCacheType);
                 BenchmarkParameters benchmarkParams{
                     PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize}, hitMissRatio};
                 const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
