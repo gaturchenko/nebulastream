@@ -14,20 +14,12 @@
 
 #include "IREEAdapter.hpp"
 #include <fstream>
+#include <cstdint>
 #include <Util/Logger/Logger.hpp>
 #include <iree/runtime/api.h>
 #include "IREERuntimeWrapper.hpp"
 
 #include <Model.hpp>
-
-namespace NES
-{
-
-std::shared_ptr<IREEAdapter> IREEAdapter::create()
-{
-    auto adapter = std::make_shared<IREEAdapter>();
-    return adapter;
-}
 
 namespace
 {
@@ -36,6 +28,9 @@ iree_const_byte_span_t asIREESpan(std::span<const std::byte> span)
     return iree_const_byte_span_t{.data = reinterpret_cast<const uint8_t*>(span.data()), .data_length = span.size()};
 }
 }
+
+namespace NES
+{
 
 void IREEAdapter::initializeModel(Nebuli::Inference::Model& model, uint64_t batch_size)
 {
@@ -59,5 +54,219 @@ void IREEAdapter::initializeModel(Nebuli::Inference::Model& model, uint64_t batc
     this->outputSize = outputSize;
     runtimeWrapper.setOutputDtype(dtypeMap.at(model.getOutputDtype()));
 }
+
+template <class T>
+void IREEAdapter::addModelInputPartial(T value)
+{
+    const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
+    const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
+    const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
+
+    if (inputDataEighth != nullptr && bytesProcessed < thresholdHigh)
+    {
+        currentReductionLevel = HIGH;
+        std::bit_cast<T*>(inputDataEighth.get())[bytesProcessed / sizeof(T)] = value;
+        bytesProcessed += sizeof(T);
+    }
+    else if (inputDataFourth != nullptr && bytesProcessed < thresholdMedium)
+    {
+        if (currentReductionLevel == HIGH)
+        {
+            std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
+        }
+        currentReductionLevel = MEDIUM;
+        std::bit_cast<T*>(inputDataFourth.get())[bytesProcessed / sizeof(T)] = value;
+        bytesProcessed += sizeof(T);
+    }
+    else if (inputDataHalf != nullptr && bytesProcessed < thresholdLow)
+    {
+        if (currentReductionLevel == MEDIUM)
+        {
+            std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
+        }
+        currentReductionLevel = LOW;
+        std::bit_cast<T*>(inputDataHalf.get())[bytesProcessed / sizeof(T)] = value;
+        bytesProcessed += sizeof(T);
+    }
+    else
+    {
+        if (currentReductionLevel == LOW)
+        {
+            std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
+        }
+        currentReductionLevel = NONE;
+        std::bit_cast<T*>(inputData.get())[bytesProcessed / sizeof(T)] = value;
+        bytesProcessed += sizeof(T);
+    }
+}
+
+void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> content, size_t tupleSize)
+{
+    const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
+    const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
+    const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
+
+    const auto sizeToWrite = std::min(content.size(), tupleSize);
+
+    if (inputDataEighth != nullptr && bytesProcessed + tupleSize <= thresholdHigh)
+    {
+        currentReductionLevel = HIGH;
+        std::ranges::copy_n(content.data(), sizeToWrite, inputDataEighth.get() + bytesProcessed);
+        bytesProcessed += content.size();
+    }
+    else if (inputDataFourth != nullptr && bytesProcessed + tupleSize <= thresholdMedium)
+    {
+        if (currentReductionLevel == HIGH)
+        {
+            std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
+        }
+        currentReductionLevel = MEDIUM;
+        std::ranges::copy_n(content.data(), sizeToWrite, inputDataFourth.get() + bytesProcessed);
+        bytesProcessed += content.size();
+    }
+    else if (inputDataHalf != nullptr && bytesProcessed + tupleSize <= thresholdLow)
+    {
+        if (currentReductionLevel == MEDIUM)
+        {
+            std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
+        }
+        currentReductionLevel = LOW;
+        std::ranges::copy_n(content.data(), sizeToWrite, inputDataHalf.get() + bytesProcessed);
+        bytesProcessed += content.size();
+    }
+    else
+    {
+        if (currentReductionLevel == LOW)
+        {
+            std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
+        }
+        currentReductionLevel = NONE;
+        std::ranges::copy_n(content.data(), sizeToWrite, inputData.get() + index * tupleSize);
+        bytesProcessed += content.size();
+    }
+}
+
+template <class T>
+void IREEAdapter::infer()
+{
+    auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
+    runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()));
+}
+
+template <class T>
+size_t IREEAdapter::inferCombine(size_t outputSize, size_t outputFields, bool isVarSizedOutput)
+{
+    iree_hal_buffer_view_t* ireeOutputBV = nullptr;
+    switch (currentReductionLevel)
+    {
+        default:
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
+            break;
+        case LOW:
+            lowReductions += 1;
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputDataHalf.get(), std::ceil(1 / float(LOW) * inputSize), currentReductionLevel);
+            break;
+        case MEDIUM:
+            mediumReductions += 1;
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputDataFourth.get(), std::ceil(1 / float(MEDIUM) * inputSize), currentReductionLevel);
+            break;
+        case HIGH:
+            highReductions += 1;
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputDataEighth.get(), std::ceil(1 / float(HIGH) * inputSize), currentReductionLevel);
+            break;
+    }
+
+    runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()), sizeof(T), outputSize, batchCachingHelper.getMissIndices(), outputFields, isVarSizedOutput);
+
+    batchCachingHelper.clearMissIndices();
+    currentReductionLevel = NONE;
+    bytesProcessed = 0;
+
+    return batchCachingHelper.getCacheMapSize();
+}
+
+template <class T>
+void IREEAdapter::addModelInput(size_t index, T value)
+{
+    PRECONDITION(index < inputSize / sizeof(T), "Index is too large");
+    std::bit_cast<T*>(inputData.get())[index] = value;
+}
+
+void IREEAdapter::addModelInput(std::span<std::byte> content)
+{
+    std::ranges::copy_n(content.data(), std::min(content.size(), inputSize), inputData.get());
+}
+
+void IREEAdapter::addModelInputBatch(int index, std::span<std::byte> content, size_t tupleSize)
+{
+    std::ranges::copy_n(content.data(), std::min(content.size(), tupleSize), inputData.get() + index * tupleSize);
+}
+
+template <class T>
+T IREEAdapter::getResultAt(size_t idx)
+{
+    PRECONDITION(idx < outputSize / sizeof(T), "Index is too large");
+    return std::bit_cast<T*>(outputData.get())[idx];
+}
+
+void IREEAdapter::copyResultTo(std::span<std::byte> content)
+{
+    PRECONDITION(outputSize == content.size(), "Output size does not match");
+    std::ranges::copy_n(outputData.get(), std::min(content.size(), outputSize), content.data());
+}
+
+void IREEAdapter::copyResultToBatch(size_t index, std::span<std::byte> content)
+{
+    std::ranges::copy_n(outputData.get() + index * content.size(), content.size(), content.data());
+}
+
+void IREEAdapter::allocateBuffers(size_t tupleSize)
+{
+    cacheProbeTuple = std::make_unique<std::byte[]>(tupleSize);
+
+    const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
+    const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
+    const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
+
+    /// we only allocate smaller buffers if at least 1 tuple fits into memory
+    if (tupleSize <= thresholdLow)
+    {
+        inputDataHalf = std::make_unique<std::byte[]>(thresholdLow);
+    }
+    if (tupleSize <= thresholdMedium)
+    {
+        inputDataFourth = std::make_unique<std::byte[]>(thresholdMedium);
+    }
+    if (tupleSize <= thresholdHigh)
+    {
+        inputDataEighth = std::make_unique<std::byte[]>(thresholdHigh);
+    }
+}
+
+std::shared_ptr<IREEAdapter> IREEAdapter::create()
+{
+    auto adapter = std::make_shared<IREEAdapter>();
+    return adapter;
+}
+
+#define NES_IREE_ADAPTER_INSTANTIATE(T)                                           \
+    template void IREEAdapter::addModelInput<T>(size_t, T);                        \
+    template void IREEAdapter::addModelInputPartial<T>(T);                         \
+    template T IREEAdapter::getResultAt<T>(size_t);                                \
+    template void IREEAdapter::infer<T>();                                         \
+    template size_t IREEAdapter::inferCombine<T>(size_t, size_t, bool);
+
+NES_IREE_ADAPTER_INSTANTIATE(uint8_t)
+NES_IREE_ADAPTER_INSTANTIATE(uint16_t)
+NES_IREE_ADAPTER_INSTANTIATE(uint32_t)
+NES_IREE_ADAPTER_INSTANTIATE(uint64_t)
+NES_IREE_ADAPTER_INSTANTIATE(int8_t)
+NES_IREE_ADAPTER_INSTANTIATE(int16_t)
+NES_IREE_ADAPTER_INSTANTIATE(int32_t)
+NES_IREE_ADAPTER_INSTANTIATE(int64_t)
+NES_IREE_ADAPTER_INSTANTIATE(float)
+NES_IREE_ADAPTER_INSTANTIATE(double)
+
+#undef NES_IREE_ADAPTER_INSTANTIATE
 
 }

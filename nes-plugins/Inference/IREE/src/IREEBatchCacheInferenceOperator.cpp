@@ -42,9 +42,8 @@ void addValueToModelProxy(int indexOutput, T value, void* inferModelHandler, Wor
     auto adapter = handler->getIREEAdapter(thread);
 
     /// we need to write the row index of the tuple so as to know where to insert it in the output byte array after the model call
-    NES_DEBUG("Updating cache map with [{}: {}]", keyIdx, indexOutput)
-    adapter->updateCacheMapIndices(keyIdx, indexOutput);
-    adapter->appendMissIdx(indexOutput);
+    adapter->batchCachingHelper.updateCacheMapIndices(keyIdx, indexOutput);
+    adapter->batchCachingHelper.appendMissIdx(indexOutput);
 
     adapter->addModelInputPartial<T>(value);
 }
@@ -63,8 +62,8 @@ void copyVarSizedToModelProxy(int index, std::byte* content, uint32_t size, size
     auto adapter = handler->getIREEAdapter(thread);
 
     /// we need to write the row index of the tuple so as to know where to insert it in the output byte array after the model call
-    adapter->updateCacheMapIndices(keyIdx, index);
-    adapter->appendMissIdx(index);
+    adapter->batchCachingHelper.updateCacheMapIndices(keyIdx, index);
+    adapter->batchCachingHelper.appendMissIdx(index);
     adapter->misses += 1;
 
     adapter->addModelInputBatchPartial(index, std::span{content, size}, tupleSize);
@@ -83,7 +82,7 @@ size_t applyModelProxy(void* inferModelHandler, WorkerThreadId thread, size_t ou
     auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
     auto adapter = handler->getIREEAdapter(thread);
     /// call the model only if any misses were recorded
-    if (adapter->getMissIndicesSize() > 0)
+    if (adapter->batchCachingHelper.getMissIndicesSize() > 0)
     {
         return adapter->inferCombine<T>(outputSize, outputFields, isVarSizedOutput);
     }
@@ -280,7 +279,7 @@ void IREEBatchCacheInferenceOperator::performInference(
             {
                 auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
                 auto adapter = handler->getIREEAdapter(thread);
-                return adapter->getCacheMapKey(i);
+                return adapter->batchCachingHelper.getCacheMapKey(i);
             }, i, operatorHandler, executionCtx.workerThreadId);
 
         if (!isVarSizedOutput)
@@ -296,7 +295,7 @@ void IREEBatchCacheInferenceOperator::performInference(
                         auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
                         auto adapter = handler->getIREEAdapter(thread);
 
-                        int outputPos = adapter->getCacheMapValue(idx);
+                        int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
 
                         predictionCacheEntry->dataSize = size;
                         predictionCacheEntry->dataStructure = new std::byte[size];
@@ -318,7 +317,7 @@ void IREEBatchCacheInferenceOperator::performInference(
                         auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
                         auto adapter = handler->getIREEAdapter(thread);
 
-                        int outputPos = adapter->getCacheMapValue(idx);
+                        int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
 
                         predictionCacheEntry->dataSize = size;
                         predictionCacheEntry->dataStructure = new std::byte[size];
@@ -482,7 +481,7 @@ void IREEBatchCacheInferenceOperator::open(ExecutionContext& executionCtx, Recor
             PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
             const auto* opHandler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(ptrOpHandler);
             auto adapter = opHandler->getIREEAdapter(thread);
-            adapter->clearCacheMap();
+            adapter->batchCachingHelper.clearCacheMap();
 
             std::shared_ptr<Batch> batch = opHandler->getBatch(currentBatch->batchId);
             batch->setState(BatchState::MARKED_AS_PROCESSED);
