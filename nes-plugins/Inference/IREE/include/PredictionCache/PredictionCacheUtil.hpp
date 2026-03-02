@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <PredictionCache/PredictionCache.hpp>
 #include <InferenceConfiguration.hpp>
@@ -27,5 +28,7 @@ std::unique_ptr<PredictionCache> createPredictionCache(
     nautilus::val<OperatorHandler*> globalOperatorHandler,
     const nautilus::val<int8_t*>& startOfEntries,
     const nautilus::val<size_t>& inputSize);
+
+uint64_t getPredictionCacheEntrySize(Configurations::PredictionCacheType predictionCacheType);
 
 }

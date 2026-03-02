@@ -22,6 +22,28 @@
 
 namespace NES::Util
 {
+uint64_t getPredictionCacheEntrySize(Configurations::PredictionCacheType predictionCacheType)
+{
+    switch (predictionCacheType)
+    {
+        case Configurations::PredictionCacheType::NONE:
+            return 0;
+        case Configurations::PredictionCacheType::FIFO:
+            return sizeof(PredictionCacheEntryFIFO);
+        case Configurations::PredictionCacheType::LFU:
+            return sizeof(PredictionCacheEntryLFU);
+        case Configurations::PredictionCacheType::LRU:
+            return sizeof(PredictionCacheEntryLRU);
+        case Configurations::PredictionCacheType::SECOND_CHANCE:
+            return sizeof(PredictionCacheEntrySecondChance);
+        case Configurations::PredictionCacheType::TWO_QUEUES:
+            return sizeof(PredictionCacheEntry2Q);
+        case Configurations::PredictionCacheType::ALWAYS_MISS:
+            return sizeof(PredictionCacheEntryAlwaysMiss);
+    }
+    std::unreachable();
+}
+
 std::unique_ptr<PredictionCache> createPredictionCache(
     const Configurations::PredictionCacheOptions& predictionCacheOptions,
     nautilus::val<OperatorHandler*> globalOperatorHandler,

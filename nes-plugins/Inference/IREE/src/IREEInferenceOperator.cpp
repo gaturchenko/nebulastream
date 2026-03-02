@@ -29,41 +29,46 @@ class PhysicalInferModelOperator;
 
 namespace NES::IREEInference
 {
-template <class T>
-void addValueToModelProxy(int index, T value, void* inferModelHandler, WorkerThreadId thread)
+inline IREEInferenceOperatorHandler* getHandler(OperatorHandler* inferModelHandler)
 {
-    auto handler = static_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    return dynamic_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
+}
+
+inline IREEAdapter* getAdapter(OperatorHandler* inferModelHandler, WorkerThreadId thread)
+{
+    return getHandler(inferModelHandler)->getIREEAdapter(thread).get();
+}
+
+template <class T>
+void addValueToModelProxy(int index, T value, OperatorHandler* inferModelHandler, WorkerThreadId thread)
+{
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->addModelInput<T>(index, value);
 }
 
 template <class T>
-float getValueFromModelProxy(int index, void* inferModelHandler, WorkerThreadId thread)
+float getValueFromModelProxy(int index, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     return adapter->getResultAt<T>(index);
 }
 
-void copyVarSizedToModelProxy(std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
+void copyVarSizedToModelProxy(std::byte* content, uint32_t size, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->addModelInput(std::span{content, size});
 }
 
-void copyVarSizedFromModelProxy(std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
+void copyVarSizedFromModelProxy(std::byte* content, uint32_t size, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->copyResultTo(std::span{content, size});
 }
 
 template <class T>
-void applyModelProxy(void* inferModelHandler, WorkerThreadId thread)
+void applyModelProxy(OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->infer<T>();
 }
 
@@ -94,7 +99,7 @@ IREEInferenceOperator::IREEInferenceOperator(
 template <typename T>
 void IREEInferenceOperator::performInference(ExecutionContext& executionCtx, NES::Record& record) const
 {
-    auto inferModelHandler = executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex);
+    const auto operatorHandler = executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex);
 
     if (!this->isVarSizedInput)
     {
@@ -104,42 +109,51 @@ void IREEInferenceOperator::performInference(ExecutionContext& executionCtx, NES
                 IREEInference::addValueToModelProxy<T>,
                 nautilus::val<int>(i),
                 inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
-                inferModelHandler,
+                operatorHandler,
                 executionCtx.workerThreadId);
         }
     }
     else
     {
-        VarVal value = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
-        auto varSizedValue = value.cast<VariableSizedData>();
+        const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+        const auto varSizedValue = inputValue.cast<VariableSizedData>();
         invoke(
             IREEInference::copyVarSizedToModelProxy,
             varSizedValue.getContent(),
             IREEInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
-            inferModelHandler,
+            operatorHandler,
             executionCtx.workerThreadId);
     }
 
-    invoke(IREEInference::applyModelProxy<T>, inferModelHandler, executionCtx.workerThreadId);
+    invoke(IREEInference::applyModelProxy<T>, operatorHandler, executionCtx.workerThreadId);
 }
 
 template <typename T>
 void IREEInferenceOperator::writeOutputRecord(ExecutionContext& executionCtx, NES::Record& record) const
 {
-    auto inferModelHandler = executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex);
+    const auto operatorHandler = executionCtx.getGlobalOperatorHandler(inferModelHandlerIndex);
 
     if (!this->isVarSizedOutput)
     {
         for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
         {
-            VarVal result = VarVal(invoke(IREEInference::getValueFromModelProxy<T>, nautilus::val<int>(i), inferModelHandler, executionCtx.workerThreadId));
+            VarVal result = VarVal(invoke(
+                IREEInference::getValueFromModelProxy<T>,
+                nautilus::val<int>(i),
+                operatorHandler,
+                executionCtx.workerThreadId));
             record.write(outputFieldNames.at(i), result);
         }
     }
     else
     {
         auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
-        invoke(IREEInference::copyVarSizedFromModelProxy, output.getContent(), output.getContentSize(), inferModelHandler, executionCtx.workerThreadId);
+        invoke(
+            IREEInference::copyVarSizedFromModelProxy,
+            output.getContent(),
+            output.getContentSize(),
+            operatorHandler,
+            executionCtx.workerThreadId);
         record.write(outputFieldNames.at(0), output);
     }
 

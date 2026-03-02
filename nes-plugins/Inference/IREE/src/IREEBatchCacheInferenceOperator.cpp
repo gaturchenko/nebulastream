@@ -18,12 +18,6 @@
 #include <IREEBatchInferenceOperatorHandler.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <Nautilus/Interface/Record.hpp>
-#include <PredictionCache/PredictionCacheAlwaysMiss.hpp>
-#include <PredictionCache/PredictionCache2Q.hpp>
-#include <PredictionCache/PredictionCacheFIFO.hpp>
-#include <PredictionCache/PredictionCacheLFU.hpp>
-#include <PredictionCache/PredictionCacheLRU.hpp>
-#include <PredictionCache/PredictionCacheSecondChance.hpp>
 #include <PredictionCache/PredictionCacheUtil.hpp>
 #include <QueryExecutionConfiguration.hpp>
 #include <nautilus/function.hpp>
@@ -35,11 +29,25 @@ class PhysicalInferModelOperator;
 
 namespace NES::IREEBatchCacheInference
 {
-template <class T>
-void addValueToModelProxy(int indexOutput, T value, void* inferModelHandler, WorkerThreadId thread, uint64_t keyIdx)
+inline IREEBatchInferenceOperatorHandler* getHandler(OperatorHandler* inferModelHandler)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    return dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+}
+
+inline IREEAdapter* getAdapter(OperatorHandler* inferModelHandler, WorkerThreadId thread)
+{
+    return getHandler(inferModelHandler)->getIREEAdapter(thread).get();
+}
+
+template <class T>
+void addValueToModelProxy(
+    int indexOutput,
+    T value,
+    OperatorHandler* inferModelHandler,
+    WorkerThreadId thread,
+    uint64_t keyIdx)
+{
+    auto* adapter = getAdapter(inferModelHandler, thread);
 
     /// we need to write the row index of the tuple so as to know where to insert it in the output byte array after the model call
     adapter->batchCachingHelper.updateCacheMapIndices(keyIdx, indexOutput);
@@ -49,17 +57,22 @@ void addValueToModelProxy(int indexOutput, T value, void* inferModelHandler, Wor
 }
 
 template <class T>
-T getValueFromModelProxy(int index, void* inferModelHandler, WorkerThreadId thread)
+T getValueFromModelProxy(int index, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     return adapter->getResultAt<T>(index);
 }
 
-void copyVarSizedToModelProxy(int index, std::byte* content, uint32_t size, size_t tupleSize, void* inferModelHandler, WorkerThreadId thread, uint64_t keyIdx)
+void copyVarSizedToModelProxy(
+    int index,
+    std::byte* content,
+    uint32_t size,
+    size_t tupleSize,
+    OperatorHandler* inferModelHandler,
+    WorkerThreadId thread,
+    uint64_t keyIdx)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
 
     /// we need to write the row index of the tuple so as to know where to insert it in the output byte array after the model call
     adapter->batchCachingHelper.updateCacheMapIndices(keyIdx, index);
@@ -69,18 +82,21 @@ void copyVarSizedToModelProxy(int index, std::byte* content, uint32_t size, size
     adapter->addModelInputBatchPartial(index, std::span{content, size}, tupleSize);
 }
 
-void copyVarSizedFromModelProxy(int index, std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
+void copyVarSizedFromModelProxy(int index, std::byte* content, uint32_t size, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->copyResultToBatch(index, std::span{content, size});
 }
 
 template <class T>
-size_t applyModelProxy(void* inferModelHandler, WorkerThreadId thread, size_t outputSize, size_t outputFields, bool isVarSizedOutput)
+size_t applyModelProxy(
+    OperatorHandler* inferModelHandler,
+    WorkerThreadId thread,
+    size_t outputSize,
+    size_t outputFields,
+    bool isVarSizedOutput)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     /// call the model only if any misses were recorded
     if (adapter->batchCachingHelper.getMissIndicesSize() > 0)
     {
@@ -95,10 +111,9 @@ nautilus::val<uint32_t> min(const nautilus::val<uint32_t>& lhs, const nautilus::
     return lhs < rhs ? lhs : rhs;
 }
 
-void garbageCollectBatchesProxy(void* inferModelHandler)
+void garbageCollectBatchesProxy(OperatorHandler* inferModelHandler)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    handler->garbageCollectBatches();
+    getHandler(inferModelHandler)->garbageCollectBatches();
 }
 }
 
@@ -134,11 +149,11 @@ void IREEBatchCacheInferenceOperator::performInference(
     const auto operatorHandler = predictionCache->getOperatorHandler();
 
     /// iterate over records in the paged vector, i.e., over tuples in a single batch
-    nautilus::val<int> rowIdx(0);
+    nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
-        auto rowIdxOutput = rowIdx * this->outputSize / this->inputSize;
+        auto outputRowIndex = rowIndex * this->outputSize / this->inputSize;
         nautilus::val<std::byte*> cacheProbeTuple;
 
         /// fill a byte array for a record to probe into the cache
@@ -149,34 +164,40 @@ void IREEBatchCacheInferenceOperator::performInference(
                 cacheProbeTuple = nautilus::invoke(
                     +[](OperatorHandler* inferModelHandler, WorkerThreadId thread, size_t idx, T value)
                     {
-                        auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+                        auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
                         auto adapter = handler->getIREEAdapter(thread);
 
                         std::bit_cast<T*>(adapter->cacheProbeTuple.get())[idx] = value;
                         return adapter->cacheProbeTuple.get();
-                    }, operatorHandler, executionCtx.workerThreadId, nautilus::val<int>(i), inputs.at(i).execute(
-                        record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>());
+                    },
+                    operatorHandler,
+                    executionCtx.workerThreadId,
+                    nautilus::val<int>(i),
+                    inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>());
             }
         }
         else
         {
-            VarVal value = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
-            auto varSizedValue = value.cast<VariableSizedData>();
+            const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+            const auto varSizedValue = inputValue.cast<VariableSizedData>();
             cacheProbeTuple = nautilus::invoke(
                 +[](OperatorHandler* inferModelHandler, WorkerThreadId thread, std::byte* content, uint32_t size, uint32_t tupleSize)
                 {
-                    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+                    auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
                     auto adapter = handler->getIREEAdapter(thread);
 
                     std::memcpy(adapter->cacheProbeTuple.get(), content, std::min(size, tupleSize));
                     return adapter->cacheProbeTuple.get();
-                }, operatorHandler, executionCtx.workerThreadId, varSizedValue.getContent(),
-                    IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))),
-                    nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize)));
+                },
+                operatorHandler,
+                executionCtx.workerThreadId,
+                varSizedValue.getContent(),
+                IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))),
+                nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize)));
         }
 
         /// if the probe is successful, return the index of the key, otherwise return PredictionCache::NOT_FOUND, i.e., UINT64_MAX
-        const auto keyIdx = predictionCache->updateKeys(
+        const auto cacheKeyIndex = predictionCache->updateKeys(
             cacheProbeTuple,
             [&](
                 const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
@@ -189,13 +210,16 @@ void IREEBatchCacheInferenceOperator::performInference(
                         predictionCacheEntry->record = new std::byte[size];
 
                         std::memcpy(predictionCacheEntry->record, tuple, size);
-                    }, predictionCacheEntryToReplace, cacheProbeTuple, nautilus::val<int>(this->inputSize));
+                    },
+                    predictionCacheEntryToReplace,
+                    cacheProbeTuple,
+                    nautilus::val<int>(this->inputSize));
             });
 
         /// the key might be in the cache already, since the replacement function above may have been invoked
         /// however, the corresponding value may not yet exist, e.g., if we are processing the very first batch
-        auto prediction = predictionCache->getDataStructure(keyIdx);
-        const auto isInCache = nautilus::invoke(
+        const auto prediction = predictionCache->getDataStructure(cacheKeyIndex);
+        const auto hasCachedPrediction = nautilus::invoke(
             +[](std::byte* prediction){ return prediction != nullptr; }, prediction);
 
         /// if the key does not exist or it does but the corresponding value does not,
@@ -203,18 +227,18 @@ void IREEBatchCacheInferenceOperator::performInference(
         /// we pick the smallest allocated buffer first and copy to a larger one if the size is exceeded
         if (!isVarSizedInput)
         {
-            if (keyIdx == PredictionCache::NOT_FOUND || !isInCache)
+            if (cacheKeyIndex == PredictionCache::NOT_FOUND || !hasCachedPrediction)
             {
                 for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
                 {
                     nautilus::invoke(
                         IREEBatchCacheInference::addValueToModelProxy<T>,
-                        rowIdxOutput,
+                        outputRowIndex,
                         inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
                         operatorHandler,
                         executionCtx.workerThreadId,
                         predictionCache->getReplacementIndex());
-                    ++rowIdx;
+                    ++rowIndex;
                 }
             }
             /// otherwise, we know the prediction for this tuple in the batch and immediately write it to the output byte array
@@ -223,42 +247,52 @@ void IREEBatchCacheInferenceOperator::performInference(
                 nautilus::invoke(
                     +[](int idx, std::byte* prediction, OperatorHandler* inferModelHandler, WorkerThreadId thread, size_t size)
                     {
-                        auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+                        auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
                         auto adapter = handler->getIREEAdapter(thread);
 
                         std::memcpy(adapter->outputData.get() + idx * sizeof(T), prediction, size);
-                    }, rowIdxOutput, prediction, operatorHandler, executionCtx.workerThreadId, nautilus::val<size_t>((this->outputSize)));
-                rowIdx += inputs.size();
+                    },
+                    outputRowIndex,
+                    prediction,
+                    operatorHandler,
+                    executionCtx.workerThreadId,
+                    nautilus::val<size_t>((this->outputSize)));
+                rowIndex += inputs.size();
             }
         }
         else
         {
-            if (keyIdx == PredictionCache::NOT_FOUND || !isInCache)
+            if (cacheKeyIndex == PredictionCache::NOT_FOUND || !hasCachedPrediction)
             {
-                VarVal value = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
-                auto varSizedValue = value.cast<VariableSizedData>();
+                const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+                const auto varSizedValue = inputValue.cast<VariableSizedData>();
                 nautilus::invoke(
                     IREEBatchCacheInference::copyVarSizedToModelProxy,
-                    rowIdx,
+                    rowIndex,
                     varSizedValue.getContent(),
                     IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
                     nautilus::val<size_t>(inputSize),
                     operatorHandler,
                     executionCtx.workerThreadId,
                     predictionCache->getReplacementIndex());
-                rowIdx += inputs.size();
+                rowIndex += inputs.size();
             }
             else
             {
                 nautilus::invoke(
                     +[](int idx, std::byte* prediction, OperatorHandler* inferModelHandler, WorkerThreadId thread, size_t size)
                     {
-                        auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+                        auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
                         auto adapter = handler->getIREEAdapter(thread);
 
                         std::memcpy(adapter->outputData.get() + idx * size, prediction, size);
-                    }, rowIdx, prediction, operatorHandler, executionCtx.workerThreadId, nautilus::val<size_t>((this->outputSize)));
-                rowIdx += inputs.size();
+                    },
+                    rowIndex,
+                    prediction,
+                    operatorHandler,
+                    executionCtx.workerThreadId,
+                    nautilus::val<size_t>((this->outputSize)));
+                rowIndex += inputs.size();
             }
         }
     }
@@ -277,7 +311,7 @@ void IREEBatchCacheInferenceOperator::performInference(
         const auto cachePos = nautilus::invoke(
             +[](size_t i, OperatorHandler* inferModelHandler, WorkerThreadId thread)
             {
-                auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+                auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
                 auto adapter = handler->getIREEAdapter(thread);
                 return adapter->batchCachingHelper.getCacheMapKey(i);
             }, i, operatorHandler, executionCtx.workerThreadId);
@@ -285,46 +319,46 @@ void IREEBatchCacheInferenceOperator::performInference(
         if (!isVarSizedOutput)
         {
             predictionCache->updateValues(
-            cachePos,
-            [&](
-                const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
-            {
-                return nautilus::invoke(
-                    +[](PredictionCacheEntry* predictionCacheEntry, void* opHandlerPtr, WorkerThreadId thread, int idx, size_t size)
-                    {
-                        auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
-                        auto adapter = handler->getIREEAdapter(thread);
+                cachePos,
+                [&](
+                    const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
+                {
+                    return nautilus::invoke(
+                        +[](PredictionCacheEntry* predictionCacheEntry, OperatorHandler* opHandlerPtr, WorkerThreadId thread, int idx, size_t size)
+                        {
+                            auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
+                            auto adapter = handler->getIREEAdapter(thread);
 
-                        int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
+                            int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
 
-                        predictionCacheEntry->dataSize = size;
-                        predictionCacheEntry->dataStructure = new std::byte[size];
+                            predictionCacheEntry->dataSize = size;
+                            predictionCacheEntry->dataStructure = new std::byte[size];
 
-                        std::memcpy(predictionCacheEntry->dataStructure, adapter->outputData.get() + outputPos * sizeof(T), size);
-                    }, predictionCacheEntryToReplace, operatorHandler, executionCtx.workerThreadId, i, nautilus::val<size_t>(this->outputSize));
-            });
+                            std::memcpy(predictionCacheEntry->dataStructure, adapter->outputData.get() + outputPos * sizeof(T), size);
+                        }, predictionCacheEntryToReplace, operatorHandler, executionCtx.workerThreadId, i, nautilus::val<size_t>(this->outputSize));
+                });
         }
         else
         {
             predictionCache->updateValues(
-            cachePos,
-            [&](
-                const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
-            {
-                return nautilus::invoke(
-                    +[](PredictionCacheEntry* predictionCacheEntry, void* opHandlerPtr, WorkerThreadId thread, int idx, size_t size)
-                    {
-                        auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
-                        auto adapter = handler->getIREEAdapter(thread);
+                cachePos,
+                [&](
+                    const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
+                {
+                    return nautilus::invoke(
+                        +[](PredictionCacheEntry* predictionCacheEntry, OperatorHandler* opHandlerPtr, WorkerThreadId thread, int idx, size_t size)
+                        {
+                            auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
+                            auto adapter = handler->getIREEAdapter(thread);
 
-                        int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
+                            int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
 
-                        predictionCacheEntry->dataSize = size;
-                        predictionCacheEntry->dataStructure = new std::byte[size];
+                            predictionCacheEntry->dataSize = size;
+                            predictionCacheEntry->dataStructure = new std::byte[size];
 
-                        std::memcpy(predictionCacheEntry->dataStructure, adapter->outputData.get() + outputPos * size, size);
-                    }, predictionCacheEntryToReplace, operatorHandler, executionCtx.workerThreadId, i, nautilus::val<size_t>(this->outputSize));
-            });
+                            std::memcpy(predictionCacheEntry->dataStructure, adapter->outputData.get() + outputPos * size, size);
+                        }, predictionCacheEntryToReplace, operatorHandler, executionCtx.workerThreadId, i, nautilus::val<size_t>(this->outputSize));
+                });
         }
     }
 }
@@ -339,7 +373,7 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
     auto* predictionCache = dynamic_cast<PredictionCache*>(executionCtx.getLocalState(id));
     const auto operatorHandler = predictionCache->getOperatorHandler();
 
-    nautilus::val<int> rowIdx(0);
+    nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
@@ -350,11 +384,11 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
             {
                 const VarVal result = VarVal(nautilus::invoke(
                     IREEBatchCacheInference::getValueFromModelProxy<T>,
-                    rowIdx,
+                    rowIndex,
                     operatorHandler,
                     executionCtx.workerThreadId));
                 record.write(outputFieldNames.at(i), result);
-                ++rowIdx;
+                ++rowIndex;
             }
         }
         else
@@ -363,14 +397,14 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
 
             nautilus::invoke(
                 IREEBatchCacheInference::copyVarSizedFromModelProxy,
-                rowIdx,
+                rowIndex,
                 output.getContent(),
                 output.getContentSize(),
                 operatorHandler,
                 executionCtx.workerThreadId);
 
             record.write(outputFieldNames.at(0), output);
-            rowIdx += outputFieldNames.size();
+            rowIndex += outputFieldNames.size();
         }
         executeChild(executionCtx, record);
     }
@@ -387,23 +421,23 @@ void IREEBatchCacheInferenceOperator::open(ExecutionContext& executionCtx, Recor
     openChild(executionCtx, recordBuffer);
 
     const auto emittedBatch = static_cast<nautilus::val<EmittedBatch*>>(recordBuffer.getMemArea());
-    const auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
+    const auto operatorHandlerRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
-    const auto batchMemRef = nautilus::invoke(
+    const auto batchRef = nautilus::invoke(
         +[](OperatorHandler* ptrOpHandler, const EmittedBatch* currentBatch)
         {
             PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
             const auto* opHandler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(ptrOpHandler);
             std::shared_ptr<Batch> batch = opHandler->getBatch(currentBatch->batchId);
             return batch.get();
-        }, operatorHandlerMemRef, emittedBatch);
+        }, operatorHandlerRef, emittedBatch);
 
     const auto batchPagedVectorMemRef = nautilus::invoke(
         +[](const Batch* batch)
         {
             PRECONDITION(batch != nullptr, "batch context should not be null!");
             return batch->getPagedVectorRef();
-        }, batchMemRef);
+        }, batchRef);
     const PagedVectorRef batchPagedVectorRef(batchPagedVectorMemRef, tupleBufferRef);
 
     const auto startOfEntries = nautilus::invoke(
@@ -411,25 +445,25 @@ void IREEBatchCacheInferenceOperator::open(ExecutionContext& executionCtx, Recor
         {
             return opHandler->getStartOfPredictionCacheEntries(
                 IREEBatchInferenceOperatorHandler::StartPredictionCacheEntriesIREEInference{workerThreadId});
-        }, operatorHandlerMemRef, executionCtx.workerThreadId);
+        }, operatorHandlerRef, executionCtx.workerThreadId);
 
-    const auto inputSize = nautilus::invoke(
-        +[](void* inferModelHandler, WorkerThreadId thread)
+    const auto inputTupleSize = nautilus::invoke(
+        +[](OperatorHandler* inferModelHandler, WorkerThreadId thread)
         {
-            auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+            auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
             auto adapter = handler->getIREEAdapter(thread);
             return adapter->inputSize / handler->getBatchSize();
-        }, operatorHandlerMemRef, executionCtx.workerThreadId);
+        }, operatorHandlerRef, executionCtx.workerThreadId);
 
     const auto replacementIndex = nautilus::invoke(
         +[](const IREEBatchInferenceOperatorHandler* opHandler, const WorkerThreadId workerThreadId)
         {
             return opHandler->getReplacementPos(
                 IREEBatchInferenceOperatorHandler::StartPredictionCacheEntriesIREEInference{workerThreadId});
-        }, operatorHandlerMemRef, executionCtx.workerThreadId);
+        }, operatorHandlerRef, executionCtx.workerThreadId);
 
     auto predictionCache = NES::Util::createPredictionCache(
-        predictionCacheOptions, operatorHandlerMemRef, startOfEntries, inputSize);
+        predictionCacheOptions, operatorHandlerRef, startOfEntries, inputTupleSize);
     predictionCache->setReplacementPos(replacementIndex);
     executionCtx.setLocalOperatorState(id, std::move(predictionCache));
 
@@ -485,7 +519,7 @@ void IREEBatchCacheInferenceOperator::open(ExecutionContext& executionCtx, Recor
 
             std::shared_ptr<Batch> batch = opHandler->getBatch(currentBatch->batchId);
             batch->setState(BatchState::MARKED_AS_PROCESSED);
-        }, operatorHandlerMemRef, executionCtx.workerThreadId, emittedBatch);
+        }, operatorHandlerRef, executionCtx.workerThreadId, emittedBatch);
 }
 
 void IREEBatchCacheInferenceOperator::setup(ExecutionContext& executionCtx, CompilationContext&) const
@@ -499,31 +533,12 @@ void IREEBatchCacheInferenceOperator::setup(ExecutionContext& executionCtx, Comp
             handler->allocateBuffers(tupleSize);
         }, globalOperatorHandler, executionCtx.pipelineContext, nautilus::val<size_t>(this->inputSize));
 
-    nautilus::val<uint64_t> sizeOfEntry = 0;
-    nautilus::val<uint64_t> numberOfEntries = predictionCacheOptions.numberOfEntries;
-    switch (predictionCacheOptions.predictionCacheType)
+    const uint64_t entrySize = NES::Util::getPredictionCacheEntrySize(predictionCacheOptions.predictionCacheType);
+    if (entrySize == 0)
     {
-        case Configurations::PredictionCacheType::NONE:
-            return;
-        case Configurations::PredictionCacheType::FIFO:
-            sizeOfEntry = sizeof(PredictionCacheEntryFIFO);
-            break;
-        case Configurations::PredictionCacheType::LFU:
-            sizeOfEntry = sizeof(PredictionCacheEntryLFU);
-            break;
-        case Configurations::PredictionCacheType::LRU:
-            sizeOfEntry = sizeof(PredictionCacheEntryLRU);
-            break;
-        case Configurations::PredictionCacheType::SECOND_CHANCE:
-            sizeOfEntry = sizeof(PredictionCacheEntrySecondChance);
-            break;
-        case Configurations::PredictionCacheType::TWO_QUEUES:
-            sizeOfEntry = sizeof(PredictionCacheEntry2Q);
-            break;
-        case Configurations::PredictionCacheType::ALWAYS_MISS:
-            sizeOfEntry = sizeof(PredictionCacheEntryAlwaysMiss);
-            break;
+        return;
     }
+    const nautilus::val<uint64_t> numberOfEntries = predictionCacheOptions.numberOfEntries;
 
     nautilus::invoke(
         +[](IREEBatchInferenceOperatorHandler* opHandler,
@@ -533,22 +548,22 @@ void IREEBatchCacheInferenceOperator::setup(ExecutionContext& executionCtx, Comp
         { opHandler->allocatePredictionCacheEntries(sizeOfEntryVal, numberOfEntriesVal, bufferProvider); },
         globalOperatorHandler,
         executionCtx.pipelineMemoryProvider.bufferProvider,
-        sizeOfEntry,
+        nautilus::val<uint64_t>(entrySize),
         numberOfEntries);
 }
 
 void IREEBatchCacheInferenceOperator::close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const
 {
     auto* predictionCache = dynamic_cast<PredictionCache*>(executionCtx.getLocalState(id));
-    auto operatorHandlerMemRef = predictionCache->getOperatorHandler();
+    auto operatorHandlerRef = predictionCache->getOperatorHandler();
 
     nautilus::invoke(
         +[](IREEBatchInferenceOperatorHandler* opHandler, uint64_t pos, const WorkerThreadId workerThreadId)
         {
             opHandler->setReplacementPos(IREEBatchInferenceOperatorHandler::StartPredictionCacheEntriesIREEInference{workerThreadId}, pos);
-        }, operatorHandlerMemRef, predictionCache->getReplacementPos(), executionCtx.workerThreadId);
+        }, operatorHandlerRef, predictionCache->getReplacementPos(), executionCtx.workerThreadId);
 
-    nautilus::invoke(IREEBatchCacheInference::garbageCollectBatchesProxy, operatorHandlerMemRef);
+    nautilus::invoke(IREEBatchCacheInference::garbageCollectBatchesProxy, operatorHandlerRef);
     PhysicalOperatorConcept::close(executionCtx, recordBuffer);
 }
 

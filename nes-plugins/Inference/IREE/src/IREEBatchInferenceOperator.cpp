@@ -29,41 +29,52 @@ class PhysicalInferModelOperator;
 
 namespace NES::IREEBatchInference
 {
-template <class T>
-void addValueToModelProxy(int index, T value, void* inferModelHandler, WorkerThreadId thread)
+inline IREEBatchInferenceOperatorHandler* getHandler(OperatorHandler* inferModelHandler)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    return dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
+}
+
+inline IREEAdapter* getAdapter(OperatorHandler* inferModelHandler, WorkerThreadId thread)
+{
+    return getHandler(inferModelHandler)->getIREEAdapter(thread).get();
+}
+
+template <class T>
+void addValueToModelProxy(int index, T value, OperatorHandler* inferModelHandler, WorkerThreadId thread)
+{
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->addModelInput<T>(index, value);
 }
 
 template <class T>
-T getValueFromModelProxy(int index, void* inferModelHandler, WorkerThreadId thread)
+T getValueFromModelProxy(int index, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     return adapter->getResultAt<T>(index);
 }
 
-void copyVarSizedToModelProxy(int index, std::byte* content, uint32_t size, size_t tupleSize, void* inferModelHandler, WorkerThreadId thread)
+void copyVarSizedToModelProxy(
+    int index,
+    std::byte* content,
+    uint32_t size,
+    size_t tupleSize,
+    OperatorHandler* inferModelHandler,
+    WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->addModelInputBatch(index, std::span{content, size}, tupleSize);
 }
 
-void copyVarSizedFromModelProxy(int index, std::byte* content, uint32_t size, void* inferModelHandler, WorkerThreadId thread)
+void copyVarSizedFromModelProxy(int index, std::byte* content, uint32_t size, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->copyResultToBatch(index, std::span{content, size});
 }
 
 template <class T>
-void applyModelProxy(void* inferModelHandler, WorkerThreadId thread)
+void applyModelProxy(OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    auto adapter = handler->getIREEAdapter(thread);
+    auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->infer<T>();
 }
 
@@ -72,10 +83,9 @@ nautilus::val<uint32_t> min(const nautilus::val<uint32_t>& lhs, const nautilus::
     return lhs < rhs ? lhs : rhs;
 }
 
-void garbageCollectBatchesProxy(void* inferModelHandler)
+void garbageCollectBatchesProxy(OperatorHandler* inferModelHandler)
 {
-    auto handler = static_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-    handler->garbageCollectBatches();
+    getHandler(inferModelHandler)->garbageCollectBatches();
 }
 }
 
@@ -109,11 +119,13 @@ void IREEBatchInferenceOperator::performInference(
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
-    auto hashMapPtr = nautilus::invoke(
-     +[](OperatorHandler* handler, WorkerThreadId threadId)
-     {
-        return dynamic_cast<IREEBatchInferenceOperatorHandler*>(handler)->getHashMapPtr(threadId);
-     }, operatorHandler, executionCtx.workerThreadId);
+    const auto hashMapPtr = nautilus::invoke(
+        +[](OperatorHandler* handler, WorkerThreadId threadId)
+        {
+            return dynamic_cast<IREEBatchInferenceOperatorHandler*>(handler)->getHashMapPtr(threadId);
+        },
+        operatorHandler,
+        executionCtx.workerThreadId);
 
     ChainedHashMapRef hashMap{
         hashMapPtr,
@@ -122,11 +134,11 @@ void IREEBatchInferenceOperator::performInference(
         hashMapOptions.entriesPerPage,
         hashMapOptions.entrySize};
 
-    nautilus::val<int> rowIdx(0);
+    nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
-        auto rowIdxOutput = rowIdx * this->outputSize / this->inputSize;
+        auto outputRowIndex = rowIndex * this->outputSize / this->inputSize;
 
         /// `findOrCreateEntry` calls `VarVal::readVarValFromMemory` which doesn't support VarSized
         if (!this->isVarSizedInput)
@@ -139,12 +151,11 @@ void IREEBatchInferenceOperator::performInference(
                     const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
                     Record valueRecord;
 
-                    valueRecord.write("rowInputIndex", VarVal(rowIdx));
-                    valueRecord.write("rowOutputIndex", VarVal(rowIdxOutput));
+                    valueRecord.write("rowInputIndex", VarVal(rowIndex));
+                    valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
                     ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
-                },
-                executionCtx.pipelineMemoryProvider.bufferProvider);
-            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+                }, executionCtx.pipelineMemoryProvider.bufferProvider);
+        const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
 
             for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
             {
@@ -154,22 +165,22 @@ void IREEBatchInferenceOperator::performInference(
                     inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
                     operatorHandler,
                     executionCtx.workerThreadId);
-                ++rowIdx;
+                ++rowIndex;
             }
         }
         else
         {
-            VarVal value = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
-            auto varSizedValue = value.cast<VariableSizedData>();
+            const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+            const auto varSizedValue = inputValue.cast<VariableSizedData>();
             nautilus::invoke(
                 IREEBatchInference::copyVarSizedToModelProxy,
-                rowIdx,
+                rowIndex,
                 varSizedValue.getContent(),
                 IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
                 nautilus::val<size_t>(inputSize),
                 operatorHandler,
                 executionCtx.workerThreadId);
-            rowIdx += inputs.size();
+            rowIndex += inputs.size();
         }
     }
 
@@ -185,11 +196,13 @@ void IREEBatchInferenceOperator::writeOutputRecord(
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
-    auto hashMapPtr = nautilus::invoke(
-     +[](OperatorHandler* handler, WorkerThreadId threadId)
-     {
-        return dynamic_cast<IREEBatchInferenceOperatorHandler*>(handler)->getHashMapPtr(threadId);
-     }, operatorHandler, executionCtx.workerThreadId);
+    const auto hashMapPtr = nautilus::invoke(
+        +[](OperatorHandler* handler, WorkerThreadId threadId)
+        {
+            return dynamic_cast<IREEBatchInferenceOperatorHandler*>(handler)->getHashMapPtr(threadId);
+        },
+        operatorHandler,
+        executionCtx.workerThreadId);
 
     ChainedHashMapRef hashMap{
         hashMapPtr,
@@ -198,7 +211,7 @@ void IREEBatchInferenceOperator::writeOutputRecord(
         hashMapOptions.entriesPerPage,
         hashMapOptions.entrySize};
 
-    nautilus::val<int> rowIdx(0);
+    nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
@@ -221,7 +234,7 @@ void IREEBatchInferenceOperator::writeOutputRecord(
                     executionCtx.workerThreadId));
 
                 record.write(outputFieldNames.at(i), result);
-                ++rowIdx;
+                ++rowIndex;
             }
         }
         else
@@ -230,14 +243,14 @@ void IREEBatchInferenceOperator::writeOutputRecord(
 
             nautilus::invoke(
                 IREEBatchInference::copyVarSizedFromModelProxy,
-                rowIdx,
+                rowIndex,
                 output.getContent(),
                 output.getContentSize(),
                 operatorHandler,
                 executionCtx.workerThreadId);
 
             record.write(outputFieldNames.at(0), output);
-            rowIdx += outputFieldNames.size();
+            rowIndex += outputFieldNames.size();
         }
         executeChild(executionCtx, record);
     }
@@ -261,23 +274,23 @@ void IREEBatchInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
     openChild(executionCtx, recordBuffer);
 
     const auto emittedBatch = static_cast<nautilus::val<EmittedBatch*>>(recordBuffer.getMemArea());
-    const auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
+    const auto operatorHandlerRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
-    const auto batchMemRef = nautilus::invoke(
+    const auto batchRef = nautilus::invoke(
         +[](OperatorHandler* ptrOpHandler, const EmittedBatch* currentBatch)
         {
             PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
             const auto* opHandler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(ptrOpHandler);
             std::shared_ptr<Batch> batch = opHandler->getBatch(currentBatch->batchId);
             return batch.get();
-        }, operatorHandlerMemRef, emittedBatch);
+        }, operatorHandlerRef, emittedBatch);
 
     const auto batchPagedVectorMemRef = nautilus::invoke(
         +[](const Batch* batch)
         {
             PRECONDITION(batch != nullptr, "batch context should not be null!");
             return batch->getPagedVectorRef();
-        }, batchMemRef);
+        }, batchRef);
 
     const PagedVectorRef batchPagedVectorRef(batchPagedVectorMemRef, tupleBufferRef);
 
@@ -330,7 +343,7 @@ void IREEBatchInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
             const auto* opHandler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(ptrOpHandler);
             std::shared_ptr<Batch> batch = opHandler->getBatch(currentBatch->batchId);
             batch->setState(BatchState::MARKED_AS_PROCESSED);
-        }, operatorHandlerMemRef, emittedBatch);
+        }, operatorHandlerRef, emittedBatch);
 }
 
 void IREEBatchInferenceOperator::close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const
