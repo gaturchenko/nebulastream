@@ -14,6 +14,7 @@
 
 #include <IREEAdapter.hpp>
 #include <IREEBatchInferenceOperatorHandler.hpp>
+#include <HashMapOptions.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <PipelineExecutionContext.hpp>
 #include <PredictionCache.hpp>
@@ -79,6 +80,15 @@ void IREEBatchInferenceOperatorHandler::allocateBuffers(size_t tupleSize)
     }
 }
 
+void IREEBatchInferenceOperatorHandler::allocateHashMaps(uint64_t keySize, uint64_t valueSize, uint64_t numberOfBuckets, uint64_t pageSize)
+{
+    for (size_t threadId = 0; threadId < numberOfWorkerThreads; ++threadId)
+    {
+        auto hashMapPtr = std::make_unique<ChainedHashMap>(keySize, valueSize, numberOfBuckets, pageSize);
+        threadLocalHashMaps.emplace_back(std::move(hashMapPtr));
+    }
+}
+
 const Nebuli::Inference::Model& IREEBatchInferenceOperatorHandler::getModel() const
 {
     return model;
@@ -87,6 +97,16 @@ const Nebuli::Inference::Model& IREEBatchInferenceOperatorHandler::getModel() co
 const std::shared_ptr<IREEAdapter>& IREEBatchInferenceOperatorHandler::getIREEAdapter(WorkerThreadId workerThreadId) const
 {
     return threadLocalAdapters[workerThreadId % threadLocalAdapters.size()];
+}
+
+HashMap* IREEBatchInferenceOperatorHandler::getHashMapPtr(WorkerThreadId workerThreadId) const
+{
+    return threadLocalHashMaps[workerThreadId % threadLocalHashMaps.size()].get();
+}
+
+void IREEBatchInferenceOperatorHandler::clearHashMap(WorkerThreadId workerThreadId)
+{
+    dynamic_cast<ChainedHashMap*>(threadLocalHashMaps[workerThreadId % threadLocalHashMaps.size()].get())->clear();
 }
 
 void IREEBatchInferenceOperatorHandler::emitBatchesToProbe(

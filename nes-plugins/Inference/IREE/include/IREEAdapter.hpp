@@ -18,7 +18,8 @@
 #include <DataTypes/DataTypeProvider.hpp>
 #include <ErrorHandling.hpp>
 #include <Model.hpp>
-#include "IREERuntimeWrapper.hpp"
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
+#include <IREERuntimeWrapper.hpp>
 
 namespace NES
 {
@@ -140,6 +141,7 @@ public:
     size_t inputSize;
     size_t outputSize;
 
+    /// caching statistics
     uint64_t misses;
     uint64_t lowReductions;
     uint64_t mediumReductions;

@@ -28,6 +28,10 @@
 #include <IREEInferenceOperatorHandler.hpp>
 #include <InferModelLogicalOperator.hpp>
 #include <InterBufferBatchingPhysicalOperator.hpp>
+#include <Nautilus/Interface/Hash/MurMur3HashFunction.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedEntryMemoryProvider.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
+#include <HashMapOptions.hpp>
 #include <QueryExecutionConfiguration.hpp>
 #include <RewriteRuleRegistry.hpp>
 
@@ -50,6 +54,38 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
         }
 
         return findAggregationRecursively(firstChild);
+    }
+
+    NES::HashMapOptions createHashMapOptions(
+        std::vector<NES::PhysicalFunction> keyFunctions,
+        NES::Schema& inputSchema,
+        const NES::QueryExecutionConfiguration& conf)
+    {
+        std::vector<std::string> fieldKeyNames = inputSchema.getFieldNames();
+        const uint64_t valueSize = NES::DataTypeProvider::provideDataType(NES::DataType::Type::INT64).getSizeInBytes() * 2;
+        const uint64_t keySize = inputSchema.getSizeOfSchemaInBytes();
+
+        const auto pageSize = conf.pageSize.getValue();
+        const auto numberOfBuckets = conf.numberOfPartitions.getValue();
+        const auto entrySize = sizeof(NES::ChainedHashMapEntry) + keySize + valueSize;
+        const auto entriesPerPage = pageSize / entrySize;
+
+        const auto& [fieldKeys, fieldValues] =
+            NES::ChainedEntryMemoryProvider::createFieldOffsets(inputSchema.addField("rowInputIndex", NES::DataType::Type::INT64)
+                .addField("rowOutputIndex", NES::DataType::Type::INT64), fieldKeyNames, {"rowInputIndex", "rowOutputIndex"});
+
+        NES::HashMapOptions hashMapOptions{
+            std::make_unique<NES::MurMur3HashFunction>(),
+            std::move(keyFunctions),
+            fieldKeys,
+            fieldValues,
+            entriesPerPage,
+            entrySize,
+            keySize,
+            valueSize,
+            pageSize,
+            numberOfBuckets};
+        return hashMapOptions;
     }
 
     explicit LowerToPhysicalIREEInferenceOperator(NES::QueryExecutionConfiguration conf) : conf(std::move(conf)) { }
@@ -193,7 +229,10 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
             {
                 case NES::Configurations::PredictionCacheType::NONE: {
                     NES_DEBUG("Lower InferModel operator to IREEBatchInferenceOperator");
-                    auto ireeOperator = NES::IREEBatchInferenceOperator(handlerId, inputFunctions, outputNames, memoryProvider, inputDtype, outputDtype);
+
+                    auto hashMapOptions = createHashMapOptions(inputFunctions, inputSchema, conf);
+                    auto ireeOperator = NES::IREEBatchInferenceOperator(
+                        handlerId, inputFunctions, outputNames, memoryProvider, inputDtype, outputDtype, hashMapOptions);
 
                     if (inferModelOperator->getInputFields().size() == 1
                         && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)

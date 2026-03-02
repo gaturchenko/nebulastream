@@ -15,12 +15,14 @@
 #pragma once
 
 #include <Identifiers/Identifiers.hpp>
-#include <Model.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVector.hpp>
+#include <Nautilus/Interface/HashMap/HashMap.hpp>
+#include <Runtime/Execution/OperatorHandler.hpp>
+#include <Model.hpp>
 #include <PredictionCache.hpp>
 #include <PredictionCacheOperatorHandler.hpp>
-#include <Runtime/Execution/OperatorHandler.hpp>
 #include <WindowBasedOperatorHandler.hpp>
+#include <HashMapOptions.hpp>
 
 namespace NES
 {
@@ -41,9 +43,12 @@ public:
     void stop(QueryTerminationType terminationType, PipelineExecutionContext& pipelineExecutionContext) override;
 
     void allocateBuffers(size_t tupleSize);
+    void allocateHashMaps(uint64_t keySize, uint64_t valueSize, uint64_t numberOfBuckets, uint64_t pageSize);
 
     [[nodiscard]] const Nebuli::Inference::Model& getModel() const;
     [[nodiscard]] const std::shared_ptr<IREEAdapter>& getIREEAdapter(WorkerThreadId threadId) const;
+    [[nodiscard]] HashMap* getHashMapPtr(WorkerThreadId workerThreadId) const;
+    void clearHashMap(WorkerThreadId workerThreadId);
 
     [[nodiscard]] Batch* getOrCreateNewBatch() const;
     [[nodiscard]] std::shared_ptr<Batch> getBatch(uint64_t batchId) const;
@@ -100,6 +105,7 @@ private:
     Nebuli::Inference::Model model;
     uint64_t batchSize;
     std::vector<std::shared_ptr<IREEAdapter>> threadLocalAdapters;
+    std::vector<std::unique_ptr<HashMap>> threadLocalHashMaps;
 };
 
 enum class BatchState : uint8_t

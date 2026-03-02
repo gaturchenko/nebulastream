@@ -21,6 +21,7 @@
 #include <WindowProbePhysicalOperator.hpp>
 #include <Nautilus/Interface/BufferRef/TupleBufferRef.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
+#include <HashMapOptions.hpp>
 
 namespace NES
 {
@@ -34,10 +35,13 @@ public:
         std::vector<std::string> outputFieldNames,
         std::shared_ptr<TupleBufferRef> tupleBufferRef,
         DataType inputDtype,
-        DataType outputDtype);
+        DataType outputDtype,
+        HashMapOptions hashMapOptions);
 
     void open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
     void close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
+
+    void setup(ExecutionContext& executionCtx, CompilationContext& compilationContext) const override;
 
     [[nodiscard]] Record createRecord(const Record& featureRecord, const std::vector<Record::RecordFieldIdentifier>& projections) const;
 
@@ -56,6 +60,7 @@ private:
     std::shared_ptr<TupleBufferRef> tupleBufferRef;
     DataType inputDtype;
     DataType outputDtype;
+    HashMapOptions hashMapOptions;
 
 protected:
     template <class T>
