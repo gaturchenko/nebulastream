@@ -109,7 +109,7 @@ public:
     void addModelInputBatch(int index, std::span<std::byte> content, size_t tupleSize);
 
     template <class T>
-    void addModelInputPartial(T value);
+    uint64_t addModelInputPartial(T value);
     void addModelInputBatchPartial(int index, std::span<std::byte> content, size_t tupleSize);
 
     template <class T>
@@ -119,6 +119,9 @@ public:
 
     template <class T>
     void infer();
+
+    template <class T>
+    void inferWithReduction();
 
     template <class T>
     size_t inferCombine(size_t outputSize, size_t outputFields, bool isVarSizedOutput);

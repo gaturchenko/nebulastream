@@ -56,16 +56,18 @@ void IREEAdapter::initializeModel(Nebuli::Inference::Model& model, uint64_t batc
 }
 
 template <class T>
-void IREEAdapter::addModelInputPartial(T value)
+uint64_t IREEAdapter::addModelInputPartial(T value)
 {
     const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
     const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
     const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
 
+    uint64_t computedIndex = bytesProcessed / sizeof(T);
+
     if (inputDataEighth != nullptr && bytesProcessed < thresholdHigh)
     {
         currentReductionLevel = HIGH;
-        std::bit_cast<T*>(inputDataEighth.get())[bytesProcessed / sizeof(T)] = value;
+        std::bit_cast<T*>(inputDataEighth.get())[computedIndex] = value;
         bytesProcessed += sizeof(T);
     }
     else if (inputDataFourth != nullptr && bytesProcessed < thresholdMedium)
@@ -75,7 +77,7 @@ void IREEAdapter::addModelInputPartial(T value)
             std::memcpy(inputDataFourth.get(), inputDataEighth.get(), thresholdHigh);
         }
         currentReductionLevel = MEDIUM;
-        std::bit_cast<T*>(inputDataFourth.get())[bytesProcessed / sizeof(T)] = value;
+        std::bit_cast<T*>(inputDataFourth.get())[computedIndex] = value;
         bytesProcessed += sizeof(T);
     }
     else if (inputDataHalf != nullptr && bytesProcessed < thresholdLow)
@@ -85,7 +87,7 @@ void IREEAdapter::addModelInputPartial(T value)
             std::memcpy(inputDataHalf.get(), inputDataFourth.get(), thresholdMedium);
         }
         currentReductionLevel = LOW;
-        std::bit_cast<T*>(inputDataHalf.get())[bytesProcessed / sizeof(T)] = value;
+        std::bit_cast<T*>(inputDataHalf.get())[computedIndex] = value;
         bytesProcessed += sizeof(T);
     }
     else
@@ -95,9 +97,10 @@ void IREEAdapter::addModelInputPartial(T value)
             std::memcpy(inputData.get(), inputDataHalf.get(), thresholdLow);
         }
         currentReductionLevel = NONE;
-        std::bit_cast<T*>(inputData.get())[bytesProcessed / sizeof(T)] = value;
+        std::bit_cast<T*>(inputData.get())[computedIndex] = value;
         bytesProcessed += sizeof(T);
     }
+    return computedIndex;
 }
 
 void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> content, size_t tupleSize)
@@ -151,6 +154,34 @@ void IREEAdapter::infer()
 {
     auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
     runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()));
+}
+
+template <class T>
+void IREEAdapter::inferWithReduction()
+{
+    iree_hal_buffer_view_t* ireeOutputBV = nullptr;
+    switch (currentReductionLevel)
+    {
+        default:
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
+            break;
+        case LOW:
+            lowReductions += 1;
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputDataHalf.get(), std::ceil(1 / float(LOW) * inputSize), currentReductionLevel);
+            break;
+        case MEDIUM:
+            mediumReductions += 1;
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputDataFourth.get(), std::ceil(1 / float(MEDIUM) * inputSize), currentReductionLevel);
+            break;
+        case HIGH:
+            highReductions += 1;
+            ireeOutputBV = runtimeWrapper.execute(functionName, inputDataEighth.get(), std::ceil(1 / float(HIGH) * inputSize), currentReductionLevel);
+            break;
+    }
+    runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()));
+
+    currentReductionLevel = NONE;
+    bytesProcessed = 0;
 }
 
 template <class T>
@@ -251,9 +282,10 @@ std::shared_ptr<IREEAdapter> IREEAdapter::create()
 
 #define NES_IREE_ADAPTER_INSTANTIATE(T)                                           \
     template void IREEAdapter::addModelInput<T>(size_t, T);                        \
-    template void IREEAdapter::addModelInputPartial<T>(T);                         \
+    template uint64_t IREEAdapter::addModelInputPartial<T>(T);                         \
     template T IREEAdapter::getResultAt<T>(size_t);                                \
     template void IREEAdapter::infer<T>();                                         \
+    template void IREEAdapter::inferWithReduction<T>();                                         \
     template size_t IREEAdapter::inferCombine<T>(size_t, size_t, bool);
 
 NES_IREE_ADAPTER_INSTANTIATE(uint8_t)

@@ -40,10 +40,11 @@ inline IREEAdapter* getAdapter(OperatorHandler* inferModelHandler, WorkerThreadI
 }
 
 template <class T>
-void addValueToModelProxy(int index, T value, OperatorHandler* inferModelHandler, WorkerThreadId thread)
+int addValueToModelProxy(T value, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
     auto* adapter = getAdapter(inferModelHandler, thread);
-    adapter->addModelInput<T>(index, value);
+    auto currentIdx = adapter->addModelInputPartial<T>(value);
+    return static_cast<int>(currentIdx);
 }
 
 template <class T>
@@ -75,7 +76,7 @@ template <class T>
 void applyModelProxy(OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
     auto* adapter = getAdapter(inferModelHandler, thread);
-    adapter->infer<T>();
+    adapter->inferWithReduction<T>();
 }
 
 nautilus::val<uint32_t> min(const nautilus::val<uint32_t>& lhs, const nautilus::val<uint32_t>& rhs)
@@ -138,7 +139,6 @@ void IREEBatchInferenceOperator::performInference(
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
-        auto outputRowIndex = rowIndex * this->outputSize / this->inputSize;
 
         /// `findOrCreateEntry` calls `VarVal::readVarValFromMemory` which doesn't support VarSized
         if (!this->isVarSizedInput)
@@ -148,24 +148,44 @@ void IREEBatchInferenceOperator::performInference(
                 *hashMapOptions.hashFunction,
                 [&](const nautilus::val<AbstractHashMapEntry*>& entry)
                 {
+                    /// if the entry is not found, create a record where we will store the respective output buffer index
                     const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
                     Record valueRecord;
 
                     valueRecord.write("rowInputIndex", VarVal(rowIndex));
-                    valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
+                    valueRecord.write("rowOutputIndex", VarVal(int{0}));
                     ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
                 }, executionCtx.pipelineMemoryProvider.bufferProvider);
-        const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
 
-            for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
+            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+
+            auto entryRowIndex = entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>();
+
+            /// we inserted a new entry, so we have a unique record and hence we write it to the input buffer
+            if (entryRowIndex == rowIndex)
             {
-                nautilus::invoke(
-                    IREEBatchInference::addValueToModelProxy<T>,
-                    entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>() + i,
-                    inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
-                    operatorHandler,
-                    executionCtx.workerThreadId);
-                ++rowIndex;
+                nautilus::val<int> inputDataIndex{0};
+
+                for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
+                {
+                    auto index = nautilus::invoke(
+                        IREEBatchInference::addValueToModelProxy<T>,
+                        inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
+                        operatorHandler,
+                        executionCtx.workerThreadId);
+                    ++rowIndex;
+
+                    if (i == nautilus::val<size_t>(0))
+                    {
+                        inputDataIndex = index;
+                    }
+                }
+
+                /// compute the output buffer index, given the size of the currently used input buffer, and write it to the value record
+                auto outputRowIndex = inputDataIndex * this->outputSize / this->inputSize;
+                Record valueRecord = entryRef.getValue();
+                valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
+                entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
             }
         }
         else
