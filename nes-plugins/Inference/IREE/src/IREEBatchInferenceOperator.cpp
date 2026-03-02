@@ -128,23 +128,24 @@ void IREEBatchInferenceOperator::performInference(
         auto record = createRecord(*it, fields);
         auto rowIdxOutput = rowIdx * this->outputSize / this->inputSize;
 
-        const auto hashMapEntry = hashMap.findOrCreateEntry(
-            record,
-            *hashMapOptions.hashFunction,
-            [&](const nautilus::val<AbstractHashMapEntry*>& entry)
-            {
-                const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-                Record valueRecord;
-
-                valueRecord.write("rowInputIndex", VarVal(rowIdx));
-                valueRecord.write("rowOutputIndex", VarVal(rowIdxOutput));
-                ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
-            },
-            executionCtx.pipelineMemoryProvider.bufferProvider);
-        const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-
+        /// `findOrCreateEntry` calls `VarVal::readVarValFromMemory` which doesn't support VarSized
         if (!this->isVarSizedInput)
         {
+            const auto hashMapEntry = hashMap.findOrCreateEntry(
+                record,
+                *hashMapOptions.hashFunction,
+                [&](const nautilus::val<AbstractHashMapEntry*>& entry)
+                {
+                    const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+                    Record valueRecord;
+
+                    valueRecord.write("rowInputIndex", VarVal(rowIdx));
+                    valueRecord.write("rowOutputIndex", VarVal(rowIdxOutput));
+                    ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
+                },
+                executionCtx.pipelineMemoryProvider.bufferProvider);
+            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+
             for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
             {
                 nautilus::invoke(
@@ -162,7 +163,7 @@ void IREEBatchInferenceOperator::performInference(
             auto varSizedValue = value.cast<VariableSizedData>();
             nautilus::invoke(
                 IREEBatchInference::copyVarSizedToModelProxy,
-                entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>(),
+                rowIdx,
                 varSizedValue.getContent(),
                 IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
                 nautilus::val<size_t>(inputSize),
@@ -202,15 +203,15 @@ void IREEBatchInferenceOperator::writeOutputRecord(
     {
         auto record = createRecord(*it, fields);
 
-        const auto hashMapEntry = hashMap.findOrCreateEntry(
-            record,
-            *hashMapOptions.hashFunction,
-            [&](const nautilus::val<AbstractHashMapEntry*>&){},
-            executionCtx.pipelineMemoryProvider.bufferProvider);
-        const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-
         if (!this->isVarSizedOutput)
         {
+            const auto hashMapEntry = hashMap.findOrCreateEntry(
+                record,
+                *hashMapOptions.hashFunction,
+                [&](const nautilus::val<AbstractHashMapEntry*>&){},
+                executionCtx.pipelineMemoryProvider.bufferProvider);
+            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+
             for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
             {
                 VarVal result = VarVal(nautilus::invoke(
@@ -229,7 +230,7 @@ void IREEBatchInferenceOperator::writeOutputRecord(
 
             nautilus::invoke(
                 IREEBatchInference::copyVarSizedFromModelProxy,
-                entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>(),
+                rowIdx,
                 output.getContent(),
                 output.getContentSize(),
                 operatorHandler,
