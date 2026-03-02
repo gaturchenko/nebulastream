@@ -164,9 +164,7 @@ void IREEBatchCacheInferenceOperator::performInference(
                 cacheProbeTuple = nautilus::invoke(
                     +[](OperatorHandler* inferModelHandler, WorkerThreadId thread, size_t idx, T value)
                     {
-                        auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-                        auto adapter = handler->getIREEAdapter(thread);
-
+                        auto* adapter = IREEBatchCacheInference::getAdapter(inferModelHandler, thread);
                         std::bit_cast<T*>(adapter->cacheProbeTuple.get())[idx] = value;
                         return adapter->cacheProbeTuple.get();
                     },
@@ -183,9 +181,7 @@ void IREEBatchCacheInferenceOperator::performInference(
             cacheProbeTuple = nautilus::invoke(
                 +[](OperatorHandler* inferModelHandler, WorkerThreadId thread, std::byte* content, uint32_t size, uint32_t tupleSize)
                 {
-                    auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-                    auto adapter = handler->getIREEAdapter(thread);
-
+                    auto* adapter = IREEBatchCacheInference::getAdapter(inferModelHandler, thread);
                     std::memcpy(adapter->cacheProbeTuple.get(), content, std::min(size, tupleSize));
                     return adapter->cacheProbeTuple.get();
                 },
@@ -311,8 +307,7 @@ void IREEBatchCacheInferenceOperator::performInference(
         const auto cachePos = nautilus::invoke(
             +[](size_t i, OperatorHandler* inferModelHandler, WorkerThreadId thread)
             {
-                auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-                auto adapter = handler->getIREEAdapter(thread);
+                auto* adapter = IREEBatchCacheInference::getAdapter(inferModelHandler, thread);
                 return adapter->batchCachingHelper.getCacheMapKey(i);
             }, i, operatorHandler, executionCtx.workerThreadId);
 
@@ -324,10 +319,9 @@ void IREEBatchCacheInferenceOperator::performInference(
                     const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
                 {
                     return nautilus::invoke(
-                        +[](PredictionCacheEntry* predictionCacheEntry, OperatorHandler* opHandlerPtr, WorkerThreadId thread, int idx, size_t size)
+                        +[](PredictionCacheEntry* predictionCacheEntry, OperatorHandler* inferModelHandler, WorkerThreadId thread, int idx, size_t size)
                         {
-                            auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
-                            auto adapter = handler->getIREEAdapter(thread);
+                            auto* adapter = IREEBatchCacheInference::getAdapter(inferModelHandler, thread);
 
                             int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
 
@@ -348,8 +342,7 @@ void IREEBatchCacheInferenceOperator::performInference(
                     return nautilus::invoke(
                         +[](PredictionCacheEntry* predictionCacheEntry, OperatorHandler* opHandlerPtr, WorkerThreadId thread, int idx, size_t size)
                         {
-                            auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(opHandlerPtr);
-                            auto adapter = handler->getIREEAdapter(thread);
+                            auto* adapter = IREEBatchCacheInference::getAdapter(opHandlerPtr, thread);
 
                             int outputPos = adapter->batchCachingHelper.getCacheMapValue(idx);
 
