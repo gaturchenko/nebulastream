@@ -44,6 +44,61 @@ public:
     void setup(ExecutionContext& executionCtx, CompilationContext&) const override;
     void terminate(ExecutionContext& executionCtx) const override;
 
+    template <class T>
+    nautilus::val<std::byte*> createCacheProbeTuple(
+        nautilus::val<std::byte*> cacheProbeTuple,
+        const nautilus::val<OperatorHandler*>& operatorHandler,
+        ExecutionContext& executionCtx,
+        Record& record) const;
+
+    nautilus::val<std::byte*> createCacheProbeTupleVarsized(
+        nautilus::val<std::byte*> cacheProbeTuple,
+        const nautilus::val<OperatorHandler*>& operatorHandler,
+        ExecutionContext& executionCtx,
+        const nautilus::val<int8_t*>& varSizedContent,
+        const nautilus::val<int32_t>& varSizedSize) const;
+
+    std::pair<nautilus::val<uint64_t>, nautilus::val<std::byte*>> probeIntoCache(
+        PredictionCache* predictionCache,
+        nautilus::val<std::byte*> cacheProbeTuple) const;
+
+    template <typename T>
+    void writeToInputOrOutputBuffer(
+        nautilus::val<std::byte*> prediction,
+        const nautilus::val<OperatorHandler*>& operatorHandler,
+        ExecutionContext& executionCtx,
+        Record& record,
+        const nautilus::val<uint64_t>& cacheKeyIndex,
+        const nautilus::val<bool>& hasCachedPrediction,
+        const nautilus::val<uint64_t>& outputRowIndex,
+        const nautilus::val<uint64_t>& replacementIndex) const;
+
+    void writeToInputOrOutputBufferVarsized(
+        nautilus::val<std::byte*> prediction,
+        const nautilus::val<OperatorHandler*>& operatorHandler,
+        ExecutionContext& executionCtx,
+        const nautilus::val<int8_t*>& varSizedContent,
+        const nautilus::val<int32_t>& varSizedSize,
+        const nautilus::val<uint64_t>& cacheKeyIndex,
+        const nautilus::val<bool>& hasCachedPrediction,
+        const nautilus::val<uint64_t>& replacementIndex,
+        const nautilus::val<int>& rowIndex) const;
+
+    template <class T>
+    void updateCacheValues(
+        PredictionCache* predictionCache,
+        const nautilus::val<uint64_t>& cachePos,
+        const nautilus::val<OperatorHandler*>& operatorHandler,
+        const nautilus::val<WorkerThreadId>& threadId,
+        const nautilus::val<size_t>& valueToUpdate) const;
+
+    void updateCacheValuesVarsized(
+        PredictionCache* predictionCache,
+        const nautilus::val<uint64_t>& cachePos,
+        const nautilus::val<OperatorHandler*>& operatorHandler,
+        const nautilus::val<WorkerThreadId>& threadId,
+        const nautilus::val<size_t>& valueToUpdate) const;
+
     [[nodiscard]] Record createRecord(const Record& featureRecord, const std::vector<Record::RecordFieldIdentifier>& projections) const;
 
     [[nodiscard]] std::optional<struct PhysicalOperator> getChild() const override { return child; }
