@@ -67,13 +67,17 @@ protected:
     void performInference(
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
-        ExecutionContext& executionCtx) const;
+        ExecutionContext& executionCtx,
+        nautilus::val<HashMap*> hashMapPtr,
+        ChainedHashMapRef& hashMap) const;
 
     template <class T>
     void writeOutputRecord(
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
-        ExecutionContext& executionCtx) const;
+        ExecutionContext& executionCtx,
+        nautilus::val<HashMap*> hashMapPtr,
+        ChainedHashMapRef& hashMap) const;
 };
 
 }

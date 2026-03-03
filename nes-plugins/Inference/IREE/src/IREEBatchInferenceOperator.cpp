@@ -84,9 +84,11 @@ nautilus::val<uint32_t> min(const nautilus::val<uint32_t>& lhs, const nautilus::
     return lhs < rhs ? lhs : rhs;
 }
 
-void garbageCollectBatchesProxy(OperatorHandler* inferModelHandler)
+void garbageCollectBatchesProxy(OperatorHandler* handler, WorkerThreadId thread)
 {
-    getHandler(inferModelHandler)->garbageCollectBatches();
+    auto* inferModelHandler = getHandler(handler);
+    inferModelHandler->clearHashMap(thread);
+    inferModelHandler->garbageCollectBatches();
 }
 }
 
@@ -115,25 +117,12 @@ template <typename T>
 void IREEBatchInferenceOperator::performInference(
     const PagedVectorRef& pagedVectorRef,
     TupleBufferRef& tupleBufferRef,
-    ExecutionContext& executionCtx) const
+    ExecutionContext& executionCtx,
+    nautilus::val<HashMap*> hashMapPtr,
+    ChainedHashMapRef& hashMap) const
 {
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
-
-    const auto hashMapPtr = nautilus::invoke(
-        +[](OperatorHandler* handler, WorkerThreadId threadId)
-        {
-            return dynamic_cast<IREEBatchInferenceOperatorHandler*>(handler)->getHashMapPtr(threadId);
-        },
-        operatorHandler,
-        executionCtx.workerThreadId);
-
-    ChainedHashMapRef hashMap{
-        hashMapPtr,
-        hashMapOptions.fieldKeys,
-        hashMapOptions.fieldValues,
-        hashMapOptions.entriesPerPage,
-        hashMapOptions.entrySize};
 
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
@@ -153,7 +142,7 @@ void IREEBatchInferenceOperator::performInference(
                     Record valueRecord;
 
                     valueRecord.write("rowInputIndex", VarVal(rowIndex));
-                    valueRecord.write("rowOutputIndex", VarVal(int{0}));
+                    valueRecord.write("rowOutputIndex", VarVal(0));
                     ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
                 }, executionCtx.pipelineMemoryProvider.bufferProvider);
 
@@ -211,25 +200,12 @@ template <typename T>
 void IREEBatchInferenceOperator::writeOutputRecord(
     const PagedVectorRef& pagedVectorRef,
     TupleBufferRef& tupleBufferRef,
-    ExecutionContext& executionCtx) const
+    ExecutionContext& executionCtx,
+    nautilus::val<HashMap*> hashMapPtr,
+    ChainedHashMapRef& hashMap) const
 {
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
-
-    const auto hashMapPtr = nautilus::invoke(
-        +[](OperatorHandler* handler, WorkerThreadId threadId)
-        {
-            return dynamic_cast<IREEBatchInferenceOperatorHandler*>(handler)->getHashMapPtr(threadId);
-        },
-        operatorHandler,
-        executionCtx.workerThreadId);
-
-    ChainedHashMapRef hashMap{
-        hashMapPtr,
-        hashMapOptions.fieldKeys,
-        hashMapOptions.fieldValues,
-        hashMapOptions.entriesPerPage,
-        hashMapOptions.entrySize};
 
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
@@ -274,13 +250,6 @@ void IREEBatchInferenceOperator::writeOutputRecord(
         }
         executeChild(executionCtx, record);
     }
-
-    nautilus::invoke(
-        +[](OperatorHandler* inferModelHandler, WorkerThreadId threadId)
-        {
-            auto handler = dynamic_cast<IREEBatchInferenceOperatorHandler*>(inferModelHandler);
-            handler->clearHashMap(threadId);
-        }, operatorHandler, executionCtx.workerThreadId);
 }
 
 void IREEBatchInferenceOperator::open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const
@@ -313,19 +282,32 @@ void IREEBatchInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
         }, batchRef);
 
     const PagedVectorRef batchPagedVectorRef(batchPagedVectorMemRef, tupleBufferRef);
+    
+    const auto hashMapPtr = nautilus::invoke(
+        +[](OperatorHandler* handler, WorkerThreadId threadId)
+        {
+            return dynamic_cast<IREEBatchInferenceOperatorHandler*>(handler)->getHashMapPtr(threadId);
+        }, operatorHandlerRef, executionCtx.workerThreadId);
+    
+    ChainedHashMapRef hashMap{
+        hashMapPtr,
+        hashMapOptions.fieldKeys,
+        hashMapOptions.fieldValues,
+        hashMapOptions.entriesPerPage,
+        hashMapOptions.entrySize};
 
     switch (inputDtype.type)
     {
-        case DataType::Type::UINT8: performInference<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::UINT16: performInference<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::UINT32: performInference<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::UINT64: performInference<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT8: performInference<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT16: performInference<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT32: performInference<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT64: performInference<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::FLOAT32: performInference<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::FLOAT64: performInference<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
+        case DataType::Type::UINT8: performInference<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT16: performInference<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT32: performInference<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT64: performInference<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT8: performInference<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT16: performInference<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT32: performInference<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT64: performInference<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::FLOAT32: performInference<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::FLOAT64: performInference<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
 
         case DataType::Type::BOOLEAN:
         case DataType::Type::CHAR:
@@ -337,16 +319,16 @@ void IREEBatchInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
 
     switch (outputDtype.type)
     {
-        case DataType::Type::UINT8: writeOutputRecord<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::UINT16: writeOutputRecord<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::UINT32: writeOutputRecord<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::UINT64: writeOutputRecord<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT8: writeOutputRecord<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT16: writeOutputRecord<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT32: writeOutputRecord<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::INT64: writeOutputRecord<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::FLOAT32: writeOutputRecord<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
-        case DataType::Type::FLOAT64: writeOutputRecord<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx); break;
+        case DataType::Type::UINT8: writeOutputRecord<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT16: writeOutputRecord<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT32: writeOutputRecord<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT64: writeOutputRecord<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT8: writeOutputRecord<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT16: writeOutputRecord<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT32: writeOutputRecord<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::INT64: writeOutputRecord<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::FLOAT32: writeOutputRecord<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::FLOAT64: writeOutputRecord<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
 
         case DataType::Type::BOOLEAN:
         case DataType::Type::CHAR:
@@ -369,7 +351,7 @@ void IREEBatchInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
 void IREEBatchInferenceOperator::close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const
 {
     const auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
-    nautilus::invoke(IREEBatchInference::garbageCollectBatchesProxy, operatorHandlerMemRef);
+    nautilus::invoke(IREEBatchInference::garbageCollectBatchesProxy, operatorHandlerMemRef, executionCtx.workerThreadId);
     PhysicalOperatorConcept::close(executionCtx, recordBuffer);
 }
 
