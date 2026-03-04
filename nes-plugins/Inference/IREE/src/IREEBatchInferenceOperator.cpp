@@ -102,8 +102,10 @@ IREEBatchInferenceOperator::IREEBatchInferenceOperator(
     std::shared_ptr<TupleBufferRef> tupleBufferRef,
     DataType inputDtype,
     DataType outputDtype,
-    HashMapOptions hashMapOptions)
+    HashMapOptions hashMapOptions,
+    bool useBatchDeduplication)
     : WindowProbePhysicalOperator(operatorHandlerId)
+    , useBatchDeduplication(useBatchDeduplication)
     , inputs(std::move(inputs))
     , outputFieldNames(std::move(outputFieldNames))
     , tupleBufferRef(std::move(tupleBufferRef))
@@ -124,13 +126,15 @@ void IREEBatchInferenceOperator::performInference(
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
+    /// The `findOrCreateEntry` method of `ChainedHashMapRef` calls `VarVal::readVarValFromMemory` which doesn't support VarSized
+    const auto deduplicateBatch = useBatchDeduplication && !this->isVarSizedInput;
+
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
 
-        /// `findOrCreateEntry` calls `VarVal::readVarValFromMemory` which doesn't support VarSized
-        if (!this->isVarSizedInput)
+        if (deduplicateBatch)
         {
             const auto hashMapEntry = hashMap.findOrCreateEntry(
                 record,
@@ -177,6 +181,18 @@ void IREEBatchInferenceOperator::performInference(
                 entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
             }
         }
+        else if (!this->isVarSizedInput)
+        {
+            for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
+            {
+                nautilus::invoke(
+                    IREEBatchInference::addValueToModelProxy<T>,
+                    inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
+                    operatorHandler,
+                    executionCtx.workerThreadId);
+                ++rowIndex;
+            }
+        }
         else
         {
             const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
@@ -207,6 +223,8 @@ void IREEBatchInferenceOperator::writeOutputRecord(
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
+    const auto deduplicateBatch = useBatchDeduplication && !this->isVarSizedInput;
+    nautilus::val<int> inputElementIndex(0);
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
@@ -214,23 +232,42 @@ void IREEBatchInferenceOperator::writeOutputRecord(
 
         if (!this->isVarSizedOutput)
         {
-            const auto hashMapEntry = hashMap.findOrCreateEntry(
-                record,
-                *hashMapOptions.hashFunction,
-                [&](const nautilus::val<AbstractHashMapEntry*>&){},
-                executionCtx.pipelineMemoryProvider.bufferProvider);
-            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-
-            for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
+            if (deduplicateBatch)
             {
-                VarVal result = VarVal(nautilus::invoke(
-                    IREEBatchInference::getValueFromModelProxy<T>,
-                    entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>() + i,
-                    operatorHandler,
-                    executionCtx.workerThreadId));
+                const auto hashMapEntry = hashMap.findOrCreateEntry(
+                    record,
+                    *hashMapOptions.hashFunction,
+                    [&](const nautilus::val<AbstractHashMapEntry*>&){},
+                    executionCtx.pipelineMemoryProvider.bufferProvider);
+                const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
 
-                record.write(outputFieldNames.at(i), result);
-                ++rowIndex;
+                for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
+                {
+                    VarVal result = VarVal(nautilus::invoke(
+                        IREEBatchInference::getValueFromModelProxy<T>,
+                        entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>() + i,
+                        operatorHandler,
+                        executionCtx.workerThreadId));
+
+                    record.write(outputFieldNames.at(i), result);
+                    ++rowIndex;
+                }
+            }
+            else
+            {
+                const auto outputRowIndex = inputElementIndex * this->outputSize / this->inputSize;
+                for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
+                {
+                    VarVal result = VarVal(nautilus::invoke(
+                        IREEBatchInference::getValueFromModelProxy<T>,
+                        outputRowIndex + i,
+                        operatorHandler,
+                        executionCtx.workerThreadId));
+
+                    record.write(outputFieldNames.at(i), result);
+                    ++rowIndex;
+                }
+                inputElementIndex += inputs.size();
             }
         }
         else

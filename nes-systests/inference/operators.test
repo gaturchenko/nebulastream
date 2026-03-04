@@ -114,6 +114,7 @@ INTO classificationThreeSeparate;
 96300.0,107410.0,118520.0
 
 # IREEBatchInferenceOperator
+# Configuration worker.default_query_execution.inference.use_batch_deduplication: [true]
 Configuration worker.default_query_execution.inference.batch_size: [4]
 
 SELECT p1, p2, p3
@@ -147,6 +148,7 @@ INTO classificationThreeSeparate;
 
 # IREEBatchCacheInferenceOperator
 # Configuration worker.query_engine.number_of_worker_threads: [1]
+# Configuration worker.default_query_execution.inference.use_batch_deduplication: [true]
 Configuration worker.default_query_execution.inference.batch_size: [4]
 Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
 Configuration worker.default_query_execution.inference.number_of_entries_prediction_cache: [3]

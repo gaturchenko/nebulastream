@@ -105,6 +105,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
         auto outputNames = model.getOutputs() | std::views::keys | std::ranges::to<std::vector>();
 
         const auto batchSize = conf.inferenceConfiguration.batchSize;
+        const auto useBatchDeduplication = conf.inferenceConfiguration.useBatchDeduplication;
         const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType;
         const auto predictionCacheSize = conf.inferenceConfiguration.numberOfEntriesPredictionCache;
 
@@ -232,7 +233,14 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
 
                     auto hashMapOptions = createHashMapOptions(inputFunctions, inputSchema, conf);
                     auto ireeOperator = NES::IREEBatchInferenceOperator(
-                        handlerId, inputFunctions, outputNames, memoryProvider, inputDtype, outputDtype, hashMapOptions);
+                        handlerId,
+                        inputFunctions,
+                        outputNames,
+                        memoryProvider,
+                        inputDtype,
+                        outputDtype,
+                        hashMapOptions,
+                        useBatchDeduplication.getValue());
 
                     if (inferModelOperator->getInputFields().size() == 1
                         && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)
@@ -269,7 +277,15 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                         predictionCacheSize.getValue()};
                     auto hashMapOptions = createHashMapOptions(inputFunctions, inputSchema, conf);
                     auto ireeOperator = NES::IREEBatchCacheInferenceOperator(
-                        handlerId, inputFunctions, outputNames, memoryProvider, predictionCacheOptions, inputDtype, outputDtype, hashMapOptions);
+                        handlerId,
+                        inputFunctions,
+                        outputNames,
+                        memoryProvider,
+                        predictionCacheOptions,
+                        inputDtype,
+                        outputDtype,
+                        hashMapOptions,
+                        useBatchDeduplication.getValue());
 
                     if (inferModelOperator->getInputFields().size() == 1
                         && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)

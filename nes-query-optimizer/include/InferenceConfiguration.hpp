@@ -1,5 +1,5 @@
 /*
-Licensed under the Apache License, Version 2.0 (the "License");
+    Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
 
@@ -17,6 +17,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 #include <Configurations/BaseConfiguration.hpp>
 #include <Configurations/Enums/EnumOption.hpp>
 #include <Configurations/ScalarOption.hpp>
+#include <Configurations/Validation/BooleanValidation.hpp>
 #include <Configurations/Validation/NonZeroValidation.hpp>
 #include <fmt/ranges.h>
 
@@ -48,6 +49,10 @@ public:
 
     UIntOption batchSize
         = {"batch_size", "1", "Batch size", {std::make_shared<NonZeroValidation>()}};
+    BoolOption useBatchDeduplication
+        = {"use_batch_deduplication", "false", "Whether to invoke the model only on unique values of a batch",
+        {std::make_shared<BooleanValidation>()}};
+
     EnumOption<PredictionCacheType> predictionCacheType
         = {"prediction_cache_type",
            PredictionCacheType::NONE,
@@ -56,7 +61,10 @@ public:
         = {"number_of_entries_prediction_cache", "1", "Size of the prediction cache", {std::make_shared<NonZeroValidation>()}};
 
 private:
-    std::vector<BaseOption*> getOptions() override { return {&batchSize, &predictionCacheType, &numberOfEntriesPredictionCache}; }
+    std::vector<BaseOption*> getOptions() override
+    {
+        return {&batchSize, &useBatchDeduplication, &predictionCacheType, &numberOfEntriesPredictionCache};
+    }
 };
 
 }

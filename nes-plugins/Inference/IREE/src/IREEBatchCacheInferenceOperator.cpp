@@ -144,8 +144,10 @@ IREEBatchCacheInferenceOperator::IREEBatchCacheInferenceOperator(
     Configurations::PredictionCacheOptions predictionCacheOptions,
     DataType inputDtype,
     DataType outputDtype,
-    HashMapOptions hashMapOptions)
+    HashMapOptions hashMapOptions,
+    bool useBatchDeduplication)
     : WindowProbePhysicalOperator(operatorHandlerId)
+    , useBatchDeduplication(useBatchDeduplication)
     , inputs(std::move(inputs))
     , outputFieldNames(std::move(outputFieldNames))
     , tupleBufferRef(std::move(tupleBufferRef))
@@ -400,29 +402,32 @@ void IREEBatchCacheInferenceOperator::performInference(
 
         if (!this->isVarSizedInput)
         {
-            /// 0. check if the record is a duplicate, if it is, we don't do any processing
-            const auto hashMapEntry = hashMap.findOrCreateEntry(
-                record,
-                *hashMapOptions.hashFunction,
-                [&](const nautilus::val<AbstractHashMapEntry*>& entry)
-                {
-                    /// if the entry is not found, create a record where we will store the respective output buffer index
-                    const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-                    Record valueRecord;
-
-                    valueRecord.write("rowInputIndex", VarVal(rowIndex));
-                    valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
-                    ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
-                }, executionCtx.pipelineMemoryProvider.bufferProvider);
-
-            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-            auto entryRowIndex = entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>();
-
-            /// the entry has already been inserted, so the record is a duplicate and we can continue iterating over the batch
-            if (entryRowIndex != rowIndex)
+            if (useBatchDeduplication)
             {
-                rowIndex += inputs.size();
-                continue;
+                /// 0. check if the record is a duplicate, if it is, we don't do any processing
+                const auto hashMapEntry = hashMap.findOrCreateEntry(
+                    record,
+                    *hashMapOptions.hashFunction,
+                    [&](const nautilus::val<AbstractHashMapEntry*>& entry)
+                    {
+                        /// if the entry is not found, create a record where we will store the respective output buffer index
+                        const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+                        Record valueRecord;
+
+                        valueRecord.write("rowInputIndex", VarVal(rowIndex));
+                        valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
+                        ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
+                    }, executionCtx.pipelineMemoryProvider.bufferProvider);
+
+                const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+                auto entryRowIndex = entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>();
+
+                /// the entry has already been inserted, so the record is a duplicate and we can continue iterating over the batch
+                if (entryRowIndex != rowIndex)
+                {
+                    rowIndex += inputs.size();
+                    continue;
+                }
             }
 
             /// 1. fill a byte array for a record to probe into the cache
@@ -506,6 +511,7 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
     auto* predictionCache = dynamic_cast<PredictionCache*>(executionCtx.getLocalState(id));
     const auto operatorHandler = predictionCache->getOperatorHandler();
 
+    nautilus::val<int> inputElementIndex(0);
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
@@ -513,23 +519,42 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
 
         if (!this->isVarSizedOutput)
         {
-            const auto hashMapEntry = hashMap.findOrCreateEntry(
-                record,
-                *hashMapOptions.hashFunction,
-                [&](const nautilus::val<AbstractHashMapEntry*>&){},
-                executionCtx.pipelineMemoryProvider.bufferProvider);
-            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-
-            for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
+            if (useBatchDeduplication)
             {
-                VarVal result = VarVal(nautilus::invoke(
-                    IREEBatchCacheInference::getValueFromModelProxy<T>,
-                    entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>() + i,
-                    operatorHandler,
-                    executionCtx.workerThreadId));
+                const auto hashMapEntry = hashMap.findOrCreateEntry(
+                    record,
+                    *hashMapOptions.hashFunction,
+                    [&](const nautilus::val<AbstractHashMapEntry*>&){},
+                    executionCtx.pipelineMemoryProvider.bufferProvider);
+                const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
 
-                record.write(outputFieldNames.at(i), result);
-                ++rowIndex;
+                for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
+                {
+                    VarVal result = VarVal(nautilus::invoke(
+                        IREEBatchCacheInference::getValueFromModelProxy<T>,
+                        entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>() + i,
+                        operatorHandler,
+                        executionCtx.workerThreadId));
+
+                    record.write(outputFieldNames.at(i), result);
+                    ++rowIndex;
+                }
+            }
+            else
+            {
+                const auto outputRowIndex = inputElementIndex * this->outputSize / this->inputSize;
+                for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
+                {
+                    VarVal result = VarVal(nautilus::invoke(
+                        IREEBatchCacheInference::getValueFromModelProxy<T>,
+                        outputRowIndex + i,
+                        operatorHandler,
+                        executionCtx.workerThreadId));
+
+                    record.write(outputFieldNames.at(i), result);
+                    ++rowIndex;
+                }
+                inputElementIndex += inputs.size();
             }
         }
         else

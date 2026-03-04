@@ -36,7 +36,8 @@ public:
         std::shared_ptr<TupleBufferRef> tupleBufferRef,
         DataType inputDtype,
         DataType outputDtype,
-        HashMapOptions hashMapOptions);
+        HashMapOptions hashMapOptions,
+        bool useBatchDeduplication);
 
     void open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
     void close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
@@ -52,6 +53,7 @@ public:
     bool isVarSizedOutput = false;
     size_t outputSize = 0;
     size_t inputSize = 0;
+    bool useBatchDeduplication = false;
 
 private:
     const std::vector<PhysicalFunction> inputs;
