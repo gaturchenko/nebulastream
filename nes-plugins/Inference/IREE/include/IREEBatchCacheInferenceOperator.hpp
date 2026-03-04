@@ -23,6 +23,7 @@
 #include <Nautilus/Interface/BufferRef/TupleBufferRef.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <InferenceConfiguration.hpp>
+#include <HashMapOptions.hpp>
 
 namespace NES
 {
@@ -37,7 +38,8 @@ public:
         std::shared_ptr<TupleBufferRef> tupleBufferRef,
         Configurations::PredictionCacheOptions predictionCacheOptions,
         DataType inputDtype,
-        DataType outputDtype);
+        DataType outputDtype,
+        HashMapOptions hashMapOptions);
 
     void open(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
     void close(ExecutionContext& executionCtx, RecordBuffer& recordBuffer) const override;
@@ -117,19 +119,24 @@ private:
     Configurations::PredictionCacheOptions predictionCacheOptions;
     DataType inputDtype;
     DataType outputDtype;
+    HashMapOptions hashMapOptions;
 
 protected:
     template <class T>
     void performInference(
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
-        ExecutionContext& executionCtx) const;
+        ExecutionContext& executionCtx,
+        nautilus::val<HashMap*> hashMapPtr,
+        ChainedHashMapRef& hashMap) const;
 
     template <class T>
     void writeOutputRecord(
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
-        ExecutionContext& executionCtx) const;
+        ExecutionContext& executionCtx,
+        nautilus::val<HashMap*> hashMapPtr,
+        ChainedHashMapRef& hashMap) const;
         // const nautilus::val<std::byte*>& prediction) const;
 };
 

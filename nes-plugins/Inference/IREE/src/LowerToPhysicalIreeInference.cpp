@@ -267,7 +267,9 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                     NES::Configurations::PredictionCacheOptions predictionCacheOptions{
                         predictionCacheType.getValue(),
                         predictionCacheSize.getValue()};
-                    auto ireeOperator = NES::IREEBatchCacheInferenceOperator(handlerId, inputFunctions, outputNames, memoryProvider, predictionCacheOptions, inputDtype, outputDtype);
+                    auto hashMapOptions = createHashMapOptions(inputFunctions, inputSchema, conf);
+                    auto ireeOperator = NES::IREEBatchCacheInferenceOperator(
+                        handlerId, inputFunctions, outputNames, memoryProvider, predictionCacheOptions, inputDtype, outputDtype, hashMapOptions);
 
                     if (inferModelOperator->getInputFields().size() == 1
                         && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)
