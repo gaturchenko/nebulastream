@@ -115,7 +115,6 @@ void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> cont
     {
         currentReductionLevel = HIGH;
         std::ranges::copy_n(content.data(), sizeToWrite, inputDataEighth.get() + bytesProcessed);
-        bytesProcessed += content.size();
     }
     else if (inputDataFourth != nullptr && bytesProcessed + tupleSize <= thresholdMedium)
     {
@@ -125,7 +124,6 @@ void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> cont
         }
         currentReductionLevel = MEDIUM;
         std::ranges::copy_n(content.data(), sizeToWrite, inputDataFourth.get() + bytesProcessed);
-        bytesProcessed += content.size();
     }
     else if (inputDataHalf != nullptr && bytesProcessed + tupleSize <= thresholdLow)
     {
@@ -135,7 +133,6 @@ void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> cont
         }
         currentReductionLevel = LOW;
         std::ranges::copy_n(content.data(), sizeToWrite, inputDataHalf.get() + bytesProcessed);
-        bytesProcessed += content.size();
     }
     else
     {
@@ -145,8 +142,11 @@ void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> cont
         }
         currentReductionLevel = NONE;
         std::ranges::copy_n(content.data(), sizeToWrite, inputData.get() + index * tupleSize);
-        bytesProcessed += content.size();
     }
+    /// sometimes the varsized record can have a smaller size than the model expects
+    /// it can happen, e.g., if we call the model on the output of array aggregation
+    /// in this case, we cannot make use of the smaller inputData buffers and we have to still increment by the full tuple size
+    bytesProcessed += tupleSize;
 }
 
 template <class T>

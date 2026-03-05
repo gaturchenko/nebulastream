@@ -89,19 +89,6 @@ void copyVarSizedFromModelProxy(int index, std::byte* content, uint32_t size, Op
 {
     auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->copyResultToBatch(index, std::span{content, size});
-
-    std::stringstream ss;
-    ss << '[';
-    for (int i = 0; i < 2; ++i)
-    {
-        ss << std::bit_cast<float*>(adapter->outputData.get())[i + index];
-        if (i  < 1)
-        {
-            ss << ' ';
-        }
-    }
-    ss << ']';
-    NES_DEBUG("Resulting record #{}: {}", index, ss.str())
 }
 
 template <class T>
@@ -228,10 +215,6 @@ void IREEBatchInferenceOperator::performInference(
                 Record valueRecord = entryRef.getValue();
                 valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
                 entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
-
-                nautilus::invoke(+[](uint64_t h, int i, int o){ NES_DEBUG("New entry hash {} index {},{}", h, i, o) }, entryRef.getHash()
-                , entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>()
-                , entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>());
             }
             else
             {
@@ -298,10 +281,6 @@ void IREEBatchInferenceOperator::writeOutputRecord(
                 [&](const nautilus::val<AbstractHashMapEntry*>&){},
                 executionCtx.pipelineMemoryProvider.bufferProvider);
             const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-
-            nautilus::invoke(+[](uint64_t h, int i, int o){ NES_DEBUG("Output hash {} index {},{}", h, i, o) }, entryRef.getHash()
-                , entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>()
-                , entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>());
 
             if (!this->isVarSizedOutput)
             {
