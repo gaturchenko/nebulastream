@@ -40,7 +40,14 @@ inline IREEAdapter* getAdapter(OperatorHandler* inferModelHandler, WorkerThreadI
 }
 
 template <class T>
-int addValueToModelProxy(T value, OperatorHandler* inferModelHandler, WorkerThreadId thread)
+void addValueToModelProxy(int index, T value, OperatorHandler* inferModelHandler, WorkerThreadId thread)
+{
+    auto* adapter = getAdapter(inferModelHandler, thread);
+    adapter->addModelInput<T>(index, value);
+}
+
+template <class T>
+int addUniqueValueToModelProxy(T value, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
     auto* adapter = getAdapter(inferModelHandler, thread);
     auto currentIdx = adapter->addModelInputPartial<T>(value);
@@ -66,10 +73,35 @@ void copyVarSizedToModelProxy(
     adapter->addModelInputBatch(index, std::span{content, size}, tupleSize);
 }
 
+void copyUniqueVarSizedToModelProxy(
+    int index,
+    std::byte* content,
+    uint32_t size,
+    size_t tupleSize,
+    OperatorHandler* inferModelHandler,
+    WorkerThreadId thread)
+{
+    auto* adapter = getAdapter(inferModelHandler, thread);
+    adapter->addModelInputBatchPartial(index, std::span{content, size}, tupleSize);
+}
+
 void copyVarSizedFromModelProxy(int index, std::byte* content, uint32_t size, OperatorHandler* inferModelHandler, WorkerThreadId thread)
 {
     auto* adapter = getAdapter(inferModelHandler, thread);
     adapter->copyResultToBatch(index, std::span{content, size});
+
+    std::stringstream ss;
+    ss << '[';
+    for (int i = 0; i < 2; ++i)
+    {
+        ss << std::bit_cast<float*>(adapter->outputData.get())[i + index];
+        if (i  < 1)
+        {
+            ss << ' ';
+        }
+    }
+    ss << ']';
+    NES_DEBUG("Resulting record #{}: {}", index, ss.str())
 }
 
 template <class T>
@@ -126,15 +158,12 @@ void IREEBatchInferenceOperator::performInference(
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
-    /// The `findOrCreateEntry` method of `ChainedHashMapRef` calls `VarVal::readVarValFromMemory` which doesn't support VarSized
-    const auto deduplicateBatch = useBatchDeduplication && !this->isVarSizedInput;
-
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
 
-        if (deduplicateBatch)
+        if (useBatchDeduplication)
         {
             const auto hashMapEntry = hashMap.findOrCreateEntry(
                 record,
@@ -157,55 +186,88 @@ void IREEBatchInferenceOperator::performInference(
             /// we inserted a new entry, so we have a unique record and hence we write it to the input buffer
             if (entryRowIndex == rowIndex)
             {
-                nautilus::val<int> inputDataIndex{0};
+                nautilus::val<int> outputRowIndex{0};
+                if (!this->isVarSizedInput)
+                {
+                    nautilus::val<int> inputDataIndex{0};
+                    for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
+                    {
+                        auto index = nautilus::invoke(
+                            IREEBatchInference::addUniqueValueToModelProxy<T>,
+                            inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
+                            operatorHandler,
+                            executionCtx.workerThreadId);
+                        ++rowIndex;
 
+                        if (i == nautilus::val<size_t>(0))
+                        {
+                            inputDataIndex = index;
+                        }
+                    }
+                    outputRowIndex = inputDataIndex * this->outputSize / this->inputSize;
+                }
+                else
+                {
+                    const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+                    const auto varSizedValue = inputValue.cast<VariableSizedData>();
+
+                    nautilus::invoke(
+                        IREEBatchInference::copyUniqueVarSizedToModelProxy,
+                        rowIndex,
+                        varSizedValue.getContent(),
+                        IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
+                        nautilus::val<size_t>(inputSize),
+                        operatorHandler,
+                        executionCtx.workerThreadId);
+
+                    outputRowIndex = rowIndex;
+                    rowIndex += inputs.size();
+                }
+
+                /// compute the output buffer index, given the size of the currently used input buffer, and write it to the value record
+                Record valueRecord = entryRef.getValue();
+                valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
+                entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
+
+                nautilus::invoke(+[](uint64_t h, int i, int o){ NES_DEBUG("New entry hash {} index {},{}", h, i, o) }, entryRef.getHash()
+                , entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>()
+                , entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>());
+            }
+            else
+            {
+                rowIndex += inputs.size();
+            }
+        }
+        /// write the record value to the adapter's `inputData` byte buffer
+        else
+        {
+            if (!this->isVarSizedInput)
+            {
                 for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
                 {
-                    auto index = nautilus::invoke(
+                    nautilus::invoke(
                         IREEBatchInference::addValueToModelProxy<T>,
+                        rowIndex,
                         inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
                         operatorHandler,
                         executionCtx.workerThreadId);
                     ++rowIndex;
-
-                    if (i == nautilus::val<size_t>(0))
-                    {
-                        inputDataIndex = index;
-                    }
                 }
-
-                /// compute the output buffer index, given the size of the currently used input buffer, and write it to the value record
-                auto outputRowIndex = inputDataIndex * this->outputSize / this->inputSize;
-                Record valueRecord = entryRef.getValue();
-                valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
-                entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
             }
-        }
-        else if (!this->isVarSizedInput)
-        {
-            for (nautilus::static_val<size_t> i = 0; i < inputs.size(); ++i)
+            else
             {
+                const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+                const auto varSizedValue = inputValue.cast<VariableSizedData>();
                 nautilus::invoke(
-                    IREEBatchInference::addValueToModelProxy<T>,
-                    inputs.at(i).execute(record, executionCtx.pipelineMemoryProvider.arena).cast<nautilus::val<T>>(),
+                    IREEBatchInference::copyVarSizedToModelProxy,
+                    rowIndex,
+                    varSizedValue.getContent(),
+                    IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
+                    nautilus::val<size_t>(inputSize),
                     operatorHandler,
                     executionCtx.workerThreadId);
-                ++rowIndex;
+                rowIndex += inputs.size();
             }
-        }
-        else
-        {
-            const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
-            const auto varSizedValue = inputValue.cast<VariableSizedData>();
-            nautilus::invoke(
-                IREEBatchInference::copyVarSizedToModelProxy,
-                rowIndex,
-                varSizedValue.getContent(),
-                IREEBatchInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(this->inputSize))),
-                nautilus::val<size_t>(inputSize),
-                operatorHandler,
-                executionCtx.workerThreadId);
-            rowIndex += inputs.size();
         }
     }
 
@@ -223,24 +285,26 @@ void IREEBatchInferenceOperator::writeOutputRecord(
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     const auto operatorHandler = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
 
-    const auto deduplicateBatch = useBatchDeduplication && !this->isVarSizedInput;
-    nautilus::val<int> inputElementIndex(0);
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
 
-        if (!this->isVarSizedOutput)
+        if (useBatchDeduplication)
         {
-            if (deduplicateBatch)
-            {
-                const auto hashMapEntry = hashMap.findOrCreateEntry(
-                    record,
-                    *hashMapOptions.hashFunction,
-                    [&](const nautilus::val<AbstractHashMapEntry*>&){},
-                    executionCtx.pipelineMemoryProvider.bufferProvider);
-                const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+            const auto hashMapEntry = hashMap.findOrCreateEntry(
+                record,
+                *hashMapOptions.hashFunction,
+                [&](const nautilus::val<AbstractHashMapEntry*>&){},
+                executionCtx.pipelineMemoryProvider.bufferProvider);
+            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
 
+            nautilus::invoke(+[](uint64_t h, int i, int o){ NES_DEBUG("Output hash {} index {},{}", h, i, o) }, entryRef.getHash()
+                , entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>()
+                , entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>());
+
+            if (!this->isVarSizedOutput)
+            {
                 for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
                 {
                     VarVal result = VarVal(nautilus::invoke(
@@ -255,35 +319,51 @@ void IREEBatchInferenceOperator::writeOutputRecord(
             }
             else
             {
-                const auto outputRowIndex = inputElementIndex * this->outputSize / this->inputSize;
+                auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
+
+                nautilus::invoke(
+                    IREEBatchInference::copyVarSizedFromModelProxy,
+                    entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>(),
+                    output.getContent(),
+                    output.getContentSize(),
+                    operatorHandler,
+                    executionCtx.workerThreadId);
+
+                record.write(outputFieldNames.at(0), output);
+                rowIndex += outputFieldNames.size();
+            }
+        }
+        else
+        {
+            if (!this->isVarSizedOutput)
+            {
                 for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
                 {
                     VarVal result = VarVal(nautilus::invoke(
                         IREEBatchInference::getValueFromModelProxy<T>,
-                        outputRowIndex + i,
+                        rowIndex,
                         operatorHandler,
                         executionCtx.workerThreadId));
 
                     record.write(outputFieldNames.at(i), result);
                     ++rowIndex;
                 }
-                inputElementIndex += inputs.size();
             }
-        }
-        else
-        {
-            auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
+            else
+            {
+                auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
 
-            nautilus::invoke(
-                IREEBatchInference::copyVarSizedFromModelProxy,
-                rowIndex,
-                output.getContent(),
-                output.getContentSize(),
-                operatorHandler,
-                executionCtx.workerThreadId);
+                nautilus::invoke(
+                    IREEBatchInference::copyVarSizedFromModelProxy,
+                    rowIndex,
+                    output.getContent(),
+                    output.getContentSize(),
+                    operatorHandler,
+                    executionCtx.workerThreadId);
 
-            record.write(outputFieldNames.at(0), output);
-            rowIndex += outputFieldNames.size();
+                record.write(outputFieldNames.at(0), output);
+                rowIndex += outputFieldNames.size();
+            }
         }
         executeChild(executionCtx, record);
     }
