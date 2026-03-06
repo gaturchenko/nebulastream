@@ -3,7 +3,7 @@
 # groups: [Inference, Operator, Varsized]
 
 GlobalConfiguration worker.default_query_execution.operator_buffer_size: [190]
-GlobalConfiguration worker.default_query_execution.inference.batch_size: [2]
+GlobalConfiguration worker.default_query_execution.inference.batch_size: [3]
 GlobalConfiguration worker.default_query_execution.inference.number_of_entries_prediction_cache: [3]
 GlobalConfiguration worker.default_query_execution.inference.use_batch_deduplication: [true]
 
@@ -55,6 +55,19 @@ ATTACH INLINE
 1565909031000,85
 1565909035000,85
 1565909039000,85
+1565909043000,85
+1565909047000,85
+1565909051000,85
+1565909055000,85
+1565909059000,85
+1565909063000,85
+1565909067000,85
+1565909071000,85
+1565909075000,85
+1565909079000,85
+1565909083000,85
+1565909087000,85
+1565909091000,85
 
 CREATE SINK solarPowerVarsizedChecksum(powerProdNext8Sec VARSIZED) TYPE Checksum;
 CREATE SINK solarPowerVarsizedDiscard(powerProdNext8Sec VARSIZED) TYPE Discard;
@@ -76,7 +89,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-11,833
+14,728
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
 SELECT powerProdNext8Sec FROM (
@@ -100,7 +113,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-11,833
+14,728
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [LFU]
 SELECT powerProdNext8Sec FROM (
@@ -124,7 +137,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-11,833
+14,728
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [LRU]
 SELECT powerProdNext8Sec FROM (
@@ -148,7 +161,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-11,833
+14,728
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [SECOND_CHANCE]
 SELECT powerProdNext8Sec FROM (

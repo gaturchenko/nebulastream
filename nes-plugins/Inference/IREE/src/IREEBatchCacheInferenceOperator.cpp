@@ -400,72 +400,127 @@ void IREEBatchCacheInferenceOperator::performInference(
         auto outputRowIndex = rowIndex * this->outputSize / this->inputSize;
         nautilus::val<std::byte*> cacheProbeTuple;
 
-        if (!this->isVarSizedInput)
+        if (useBatchDeduplication)
         {
-            if (useBatchDeduplication)
-            {
-                /// 0. check if the record is a duplicate, if it is, we don't do any processing
-                const auto hashMapEntry = hashMap.findOrCreateEntry(
-                    record,
-                    *hashMapOptions.hashFunction,
-                    [&](const nautilus::val<AbstractHashMapEntry*>& entry)
-                    {
-                        /// if the entry is not found, create a record where we will store the respective output buffer index
-                        const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-                        Record valueRecord;
-
-                        valueRecord.write("rowInputIndex", VarVal(rowIndex));
-                        valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
-                        ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
-                    }, executionCtx.pipelineMemoryProvider.bufferProvider);
-
-                const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-                auto entryRowIndex = entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>();
-
-                /// the entry has already been inserted, so the record is a duplicate and we can continue iterating over the batch
-                if (entryRowIndex != rowIndex)
+            /// 0. check if the record is a duplicate, if it is, we don't do any processing
+            const auto hashMapEntry = hashMap.findOrCreateEntry(
+                record,
+                *hashMapOptions.hashFunction,
+                [&](const nautilus::val<AbstractHashMapEntry*>& entry)
                 {
-                    rowIndex += inputs.size();
-                    continue;
-                }
+                    /// if the entry is not found, create a record where we will store the respective output buffer index
+                    const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+                    Record valueRecord;
+
+                    valueRecord.write("rowInputIndex", VarVal(rowIndex));
+                    valueRecord.write("rowOutputIndex", VarVal(0));
+                    ref.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
+                }, executionCtx.pipelineMemoryProvider.bufferProvider);
+
+            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+            auto entryRowIndex = entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>();
+
+            /// the entry has already been inserted, so the record is a duplicate and we can continue iterating over the batch
+            if (entryRowIndex != rowIndex)
+            {
+                nautilus::invoke(
+                    +[](int e, int i)
+                    {
+                        NES_DEBUG("Duplicate record: {} != {}", e, i)
+                    }, entryRowIndex, rowIndex);
+                // rowIndex += inputs.size();
+                continue;
             }
 
-            /// 1. fill a byte array for a record to probe into the cache
-            cacheProbeTuple = createCacheProbeTuple<T>(cacheProbeTuple, operatorHandler, executionCtx, record);
+            if (!this->isVarSizedInput)
+            {
+                /// 1. fill a byte array for a record to probe into the cache
+                Record valueRecord = entryRef.getValue();
+                valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
+                entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
 
-            /// 2. probe into the cache and check whether there's a prediction for the given key
-            /// (the key might be in the cache but the value may not be there yet since we invoke the model on a batch)
-            auto [cacheKeyIndex, prediction] = probeIntoCache(predictionCache, cacheProbeTuple);
-            const auto hasCachedPrediction = nautilus::invoke(
-                +[](std::byte* prediction){ return prediction != nullptr; }, prediction);
+                cacheProbeTuple = createCacheProbeTuple<T>(cacheProbeTuple, operatorHandler, executionCtx, record);
 
-            /// 3. write either to the input, or to the output byte buffer in the adapter based on the probing outcome
-            writeToInputOrOutputBuffer<T>(prediction, operatorHandler, executionCtx, record, cacheKeyIndex,
-                hasCachedPrediction, outputRowIndex, predictionCache->getReplacementIndex());
+                /// 2. probe into the cache and check whether there's a prediction for the given key
+                /// (the key might be in the cache but the value may not be there yet since we invoke the model on a batch)
+                auto [cacheKeyIndex, prediction] = probeIntoCache(predictionCache, cacheProbeTuple);
+                const auto hasCachedPrediction = nautilus::invoke(
+                    +[](std::byte* prediction){ return prediction != nullptr; }, prediction);
 
-            rowIndex += inputs.size();
+                /// 3. write either to the input, or to the output byte buffer in the adapter based on the probing outcome
+                writeToInputOrOutputBuffer<T>(prediction, operatorHandler, executionCtx, record, cacheKeyIndex,
+                    hasCachedPrediction, outputRowIndex, predictionCache->getReplacementIndex());
+
+                rowIndex += inputs.size();
+            }
+            else
+            {
+                /// 1. fill a byte array for a record to probe into the cache
+                Record valueRecord = entryRef.getValue();
+                valueRecord.write("rowOutputIndex", VarVal(rowIndex));
+                entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
+
+                const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+                const auto varSizedValue = inputValue.cast<VariableSizedData>();
+
+                cacheProbeTuple = createCacheProbeTupleVarsized(cacheProbeTuple, operatorHandler, executionCtx, varSizedValue.getContent(),
+                    IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))));
+
+                /// 2. probe into the cache and check whether there's a prediction for the given key
+                /// (the key might be in the cache but the value may not be there yet since we invoke the model on a batch)
+                auto [cacheKeyIndex, prediction] = probeIntoCache(predictionCache, cacheProbeTuple);
+                const auto hasCachedPrediction = nautilus::invoke(
+                    +[](std::byte* prediction){ return prediction != nullptr; }, prediction);
+
+                /// 3. write either to the input, or to the output byte buffer in the adapter based on the probing outcome
+                writeToInputOrOutputBufferVarsized(prediction, operatorHandler, executionCtx, varSizedValue.getContent(),
+                    IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))),
+                    cacheKeyIndex, hasCachedPrediction, predictionCache->getReplacementIndex(), rowIndex);
+
+                rowIndex += inputs.size();
+            }
         }
         else
         {
-            /// 1. fill a byte array for a record to probe into the cache
-            const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
-            const auto varSizedValue = inputValue.cast<VariableSizedData>();
+            if (!this->isVarSizedInput)
+            {
+                /// 1. fill a byte array for a record to probe into the cache
+                cacheProbeTuple = createCacheProbeTuple<T>(cacheProbeTuple, operatorHandler, executionCtx, record);
 
-            cacheProbeTuple = createCacheProbeTupleVarsized(cacheProbeTuple, operatorHandler, executionCtx, varSizedValue.getContent(),
-                IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))));
+                /// 2. probe into the cache and check whether there's a prediction for the given key
+                /// (the key might be in the cache but the value may not be there yet since we invoke the model on a batch)
+                auto [cacheKeyIndex, prediction] = probeIntoCache(predictionCache, cacheProbeTuple);
+                const auto hasCachedPrediction = nautilus::invoke(
+                    +[](std::byte* prediction){ return prediction != nullptr; }, prediction);
 
-            /// 2. probe into the cache and check whether there's a prediction for the given key
-            /// (the key might be in the cache but the value may not be there yet since we invoke the model on a batch)
-            auto [cacheKeyIndex, prediction] = probeIntoCache(predictionCache, cacheProbeTuple);
-            const auto hasCachedPrediction = nautilus::invoke(
-                +[](std::byte* prediction){ return prediction != nullptr; }, prediction);
+                /// 3. write either to the input, or to the output byte buffer in the adapter based on the probing outcome
+                writeToInputOrOutputBuffer<T>(prediction, operatorHandler, executionCtx, record, cacheKeyIndex,
+                    hasCachedPrediction, outputRowIndex, predictionCache->getReplacementIndex());
 
-            /// 3. write either to the input, or to the output byte buffer in the adapter based on the probing outcome
-            writeToInputOrOutputBufferVarsized(prediction, operatorHandler, executionCtx, varSizedValue.getContent(),
-                IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))),
-                cacheKeyIndex, hasCachedPrediction, predictionCache->getReplacementIndex(), rowIndex);
+                rowIndex += inputs.size();
+            }
+            else
+            {
+                /// 1. fill a byte array for a record to probe into the cache
+                const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
+                const auto varSizedValue = inputValue.cast<VariableSizedData>();
 
-            rowIndex += inputs.size();
+                cacheProbeTuple = createCacheProbeTupleVarsized(cacheProbeTuple, operatorHandler, executionCtx, varSizedValue.getContent(),
+                    IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))));
+
+                /// 2. probe into the cache and check whether there's a prediction for the given key
+                /// (the key might be in the cache but the value may not be there yet since we invoke the model on a batch)
+                auto [cacheKeyIndex, prediction] = probeIntoCache(predictionCache, cacheProbeTuple);
+                const auto hasCachedPrediction = nautilus::invoke(
+                    +[](std::byte* prediction){ return prediction != nullptr; }, prediction);
+
+                /// 3. write either to the input, or to the output byte buffer in the adapter based on the probing outcome
+                writeToInputOrOutputBufferVarsized(prediction, operatorHandler, executionCtx, varSizedValue.getContent(),
+                    IREEBatchCacheInference::min(varSizedValue.getContentSize(), nautilus::val<uint32_t>(static_cast<uint32_t>(inputSize))),
+                    cacheKeyIndex, hasCachedPrediction, predictionCache->getReplacementIndex(), rowIndex);
+
+                rowIndex += inputs.size();
+            }
         }
     }
 
@@ -511,23 +566,22 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
     auto* predictionCache = dynamic_cast<PredictionCache*>(executionCtx.getLocalState(id));
     const auto operatorHandler = predictionCache->getOperatorHandler();
 
-    nautilus::val<int> inputElementIndex(0);
     nautilus::val<int> rowIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
 
-        if (!this->isVarSizedOutput)
+        if (useBatchDeduplication)
         {
-            if (useBatchDeduplication)
-            {
-                const auto hashMapEntry = hashMap.findOrCreateEntry(
-                    record,
-                    *hashMapOptions.hashFunction,
-                    [&](const nautilus::val<AbstractHashMapEntry*>&){},
-                    executionCtx.pipelineMemoryProvider.bufferProvider);
-                const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+            const auto hashMapEntry = hashMap.findOrCreateEntry(
+                record,
+                *hashMapOptions.hashFunction,
+                [&](const nautilus::val<AbstractHashMapEntry*>&){},
+                executionCtx.pipelineMemoryProvider.bufferProvider);
+            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
 
+            if (!this->isVarSizedOutput)
+            {
                 for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
                 {
                     VarVal result = VarVal(nautilus::invoke(
@@ -542,35 +596,51 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
             }
             else
             {
-                const auto outputRowIndex = inputElementIndex * this->outputSize / this->inputSize;
+                auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
+
+                nautilus::invoke(
+                    IREEBatchCacheInference::copyVarSizedFromModelProxy,
+                    entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>(),
+                    output.getContent(),
+                    output.getContentSize(),
+                    operatorHandler,
+                    executionCtx.workerThreadId);
+
+                record.write(outputFieldNames.at(0), output);
+                rowIndex += outputFieldNames.size();
+            }
+        }
+        else
+        {
+            if (!this->isVarSizedInput)
+            {
                 for (nautilus::static_val<size_t> i = 0; i < outputFieldNames.size(); ++i)
                 {
                     VarVal result = VarVal(nautilus::invoke(
                         IREEBatchCacheInference::getValueFromModelProxy<T>,
-                        outputRowIndex + i,
+                        rowIndex,
                         operatorHandler,
                         executionCtx.workerThreadId));
 
                     record.write(outputFieldNames.at(i), result);
                     ++rowIndex;
                 }
-                inputElementIndex += inputs.size();
             }
-        }
-        else
-        {
-            auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
+            else
+            {
+                auto output = executionCtx.pipelineMemoryProvider.arena.allocateVariableSizedData(this->outputSize);
 
-            nautilus::invoke(
-                IREEBatchCacheInference::copyVarSizedFromModelProxy,
-                rowIndex,
-                output.getContent(),
-                output.getContentSize(),
-                operatorHandler,
-                executionCtx.workerThreadId);
+                nautilus::invoke(
+                    IREEBatchCacheInference::copyVarSizedFromModelProxy,
+                    rowIndex,
+                    output.getContent(),
+                    output.getContentSize(),
+                    operatorHandler,
+                    executionCtx.workerThreadId);
 
-            record.write(outputFieldNames.at(0), output);
-            rowIndex += outputFieldNames.size();
+                record.write(outputFieldNames.at(0), output);
+                rowIndex += outputFieldNames.size();
+            }
         }
         executeChild(executionCtx, record);
     }
