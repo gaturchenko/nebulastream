@@ -17,4 +17,7 @@ function(add_iree_inference_test)
     target_include_directories(${TARGET_NAME} PRIVATE ../include ../include/PredictionCache)
 endfunction()
 
-add_iree_inference_test(PredictionCacheMicroBenchmark microbenchmark/PredictionCacheMicroBenchmark.cpp)
+add_iree_inference_test(
+    PredictionCacheMicroBenchmark
+    microbenchmark/PredictionCacheMicroBenchmark.cpp
+    microbenchmark/PredictionCacheDataGenerator.hpp)

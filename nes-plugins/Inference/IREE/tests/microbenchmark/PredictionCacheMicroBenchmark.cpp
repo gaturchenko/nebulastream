@@ -27,6 +27,8 @@
 #include <nautilus/val.hpp>
 #include <nautilus/Engine.hpp>
 
+#include "PredictionCacheDataGenerator.hpp"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -43,6 +45,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <variant>
 #include <unordered_map>
 #include <vector>
 
@@ -52,32 +55,15 @@ namespace
 size_t constexpr TUPLE_SIZE = 32;
 int constexpr WARMUP_RUNS = 3;
 
-enum class HitMissRatio
-{
-    Hits100,
-    Hits75,
-    Hits50,
-    Hits25,
-    Hits0
-};
+using NES::Microbenchmark::BenchmarkData;
+using NES::Microbenchmark::HitMissRatio;
+using NES::Microbenchmark::getHitPercentage;
 
-constexpr uint32_t getHitPercentage(const HitMissRatio ratio)
+enum class DataGenerator
 {
-    switch (ratio)
-    {
-        case HitMissRatio::Hits100:
-            return 100;
-        case HitMissRatio::Hits75:
-            return 75;
-        case HitMissRatio::Hits50:
-            return 50;
-        case HitMissRatio::Hits25:
-            return 25;
-        case HitMissRatio::Hits0:
-            return 0;
-    }
-    return 0;
-}
+    Deterministic,
+    Zipf
+};
 
 struct PredictionCacheOptionsMicroBenchmark : public NES::Configurations::PredictionCacheOptions
 {
@@ -93,19 +79,116 @@ struct PredictionCacheOptionsMicroBenchmark : public NES::Configurations::Predic
 
 struct BenchmarkParameters
 {
+    struct DeterministicParameters
+    {
+        HitMissRatio hitMissRatio;
+    };
+
+    struct ZipfParameters
+    {
+        size_t numKeys;
+        size_t numKeysMultiplier;
+        double s;
+    };
+
+    using DataGeneratorParameters = std::variant<DeterministicParameters, ZipfParameters>;
+
     PredictionCacheOptionsMicroBenchmark predictionCacheOptions;
-    HitMissRatio hitMissRatio;
+    DataGenerator dataGenerator;
+    DataGeneratorParameters dataGeneratorParameters;
 
     std::string getValuesAsCsv() const
     {
-        return fmt::format("{},{}", predictionCacheOptions.getValuesAsCsv(), getHitPercentage(hitMissRatio));
+        std::string hitsPercentage;
+        std::string zipfNumKeys;
+        std::string zipfNumKeysMultiplier;
+        std::string zipfS;
+
+        switch (dataGenerator)
+        {
+            case DataGenerator::Deterministic:
+            {
+                const auto* deterministicParameters = std::get_if<DeterministicParameters>(&dataGeneratorParameters);
+                if (!deterministicParameters)
+                {
+                    throw std::invalid_argument("Deterministic data generator requires deterministic parameters");
+                }
+                hitsPercentage = fmt::format("{}", getHitPercentage(deterministicParameters->hitMissRatio));
+                break;
+            }
+            case DataGenerator::Zipf:
+            {
+                const auto* zipfParameters = std::get_if<ZipfParameters>(&dataGeneratorParameters);
+                if (!zipfParameters)
+                {
+                    throw std::invalid_argument("Zipf data generator requires Zipf parameters");
+                }
+                zipfNumKeys = fmt::format("{}", zipfParameters->numKeys);
+                zipfNumKeysMultiplier = fmt::format("{}", zipfParameters->numKeysMultiplier);
+                zipfS = fmt::format("{:.3f}", zipfParameters->s);
+                break;
+            }
+        }
+
+        return fmt::format(
+            "{},{},{},{},{},{}",
+            predictionCacheOptions.getValuesAsCsv(),
+            magic_enum::enum_name(dataGenerator),
+            hitsPercentage,
+            zipfNumKeys,
+            zipfNumKeysMultiplier,
+            zipfS);
     }
 
     static std::string getCsvHeader()
     {
-        return fmt::format("{},hits_percentage", PredictionCacheOptionsMicroBenchmark::getCsvHeader());
+        return fmt::format(
+            "{},data_generator,hits_percentage,zipf_num_keys,zipf_num_keys_multiplier,zipf_s",
+            PredictionCacheOptionsMicroBenchmark::getCsvHeader());
     }
 };
+
+BenchmarkData createBenchmarkData(
+    const BenchmarkParameters& benchmarkParams,
+    const size_t totalRecords,
+    const size_t recordSize = TUPLE_SIZE,
+    const uint64_t seed = 0xC0FFEEULL)
+{
+    switch (benchmarkParams.dataGenerator)
+    {
+        case DataGenerator::Deterministic:
+        {
+            const auto* deterministicParameters
+                = std::get_if<BenchmarkParameters::DeterministicParameters>(&benchmarkParams.dataGeneratorParameters);
+            if (!deterministicParameters)
+            {
+                throw std::invalid_argument("Deterministic data generator requires deterministic parameters");
+            }
+            return NES::Microbenchmark::createDeterministicBenchmarkData(
+                benchmarkParams.predictionCacheOptions.numberOfEntries,
+                totalRecords,
+                deterministicParameters->hitMissRatio,
+                benchmarkParams.predictionCacheOptions.predictionCacheType,
+                recordSize,
+                seed);
+        }
+        case DataGenerator::Zipf:
+        {
+            const auto* zipfParameters = std::get_if<BenchmarkParameters::ZipfParameters>(&benchmarkParams.dataGeneratorParameters);
+            if (!zipfParameters)
+            {
+                throw std::invalid_argument("Zipf data generator requires Zipf parameters");
+            }
+            return NES::Microbenchmark::createZipfBenchmarkData(
+                zipfParameters->numKeys,
+                totalRecords,
+                recordSize,
+                seed,
+                zipfParameters->s);
+        }
+    }
+    std::unreachable();
+}
 
 struct BenchmarkRunMeasurements
 {
@@ -135,339 +218,6 @@ std::string createNewCsvFileLine(const BenchmarkParameters& parameters, const Be
 std::string createNewCsvHeaderLine()
 {
     return BenchmarkParameters::getCsvHeader() + "," + BenchmarkRunMeasurements::getCsvHeader();
-}
-
-using BenchmarkData = std::vector<std::unique_ptr<std::byte[]>>;
-
-std::unique_ptr<std::byte[]>
-createRecord(const size_t recordSize, const uint64_t id, std::mt19937_64& rng)
-{
-    auto record = std::make_unique<std::byte[]>(recordSize);
-    std::memset(record.get(), 0, recordSize);
-
-    const size_t idBytes = std::min(recordSize, sizeof(id));
-    std::memcpy(record.get(), &id, idBytes);
-
-    for (size_t i = idBytes; i < recordSize; ++i)
-    {
-        record[i] = static_cast<std::byte>(rng() & 0xFF);
-    }
-
-    return record;
-}
-
-enum class SimCachePolicy : uint8_t
-{
-    FIFO,
-    LFU,
-    LRU,
-    SECOND_CHANCE
-};
-
-struct SimCacheSlot
-{
-    bool occupied = false;
-    uint64_t key = 0;
-    uint64_t age = 0;
-    uint64_t frequency = 0;
-    bool secondChance = false;
-};
-
-class SimCache
-    {
-    public:
-        SimCache(const SimCachePolicy policy, const size_t capacity)
-            : policy(policy), capacity(capacity), slots(capacity)
-        {
-        }
-
-        bool canHit() const { return !residentKeys.empty(); }
-
-        uint64_t pickRandomResidentKey(std::mt19937_64& rng) const
-        {
-            std::uniform_int_distribution<size_t> dist(0, residentKeys.size() - 1);
-            return residentKeys[dist(rng)];
-        }
-
-        bool access(const uint64_t key)
-        {
-            if (capacity == 0)
-            {
-                return false;
-            }
-
-            if (policy == SimCachePolicy::LRU)
-            {
-                uint64_t maxAge = 0;
-                size_t maxAgeIndex = 0;
-                for (size_t i = 0; i < capacity; ++i)
-                {
-                    const uint64_t newAge = slots[i].age + 1;
-                    slots[i].age = newAge;
-                    if (newAge > maxAge)
-                    {
-                        maxAge = newAge;
-                        maxAgeIndex = i;
-                    }
-                }
-
-                const auto it = keyToSlot.find(key);
-                if (it != keyToSlot.end())
-                {
-                    slots[it->second].age = 0;
-                    return true;
-                }
-
-                replaceAt(maxAgeIndex, key);
-                slots[maxAgeIndex].age = 0;
-                return false;
-            }
-
-            const auto it = keyToSlot.find(key);
-            if (it != keyToSlot.end())
-            {
-                const size_t idx = it->second;
-                switch (policy)
-                {
-                    case SimCachePolicy::FIFO:
-                        break;
-                    case SimCachePolicy::LFU:
-                        slots[idx].frequency += 1;
-                        break;
-                    case SimCachePolicy::SECOND_CHANCE:
-                        slots[idx].secondChance = true;
-                        break;
-                    case SimCachePolicy::LRU:
-                        break;
-                }
-                return true;
-            }
-
-            switch (policy)
-            {
-                case SimCachePolicy::FIFO:
-                {
-                    const size_t idx = replacementIndex;
-                    replaceAt(idx, key);
-                    replacementIndex = (replacementIndex + 1) % capacity;
-                    return false;
-                }
-                case SimCachePolicy::LFU:
-                {
-                    uint64_t minFrequency = UINT64_MAX;
-                    size_t minFrequencyIndex = 0;
-                    for (size_t i = 0; i < capacity; ++i)
-                    {
-                        if (slots[i].frequency < minFrequency)
-                        {
-                            minFrequency = slots[i].frequency;
-                            minFrequencyIndex = i;
-                        }
-                    }
-                    replaceAt(minFrequencyIndex, key);
-                    slots[minFrequencyIndex].frequency = 1;
-                    return false;
-                }
-                case SimCachePolicy::SECOND_CHANCE:
-                {
-                    while (slots[replacementIndex].secondChance)
-                    {
-                        slots[replacementIndex].secondChance = false;
-                        replacementIndex = (replacementIndex + 1) % capacity;
-                    }
-                    replaceAt(replacementIndex, key);
-                    slots[replacementIndex].secondChance = true;
-                    return false;
-                }
-                case SimCachePolicy::LRU:
-                    break;
-            }
-            return false;
-        }
-
-    private:
-        void removeResidentKey(const uint64_t key)
-        {
-            auto slotIt = keyToSlot.find(key);
-            if (slotIt != keyToSlot.end())
-            {
-                keyToSlot.erase(slotIt);
-            }
-
-            auto indexIt = keyToResidentIndex.find(key);
-            if (indexIt == keyToResidentIndex.end())
-            {
-                return;
-            }
-            const size_t index = indexIt->second;
-            const size_t lastIndex = residentKeys.size() - 1;
-            if (index != lastIndex)
-            {
-                const uint64_t lastKey = residentKeys[lastIndex];
-                residentKeys[index] = lastKey;
-                keyToResidentIndex[lastKey] = index;
-            }
-            residentKeys.pop_back();
-            keyToResidentIndex.erase(indexIt);
-        }
-
-        void addResidentKey(const uint64_t key)
-        {
-            keyToResidentIndex.emplace(key, residentKeys.size());
-            residentKeys.push_back(key);
-        }
-
-        void replaceAt(const size_t index, const uint64_t key)
-        {
-            if (slots[index].occupied)
-            {
-                removeResidentKey(slots[index].key);
-            }
-
-            slots[index].occupied = true;
-            slots[index].key = key;
-            keyToSlot[key] = index;
-            addResidentKey(key);
-        }
-
-        SimCachePolicy policy;
-        size_t capacity;
-        std::vector<SimCacheSlot> slots;
-        size_t replacementIndex = 0;
-        std::vector<uint64_t> residentKeys;
-        std::unordered_map<uint64_t, size_t> keyToSlot;
-        std::unordered_map<uint64_t, size_t> keyToResidentIndex;
-    };
-
-BenchmarkData createBenchmarkData(
-    const uint64_t cacheSize,
-    const size_t totalRecords,
-    const HitMissRatio ratio,
-    const NES::Configurations::PredictionCacheType predictionCacheType,
-    const size_t recordSize = TUPLE_SIZE,
-    const uint64_t seed = 0xC0FFEEULL)
-{
-    if (totalRecords == 0)
-    {
-        return {};
-    }
-
-    if (recordSize == 0)
-    {
-        throw std::invalid_argument("recordSize must be greater than 0");
-    }
-
-    const uint32_t hitPercentage = getHitPercentage(ratio);
-    if (hitPercentage > 0 && cacheSize == 0)
-    {
-        throw std::invalid_argument("cacheSize must be greater than 0 when hits are requested");
-    }
-
-    size_t numHits = static_cast<size_t>((totalRecords * hitPercentage) / 100);
-    size_t numMisses = totalRecords - numHits;
-
-    if (numMisses == 0 && totalRecords > 0)
-    {
-        /// Cold cache cannot yield a 100% hit rate; force one miss to seed residency.
-        numMisses = 1;
-        numHits = totalRecords - 1;
-    }
-
-    const auto resolveSimCachePolicy = [](const NES::Configurations::PredictionCacheType type)
-    {
-        switch (type)
-        {
-            case NES::Configurations::PredictionCacheType::FIFO:
-                return SimCachePolicy::FIFO;
-            case NES::Configurations::PredictionCacheType::LFU:
-                return SimCachePolicy::LFU;
-            case NES::Configurations::PredictionCacheType::LRU:
-                return SimCachePolicy::LRU;
-            case NES::Configurations::PredictionCacheType::SECOND_CHANCE:
-                return SimCachePolicy::SECOND_CHANCE;
-            case NES::Configurations::PredictionCacheType::ALWAYS_MISS:
-            case NES::Configurations::PredictionCacheType::NONE:
-            case NES::Configurations::PredictionCacheType::TWO_QUEUES:
-                throw std::invalid_argument("PredictionCacheType is invalid for benchmark data generation");
-        }
-    };
-
-    const SimCachePolicy simPolicy = resolveSimCachePolicy(predictionCacheType);
-
-    std::mt19937_64 rngPattern(seed);
-    std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
-
-    SimCache simCache(simPolicy, static_cast<size_t>(cacheSize));
-    std::vector<uint64_t> accessKeys;
-    accessKeys.reserve(totalRecords);
-
-    size_t remainingHits = numHits;
-    size_t remainingMisses = numMisses;
-    std::uniform_real_distribution<double> pickRatio(0.0, 1.0);
-    uint64_t nextMissKey = 0;
-
-    for (size_t i = 0; i < totalRecords; ++i)
-    {
-        const size_t remaining = totalRecords - i;
-        const bool canHit = simCache.canHit();
-
-        bool chooseHit = false;
-        if (remainingHits == 0)
-        {
-            chooseHit = false;
-        }
-        else if (remainingMisses == 0)
-        {
-            chooseHit = canHit;
-        }
-        else if (!canHit)
-        {
-            chooseHit = false;
-        }
-        else
-        {
-            const double hitProbability = static_cast<double>(remainingHits) / static_cast<double>(remaining);
-            chooseHit = pickRatio(rngPattern) < hitProbability;
-        }
-
-        uint64_t key = 0;
-        if (chooseHit)
-        {
-            key = simCache.pickRandomResidentKey(rngPattern);
-            remainingHits--;
-        }
-        else
-        {
-            key = nextMissKey++;
-            remainingMisses--;
-        }
-
-        const bool observedHit = simCache.access(key);
-        (void)observedHit;
-        accessKeys.emplace_back(key);
-    }
-
-    BenchmarkData records;
-    records.reserve(totalRecords);
-
-    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
-    keyTemplates.reserve(static_cast<size_t>(nextMissKey));
-
-    for (const uint64_t key : accessKeys)
-    {
-        const size_t keyIndex = static_cast<size_t>(key);
-        while (keyTemplates.size() <= keyIndex)
-        {
-            const uint64_t newKey = keyTemplates.size();
-            keyTemplates.emplace_back(createRecord(recordSize, newKey, rngData));
-        }
-
-        auto record = std::make_unique<std::byte[]>(recordSize);
-        std::memcpy(record.get(), keyTemplates[keyIndex].get(), recordSize);
-        records.emplace_back(std::move(record));
-    }
-
-    return records;
 }
 
 size_t getPredictionCacheEntrySize(const NES::Configurations::PredictionCacheOptions& predictionCacheOptions)
@@ -625,8 +375,10 @@ private:
 int main()
 {
     constexpr auto allPredictionCacheTypes = magic_enum::enum_values<NES::Configurations::PredictionCacheType>();
-    const auto allPredictionCacheSizes =  {100, 1'000}; // {10'000};
-    const auto allHitsMissesRatios = magic_enum::enum_values<HitMissRatio>();
+    const auto allPredictionCacheSizes = {100}; // {1'000, 10'000};
+    // const auto allDeterministicHitMissRatios = magic_enum::enum_values<HitMissRatio>();
+    const auto allZipfSValues = {0.0, 0.6, 1.2, 1.0};
+    const auto allZipfNumKeyMultipliers = {10, 50, 100};
     constexpr auto REPS = 10;
 
     std::filesystem::path csvFilePath("prediction_cache_micro_benchmarks.csv");
@@ -648,34 +400,59 @@ int main()
     csvFile << createNewCsvHeaderLine() << std::endl;
     std::cout << createNewCsvHeaderLine() << std::endl;
 
+    const size_t runsPerCacheConfiguration = allZipfSValues.size(); // allDeterministicHitMissRatios.size() + allZipfSValues.size();
     ETACalculator etaCalculator(
-        allPredictionCacheSizes.size() * (allPredictionCacheTypes.size() - 2) * allHitsMissesRatios.size());
+        allPredictionCacheSizes.size() * (allPredictionCacheTypes.size() - 2) * runsPerCacheConfiguration);
 
     for (const uint64_t predictionCacheSize: allPredictionCacheSizes)
     {
-        for (const auto& hitMissRatio: allHitsMissesRatios)
+        for (const auto& predictionCacheType: allPredictionCacheTypes)
         {
-            for (const auto& predictionCacheType: allPredictionCacheTypes)
+            if (predictionCacheType == NES::Configurations::PredictionCacheType::NONE
+                || predictionCacheType == NES::Configurations::PredictionCacheType::TWO_QUEUES
+                || predictionCacheType == NES::Configurations::PredictionCacheType::ALWAYS_MISS)
             {
-                if (predictionCacheType == NES::Configurations::PredictionCacheType::NONE
-                    || predictionCacheType == NES::Configurations::PredictionCacheType::TWO_QUEUES
-                    || predictionCacheType == NES::Configurations::PredictionCacheType::ALWAYS_MISS)
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                auto benchmarkData = createBenchmarkData(predictionCacheSize, 1'000'000, hitMissRatio, predictionCacheType);
-                BenchmarkParameters benchmarkParams{
-                    PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize}, hitMissRatio};
-                const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            // for (const auto& hitMissRatio: allDeterministicHitMissRatios)
+            // {
+            //     BenchmarkParameters benchmarkParams{
+            //         PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+            //         DataGenerator::Deterministic,
+            //         BenchmarkParameters::DeterministicParameters{hitMissRatio}};
+            //     auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+            //     const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            //
+            //     for (const auto& result : results)
+            //     {
+            //         csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //         std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //     }
+            //     csvFile.flush();
+            //     etaCalculator.update();
+            // }
 
-                for (const auto& result : results)
+            for (const auto& zipfNumKeyMultiplier : allZipfNumKeyMultipliers)
+            {
+                const size_t zipfNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * zipfNumKeyMultiplier);
+                for (const double zipfS : allZipfSValues)
                 {
-                    csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                    std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+                    BenchmarkParameters benchmarkParams{
+                        PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+                        DataGenerator::Zipf,
+                        BenchmarkParameters::ZipfParameters{zipfNumKeys, static_cast<size_t>(zipfNumKeyMultiplier), zipfS}};
+                    auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+                    const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+
+                    for (const auto& result : results)
+                    {
+                        csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+                        std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+                    }
+                    csvFile.flush();
+                    etaCalculator.update();
                 }
-                csvFile.flush();
-                etaCalculator.update();
             }
         }
     }
