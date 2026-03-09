@@ -15,6 +15,10 @@ except ImportError:  # pragma: no cover - runtime environment dependent
     print("pandas is required. Install it with: pip install pandas", file=sys.stderr)
     sys.exit(1)
 
+DEFAULT_INFERENCE_PARAMS = {
+    "use_batch_deduplication": "false",
+}
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -39,6 +43,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=default_output,
         help=f"Path to write CSV output (default: {default_output}).",
+    )
+    parser.add_argument(
+        "--aggregate",
+        action="store_true",
+        help="Aggregate results across repetitions (mean/std throughput, mean log metrics).",
     )
     return parser.parse_args()
 
@@ -69,11 +78,15 @@ def infer_context(results_dir: Path, json_path: Path) -> Optional[Dict[str, str]
     return {
         "inference_config": parts[0],
         "query_name": parts[1],
+        "repetition": parts[2],
     }
 
 
 def parse_inference_config(config_label: str) -> Dict[str, str]:
-    prefix = "worker.default_query_execution.inference."
+    prefixes = (
+        "worker.default_query_execution.inference.",
+        "inference.",
+    )
     entries = config_label.split("__") if config_label else []
     names: List[str] = []
     values: List[str] = []
@@ -82,8 +95,10 @@ def parse_inference_config(config_label: str) -> Dict[str, str]:
         if "=" not in entry:
             continue
         key, value = entry.split("=", 1)
-        if key.startswith(prefix):
-            key = key[len(prefix) :]
+        for prefix in prefixes:
+            if key.startswith(prefix):
+                key = key[len(prefix) :]
+                break
         names.append(key)
         values.append(value)
 
@@ -128,6 +143,7 @@ def iter_pipeline_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
                 "inference_config_param_name": inference_parts["param_name"],
                 "inference_config_param_value": inference_parts["param_value"],
                 "pipeline_id": pipeline_id,
+                "repetition": context["repetition"],
                 "throughput": throughput,
             }
 
@@ -153,7 +169,10 @@ def parse_log_payload(log_path: Path) -> Optional[Dict[str, object]]:
 
 
 def iter_log_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
+    deduped: Dict[Tuple[str, str, str, object, str], Dict[str, object]] = {}
     for log_path in results_dir.rglob("*.log"):
+        if log_path.name == "latest.log":
+            continue
         context = infer_context(results_dir, log_path)
         if context is None:
             print(f"Skipping unexpected log path: {log_path}", file=sys.stderr)
@@ -170,12 +189,29 @@ def iter_log_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
             "inference_config_param_name": inference_parts["param_name"],
             "inference_config_param_value": inference_parts["param_value"],
             "pipeline_id": pipeline_id,
+            "repetition": context["repetition"],
         }
         for key, value in payload.items():
             if key == "pipeline_id":
                 continue
             row[key] = value
-        yield row
+        dedupe_key = (
+            row["query_name"],
+            row["inference_config_param_name"],
+            row["inference_config_param_value"],
+            row["pipeline_id"],
+            row["repetition"],
+        )
+        try:
+            mtime = log_path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        existing = deduped.get(dedupe_key)
+        if existing is None or mtime >= existing["__mtime"]:
+            deduped[dedupe_key] = {"__mtime": mtime, "row": row}
+
+    for entry in deduped.values():
+        yield entry["row"]
 
 
 def compute_throughput_stats(results_dir: Path) -> "pd.DataFrame":
@@ -193,6 +229,8 @@ def compute_throughput_stats(results_dir: Path) -> "pd.DataFrame":
         )
 
     df = pd.DataFrame(rows)
+    if "repetition" in df.columns:
+        df = df.drop(columns=["repetition"])
     return (
         df.groupby(
             ["query_name", "inference_config_param_name", "inference_config_param_value", "pipeline_id"],
@@ -204,6 +242,22 @@ def compute_throughput_stats(results_dir: Path) -> "pd.DataFrame":
         )
         .reset_index()
     )
+
+
+def compute_throughput_rows(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_pipeline_rows(results_dir))
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "query_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+                "pipeline_id",
+                "repetition",
+                "throughput",
+            ]
+        )
+    return pd.DataFrame(rows)
 
 
 def compute_log_stats(results_dir: Path) -> "pd.DataFrame":
@@ -219,6 +273,8 @@ def compute_log_stats(results_dir: Path) -> "pd.DataFrame":
         )
 
     df = pd.DataFrame(rows)
+    if "repetition" in df.columns:
+        df = df.drop(columns=["repetition"])
     base_cols = {
         "query_name",
         "inference_config_param_name",
@@ -233,30 +289,57 @@ def compute_log_stats(results_dir: Path) -> "pd.DataFrame":
     return grouped
 
 
-def compute_stats(results_dir: Path) -> "pd.DataFrame":
-    throughput_stats = compute_throughput_stats(results_dir)
-    log_stats = compute_log_stats(results_dir)
+def compute_log_rows(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_log_rows(results_dir))
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "query_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+                "pipeline_id",
+                "repetition",
+            ]
+        )
+    return pd.DataFrame(rows)
+
+
+def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
+    if aggregate:
+        throughput_stats = compute_throughput_stats(results_dir)
+        log_stats = compute_log_stats(results_dir)
+    else:
+        throughput_stats = compute_throughput_rows(results_dir)
+        log_stats = compute_log_rows(results_dir)
 
     if throughput_stats.empty:
         expanded = expand_inference_columns(throughput_stats)
         return drop_combined_inference_columns(expanded)
 
-    throughput_expanded = drop_combined_inference_columns(expand_inference_columns(throughput_stats))
     if log_stats.empty:
-        return throughput_expanded
+        expanded = expand_inference_columns(throughput_stats)
+        return drop_combined_inference_columns(expanded)
 
-    log_expanded = drop_combined_inference_columns(expand_inference_columns(log_stats))
-
+    merge_key_candidates = [
+        "query_name",
+        "inference_config_param_name",
+        "inference_config_param_value",
+        "pipeline_id",
+    ]
+    if not aggregate:
+        merge_key_candidates.append("repetition")
     merge_keys = [
         col
-        for col in throughput_expanded.columns
-        if col in log_expanded.columns and col not in ("avg_throughput", "std_throughput")
+        for col in merge_key_candidates
+        if col in throughput_stats.columns and col in log_stats.columns
     ]
     if not merge_keys:
-        return throughput_expanded
+        expanded = expand_inference_columns(throughput_stats)
+        return drop_combined_inference_columns(expanded)
 
-    merged = throughput_expanded.merge(log_expanded, on=merge_keys, how="inner")
-    return merged
+    merged = throughput_stats.merge(log_stats, on=merge_keys, how="inner")
+    merged = expand_inference_columns(merged)
+    return drop_combined_inference_columns(merged)
 
 
 def expand_inference_columns(df: "pd.DataFrame") -> "pd.DataFrame":
@@ -264,7 +347,7 @@ def expand_inference_columns(df: "pd.DataFrame") -> "pd.DataFrame":
         return df
 
     param_maps: List[Dict[str, str]] = []
-    all_params = set()
+    all_params = set(DEFAULT_INFERENCE_PARAMS)
     for name_entry, value_entry in zip(
         df["inference_config_param_name"], df["inference_config_param_value"]
     ):
@@ -278,7 +361,8 @@ def expand_inference_columns(df: "pd.DataFrame") -> "pd.DataFrame":
 
     ordered_params = sorted(all_params)
     for param in ordered_params:
-        df[param] = [mapping.get(param, "") for mapping in param_maps]
+        default_value = DEFAULT_INFERENCE_PARAMS.get(param, "")
+        df[param] = [mapping.get(param, default_value) for mapping in param_maps]
 
     return df
 
@@ -304,7 +388,7 @@ def main() -> int:
         print(f"Results directory not found: {results_dir}", file=sys.stderr)
         return 1
 
-    stats = compute_stats(results_dir)
+    stats = compute_stats(results_dir, aggregate=args.aggregate)
 
     if args.output_csv:
         output_path = args.output_csv

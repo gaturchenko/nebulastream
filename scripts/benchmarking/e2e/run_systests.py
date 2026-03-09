@@ -19,6 +19,9 @@ except ImportError:  # pragma: no cover - runtime environment dependent
     sys.exit(1)
 
 REPETITIONS_DEFAULT = 5
+INFERENCE_CONFIG_PREFIX = "worker.default_query_execution.inference."
+INFERENCE_CONFIG_LABEL_PREFIX = "inference."
+DEFAULT_USE_BATCH_DEDUPLICATION = False
 
 
 def repo_root() -> Path:
@@ -61,6 +64,21 @@ def normalize_values(values: object) -> List[object]:
     return [values]
 
 
+def normalize_inference_config(config: Dict[str, object]) -> Dict[str, object]:
+    normalized: Dict[str, object] = {}
+    full_key = f"{INFERENCE_CONFIG_PREFIX}use_batch_deduplication"
+
+    for key, value in config.items():
+        if key == "use_batch_deduplication":
+            key = full_key
+        normalized[key] = value
+
+    if full_key not in normalized:
+        normalized[full_key] = DEFAULT_USE_BATCH_DEDUPLICATION
+
+    return normalized
+
+
 def expand_combinations(config: Dict[str, object]) -> Iterable[Dict[str, object]]:
     if not config:
         yield {}
@@ -89,7 +107,12 @@ def sanitize_name(text: str) -> str:
 def combination_name(combo: Dict[str, object]) -> str:
     if not combo:
         return "default"
-    parts = [f"{key}={format_value(value)}" for key, value in combo.items()]
+    parts: List[str] = []
+    for key, value in combo.items():
+        label_key = key
+        if label_key.startswith(INFERENCE_CONFIG_PREFIX):
+            label_key = INFERENCE_CONFIG_LABEL_PREFIX + label_key[len(INFERENCE_CONFIG_PREFIX) :]
+        parts.append(f"{label_key}={format_value(value)}")
     return sanitize_name("__".join(parts))
 
 
@@ -225,7 +248,7 @@ def main() -> int:
         print(f"systest binary not found: {systest_path}", file=sys.stderr)
         return 1
 
-    inference_config = load_yaml(args.inference_config)
+    inference_config = normalize_inference_config(load_yaml(args.inference_config))
     # default_config = load_yaml(args.default_config)
     # if args.default_overrides:
     #     overrides = load_yaml(args.default_overrides)
