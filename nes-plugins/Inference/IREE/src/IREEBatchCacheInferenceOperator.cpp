@@ -423,12 +423,6 @@ void IREEBatchCacheInferenceOperator::performInference(
             /// the entry has already been inserted, so the record is a duplicate and we can continue iterating over the batch
             if (entryRowIndex != rowIndex)
             {
-                nautilus::invoke(
-                    +[](int e, int i)
-                    {
-                        NES_DEBUG("Duplicate record: {} != {}", e, i)
-                    }, entryRowIndex, rowIndex);
-                // rowIndex += inputs.size();
                 continue;
             }
 
