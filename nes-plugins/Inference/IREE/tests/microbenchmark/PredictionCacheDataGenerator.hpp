@@ -454,4 +454,234 @@ inline BenchmarkData createZipfBenchmarkData(
     return records;
 }
 
+inline std::vector<std::vector<uint64_t>> generateSlidingWindows(
+    const size_t seriesLength,
+    const size_t windowSize,
+    const double overlapRatio)
+{
+    if (!(0.0 <= overlapRatio && overlapRatio < 1.0))
+    {
+        throw std::invalid_argument("overlapRatio must be in [0.0, 1.0).");
+    }
+
+    if (windowSize == 0)
+    {
+        throw std::invalid_argument("windowSize must be greater than 0.");
+    }
+
+    if (seriesLength < windowSize)
+    {
+        return {};
+    }
+
+    const size_t stride = std::max<size_t>(
+        1, static_cast<size_t>(std::llround(static_cast<double>(windowSize) * (1.0 - overlapRatio))));
+
+    std::vector<std::vector<uint64_t>> windows;
+    for (size_t start = 0; start + windowSize <= seriesLength; start += stride)
+    {
+        std::vector<uint64_t> window;
+        window.reserve(windowSize);
+        for (size_t value = start; value < start + windowSize; ++value)
+        {
+            window.emplace_back(static_cast<uint64_t>(value));
+        }
+        windows.emplace_back(std::move(window));
+    }
+
+    return windows;
+}
+
+inline BenchmarkData createTemporalLocalityBenchmarkData(
+    const size_t seriesLength,
+    const size_t windowSize,
+    const double overlapRatio,
+    const size_t totalRecords,
+    const size_t recordSize,
+    const uint64_t seed)
+{
+    if (totalRecords == 0)
+    {
+        return {};
+    }
+
+    if (recordSize == 0)
+    {
+        throw std::invalid_argument("recordSize must be greater than 0");
+    }
+
+    const auto windows = generateSlidingWindows(seriesLength, windowSize, overlapRatio);
+    if (windows.empty())
+    {
+        throw std::invalid_argument("TemporalLocality requires seriesLength >= windowSize and at least one generated window");
+    }
+
+    std::vector<uint64_t> accessKeys;
+    for (const auto& window : windows)
+    {
+        accessKeys.insert(accessKeys.end(), window.begin(), window.end());
+    }
+
+    if (accessKeys.empty())
+    {
+        throw std::invalid_argument("TemporalLocality generated an empty access pattern");
+    }
+
+    std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
+    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
+    keyTemplates.reserve(seriesLength);
+    for (size_t key = 0; key < seriesLength; ++key)
+    {
+        keyTemplates.emplace_back(createRecord(recordSize, static_cast<uint64_t>(key), rngData));
+    }
+
+    BenchmarkData records;
+    records.reserve(totalRecords);
+    for (size_t i = 0; i < totalRecords; ++i)
+    {
+        const size_t keyIndex = static_cast<size_t>(accessKeys[i % accessKeys.size()]);
+        auto record = std::make_unique<std::byte[]>(recordSize);
+        std::memcpy(record.get(), keyTemplates[keyIndex].get(), recordSize);
+        records.emplace_back(std::move(record));
+    }
+
+    return records;
+}
+
+inline BenchmarkData createBurstinessBenchmarkData(
+    const double dutyCycle,       // interpreted as fraction of records generated in bursts
+    const size_t onPeriod,        // number of records in one burst
+    const size_t numKeys,
+    const size_t totalRecords,
+    const size_t recordSize,
+    const uint64_t seed)
+{
+    if (totalRecords == 0)
+    {
+        return {};
+    }
+
+    if (recordSize == 0)
+    {
+        throw std::invalid_argument("recordSize must be greater than 0");
+    }
+
+    if (numKeys == 0)
+    {
+        throw std::invalid_argument("numKeys must be greater than 0");
+    }
+
+    if (!(0.0 < dutyCycle && dutyCycle <= 1.0))
+    {
+        throw std::invalid_argument("dutyCycle must be in (0.0, 1.0]");
+    }
+
+    if (onPeriod == 0)
+    {
+        throw std::invalid_argument("onPeriod must be greater than 0");
+    }
+
+    std::mt19937_64 rngPattern(seed);
+    std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
+
+    // Temporary hot subset size:
+    // smaller dutyCycle -> tighter bursts / stronger short-term locality
+    const size_t burstHotsetSize =
+        std::max<size_t>(1, std::min(numKeys, static_cast<size_t>(std::llround(numKeys * dutyCycle))));
+
+    // Number of emitted records between bursts.
+    // dutyCycle = 1.0 => no cool-down gap, fully burst-dense.
+    const size_t offPeriod =
+        (dutyCycle < 1.0)
+            ? std::max<size_t>(
+                  1,
+                  static_cast<size_t>(std::llround(static_cast<double>(onPeriod) * (1.0 - dutyCycle) / dutyCycle)))
+            : 0;
+
+    std::vector<uint64_t> accessKeys;
+    accessKeys.reserve(totalRecords);
+
+    // To avoid global skew, rotate burst windows over a shuffled permutation of keys.
+    std::vector<size_t> keyOrder(numKeys);
+    std::iota(keyOrder.begin(), keyOrder.end(), 0);
+    std::shuffle(keyOrder.begin(), keyOrder.end(), rngPattern);
+
+    size_t burstStart = 0;
+
+    while (accessKeys.size() < totalRecords)
+    {
+        // ---- ON phase: sample repeatedly from the current temporary hot subset ----
+        std::uniform_int_distribution<size_t> burstKeyOffsetDist(0, burstHotsetSize - 1);
+
+        const size_t endOn = std::min(totalRecords, accessKeys.size() + onPeriod);
+        while (accessKeys.size() < endOn)
+        {
+            const size_t offset = burstKeyOffsetDist(rngPattern);
+            const size_t keyIdx = (burstStart + offset) % numKeys;
+            accessKeys.emplace_back(static_cast<uint64_t>(keyOrder[keyIdx]));
+        }
+
+        if (accessKeys.size() >= totalRecords)
+        {
+            break;
+        }
+
+        // ---- OFF phase: emit dispersed accesses from outside the current hot subset ----
+        if (offPeriod > 0)
+        {
+            std::vector<size_t> coldPool;
+            coldPool.reserve(numKeys - burstHotsetSize);
+
+            for (size_t i = 0; i < numKeys; ++i)
+            {
+                const size_t circularIdx = (burstStart + i) % numKeys;
+                if (i < burstHotsetSize)
+                {
+                    continue; // skip current burst hot subset
+                }
+                coldPool.emplace_back(keyOrder[circularIdx]);
+            }
+
+            if (!coldPool.empty())
+            {
+                std::uniform_int_distribution<size_t> coldDist(0, coldPool.size() - 1);
+                const size_t endOff = std::min(totalRecords, accessKeys.size() + offPeriod);
+
+                while (accessKeys.size() < endOff)
+                {
+                    accessKeys.emplace_back(static_cast<uint64_t>(coldPool[coldDist(rngPattern)]));
+                }
+            }
+        }
+
+        // Rotate to the next burst-local hotset.
+        burstStart = (burstStart + burstHotsetSize) % numKeys;
+
+        // Optional reshuffle after a full cycle to avoid periodic artifacts.
+        if (burstStart == 0)
+        {
+            std::shuffle(keyOrder.begin(), keyOrder.end(), rngPattern);
+        }
+    }
+
+    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
+    keyTemplates.reserve(numKeys);
+    for (size_t key = 0; key < numKeys; ++key)
+    {
+        keyTemplates.emplace_back(createRecord(recordSize, static_cast<uint64_t>(key), rngData));
+    }
+
+    BenchmarkData records;
+    records.reserve(totalRecords);
+
+    for (const uint64_t key : accessKeys)
+    {
+        auto record = std::make_unique<std::byte[]>(recordSize);
+        std::memcpy(record.get(), keyTemplates[static_cast<size_t>(key)].get(), recordSize);
+        records.emplace_back(std::move(record));
+    }
+
+    return records;
+}
+
 }

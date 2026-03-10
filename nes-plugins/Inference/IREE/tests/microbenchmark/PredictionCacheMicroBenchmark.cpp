@@ -62,7 +62,9 @@ using NES::Microbenchmark::getHitPercentage;
 enum class DataGenerator
 {
     Deterministic,
-    Zipf
+    Zipf,
+    TemporalLocality,
+    Burstiness
 };
 
 struct PredictionCacheOptionsMicroBenchmark : public NES::Configurations::PredictionCacheOptions
@@ -91,7 +93,22 @@ struct BenchmarkParameters
         double s;
     };
 
-    using DataGeneratorParameters = std::variant<DeterministicParameters, ZipfParameters>;
+    struct TemporalLocalityParameters
+    {
+        size_t seriesLength;
+        size_t windowSize;
+        double overlapRatio;
+    };
+
+    struct BurstinessParameters
+    {
+        double dutyCycle;
+        size_t onPeriod;
+        size_t numKeys;
+    };
+
+    using DataGeneratorParameters
+        = std::variant<DeterministicParameters, ZipfParameters, TemporalLocalityParameters, BurstinessParameters>;
 
     PredictionCacheOptionsMicroBenchmark predictionCacheOptions;
     DataGenerator dataGenerator;
@@ -103,6 +120,14 @@ struct BenchmarkParameters
         std::string zipfNumKeys;
         std::string zipfNumKeysMultiplier;
         std::string zipfS;
+        std::string temporalSeriesLength;
+        std::string temporalWindowSize;
+        std::string temporalOverlapRatio;
+        std::string burstinessTotalSteps;
+        std::string burstinessDutyCycle;
+        std::string burstinessLambdaAvg;
+        std::string burstinessOnPeriod;
+        std::string burstinessNumKeys;
 
         switch (dataGenerator)
         {
@@ -128,22 +153,54 @@ struct BenchmarkParameters
                 zipfS = fmt::format("{:.3f}", zipfParameters->s);
                 break;
             }
+            case DataGenerator::TemporalLocality:
+            {
+                const auto* temporalParameters = std::get_if<TemporalLocalityParameters>(&dataGeneratorParameters);
+                if (!temporalParameters)
+                {
+                    throw std::invalid_argument("TemporalLocality data generator requires TemporalLocality parameters");
+                }
+                temporalSeriesLength = fmt::format("{}", temporalParameters->seriesLength);
+                temporalWindowSize = fmt::format("{}", temporalParameters->windowSize);
+                temporalOverlapRatio = fmt::format("{:.3f}", temporalParameters->overlapRatio);
+                break;
+            }
+            case DataGenerator::Burstiness:
+            {
+                const auto* burstinessParameters = std::get_if<BurstinessParameters>(&dataGeneratorParameters);
+                if (!burstinessParameters)
+                {
+                    throw std::invalid_argument("Burstiness data generator requires Burstiness parameters");
+                }
+                burstinessDutyCycle = fmt::format("{:.3f}", burstinessParameters->dutyCycle);
+                burstinessOnPeriod = fmt::format("{}", burstinessParameters->onPeriod);
+                burstinessNumKeys = fmt::format("{}", burstinessParameters->numKeys);
+                break;
+            }
         }
 
         return fmt::format(
-            "{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             predictionCacheOptions.getValuesAsCsv(),
             magic_enum::enum_name(dataGenerator),
             hitsPercentage,
             zipfNumKeys,
             zipfNumKeysMultiplier,
-            zipfS);
+            zipfS,
+            temporalSeriesLength,
+            temporalWindowSize,
+            temporalOverlapRatio,
+            burstinessTotalSteps,
+            burstinessDutyCycle,
+            burstinessLambdaAvg,
+            burstinessOnPeriod,
+            burstinessNumKeys);
     }
 
     static std::string getCsvHeader()
     {
         return fmt::format(
-            "{},data_generator,hits_percentage,zipf_num_keys,zipf_num_keys_multiplier,zipf_s",
+            "{},data_generator,hits_percentage,zipf_num_keys,zipf_num_keys_multiplier,zipf_s,temporal_series_length,temporal_window_size,temporal_overlap_ratio,burstiness_total_steps,burstiness_duty_cycle,burstiness_lambda_avg,burstiness_on_period,burstiness_num_keys",
             PredictionCacheOptionsMicroBenchmark::getCsvHeader());
     }
 };
@@ -185,6 +242,38 @@ BenchmarkData createBenchmarkData(
                 recordSize,
                 seed,
                 zipfParameters->s);
+        }
+        case DataGenerator::TemporalLocality:
+        {
+            const auto* temporalParameters
+                = std::get_if<BenchmarkParameters::TemporalLocalityParameters>(&benchmarkParams.dataGeneratorParameters);
+            if (!temporalParameters)
+            {
+                throw std::invalid_argument("TemporalLocality data generator requires TemporalLocality parameters");
+            }
+            return NES::Microbenchmark::createTemporalLocalityBenchmarkData(
+                temporalParameters->seriesLength,
+                temporalParameters->windowSize,
+                temporalParameters->overlapRatio,
+                totalRecords,
+                recordSize,
+                seed);
+        }
+        case DataGenerator::Burstiness:
+        {
+            const auto* burstinessParameters
+                = std::get_if<BenchmarkParameters::BurstinessParameters>(&benchmarkParams.dataGeneratorParameters);
+            if (!burstinessParameters)
+            {
+                throw std::invalid_argument("Burstiness data generator requires Burstiness parameters");
+            }
+            return NES::Microbenchmark::createBurstinessBenchmarkData(
+                burstinessParameters->dutyCycle,
+                burstinessParameters->onPeriod,
+                burstinessParameters->numKeys,
+                totalRecords,
+                recordSize,
+                seed);
         }
     }
     std::unreachable();
@@ -376,9 +465,20 @@ int main()
 {
     constexpr auto allPredictionCacheTypes = magic_enum::enum_values<NES::Configurations::PredictionCacheType>();
     const auto allPredictionCacheSizes = {100}; // {1'000, 10'000};
+
     // const auto allDeterministicHitMissRatios = magic_enum::enum_values<HitMissRatio>();
-    const auto allZipfSValues = {0.0, 0.6, 1.2, 1.0};
-    const auto allZipfNumKeyMultipliers = {10, 50, 100};
+
+    // const auto allZipfSValues = {0.0, 0.6, 1.2, 1.0};
+    // const auto allZipfNumKeyMultipliers = {10, 50, 100};
+
+    // const auto allTemporalSeriesLengthMultipliers = {10};
+    // const auto allTemporalWindowSizes = {100};
+    // const auto allTemporalOverlapRatios = {0.0, 0.5, 0.8, 0.95};
+
+    const auto allBurstinessDutyCycles = {0.01, 0.05, 0.2, 1.0};
+    const auto allBurstinessOnPeriods = {1'000};
+    const auto allBurstinessNumKeyMultipliers = {10};
+
     constexpr auto REPS = 10;
 
     std::filesystem::path csvFilePath("prediction_cache_micro_benchmarks.csv");
@@ -400,7 +500,13 @@ int main()
     csvFile << createNewCsvHeaderLine() << std::endl;
     std::cout << createNewCsvHeaderLine() << std::endl;
 
-    const size_t runsPerCacheConfiguration = allZipfSValues.size(); // allDeterministicHitMissRatios.size() + allZipfSValues.size();
+    // const size_t zipfRunsPerCacheConfiguration = allZipfSValues.size() * allZipfNumKeyMultipliers.size();
+    // const size_t temporalRunsPerCacheConfiguration
+    //     = allTemporalSeriesLengthMultipliers.size() * allTemporalWindowSizes.size() * allTemporalOverlapRatios.size();
+    const size_t burstinessRunsPerCacheConfiguration = allBurstinessDutyCycles.size() * allBurstinessOnPeriods.size()
+        * allBurstinessNumKeyMultipliers.size();
+    const size_t runsPerCacheConfiguration
+        = burstinessRunsPerCacheConfiguration; // + temporalRunsPerCacheConfiguration + zipfRunsPerCacheConfiguration + allDeterministicHitMissRatios.size();
     ETACalculator etaCalculator(
         allPredictionCacheSizes.size() * (allPredictionCacheTypes.size() - 2) * runsPerCacheConfiguration);
 
@@ -433,25 +539,85 @@ int main()
             //     etaCalculator.update();
             // }
 
-            for (const auto& zipfNumKeyMultiplier : allZipfNumKeyMultipliers)
-            {
-                const size_t zipfNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * zipfNumKeyMultiplier);
-                for (const double zipfS : allZipfSValues)
-                {
-                    BenchmarkParameters benchmarkParams{
-                        PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
-                        DataGenerator::Zipf,
-                        BenchmarkParameters::ZipfParameters{zipfNumKeys, static_cast<size_t>(zipfNumKeyMultiplier), zipfS}};
-                    auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
-                    const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            // for (const auto& zipfNumKeyMultiplier : allZipfNumKeyMultipliers)
+            // {
+            //     const size_t zipfNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * zipfNumKeyMultiplier);
+            //     for (const double zipfS : allZipfSValues)
+            //     {
+            //         BenchmarkParameters benchmarkParams{
+            //             PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+            //             DataGenerator::Zipf,
+            //             BenchmarkParameters::ZipfParameters{zipfNumKeys, static_cast<size_t>(zipfNumKeyMultiplier), zipfS}};
+            //         auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+            //         const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            //
+            //         for (const auto& result : results)
+            //         {
+            //             csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //             std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //         }
+            //         csvFile.flush();
+            //         etaCalculator.update();
+            //     }
+            // }
 
-                    for (const auto& result : results)
+            // for (const auto& temporalSeriesLengthMultiplier : allTemporalSeriesLengthMultipliers)
+            // {
+            //     for (const auto& temporalWindowSize : allTemporalWindowSizes)
+            //     {
+            //         const size_t temporalSeriesLength = std::max<size_t>(
+            //             static_cast<size_t>(temporalWindowSize),
+            //             static_cast<size_t>(predictionCacheSize) * temporalSeriesLengthMultiplier);
+            //         for (const auto& temporalOverlapRatio : allTemporalOverlapRatios)
+            //         {
+            //             BenchmarkParameters benchmarkParams{
+            //                 PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+            //                 DataGenerator::TemporalLocality,
+            //                 BenchmarkParameters::TemporalLocalityParameters{
+            //                     temporalSeriesLength,
+            //                     static_cast<size_t>(temporalWindowSize),
+            //                     temporalOverlapRatio}};
+            //
+            //             auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+            //             const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            //
+            //             for (const auto& result : results)
+            //             {
+            //                 csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //                 std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //             }
+            //             csvFile.flush();
+            //             etaCalculator.update();
+            //         }
+            //     }
+            // }
+
+            for (const auto& burstinessNumKeyMultiplier : allBurstinessNumKeyMultipliers)
+            {
+                const size_t burstinessNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * burstinessNumKeyMultiplier);
+                for (const auto& burstinessDutyCycle : allBurstinessDutyCycles)
+                {
+                    for (const auto& burstinessOnPeriod : allBurstinessOnPeriods)
                     {
-                        csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                        std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+                        BenchmarkParameters benchmarkParams{
+                            PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+                            DataGenerator::Burstiness,
+                            BenchmarkParameters::BurstinessParameters{
+                                burstinessDutyCycle,
+                                static_cast<size_t>(burstinessOnPeriod),
+                                burstinessNumKeys}};
+
+                        auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+                        const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+
+                        for (const auto& result : results)
+                        {
+                            csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+                            std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+                        }
+                        csvFile.flush();
+                        etaCalculator.update();
                     }
-                    csvFile.flush();
-                    etaCalculator.update();
                 }
             }
         }
