@@ -21,3 +21,8 @@ add_iree_inference_test(
     PredictionCacheMicroBenchmark
     microbenchmark/PredictionCacheMicroBenchmark.cpp
     microbenchmark/PredictionCacheDataGenerator.hpp)
+
+add_iree_inference_test(
+    DataGeneratorCsvExporter
+    microbenchmark/DataGeneratorCsvExporter.cpp
+    microbenchmark/PredictionCacheDataGenerator.hpp)
