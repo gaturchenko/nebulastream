@@ -56,7 +56,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
         return findAggregationRecursively(firstChild);
     }
 
-    NES::HashMapOptions createHashMapOptions(
+    NES::HashMapOptions createDuplicatesHashMapOptions(
         std::vector<NES::PhysicalFunction> keyFunctions,
         NES::Schema& inputSchema,
         const NES::QueryExecutionConfiguration& conf)
@@ -73,6 +73,38 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
         const auto& [fieldKeys, fieldValues] =
             NES::ChainedEntryMemoryProvider::createFieldOffsets(inputSchema.addField("rowInputIndex", NES::DataType::Type::INT64)
                 .addField("rowOutputIndex", NES::DataType::Type::INT64), fieldKeyNames, {"rowInputIndex", "rowOutputIndex"});
+
+        NES::HashMapOptions hashMapOptions{
+            std::make_unique<NES::MurMur3HashFunction>(),
+            std::move(keyFunctions),
+            fieldKeys,
+            fieldValues,
+            entriesPerPage,
+            entrySize,
+            keySize,
+            valueSize,
+            pageSize,
+            numberOfBuckets};
+        return hashMapOptions;
+    }
+
+    NES::HashMapOptions createCacheHashMapOptions(
+        std::vector<NES::PhysicalFunction> keyFunctions,
+        NES::Schema& inputSchema,
+        const NES::QueryExecutionConfiguration& conf)
+    {
+        std::vector<std::string> fieldKeyNames = inputSchema.getFieldNames();
+        const uint64_t valueSize = NES::DataTypeProvider::provideDataType(NES::DataType::Type::UINT64).getSizeInBytes();
+        const uint64_t keySize = inputSchema.getSizeOfSchemaInBytes();
+
+        const auto pageSize = conf.pageSize.getValue();
+        const auto numberOfBuckets = conf.numberOfPartitions.getValue();
+        const auto entrySize = sizeof(NES::ChainedHashMapEntry) + keySize + valueSize;
+        const auto entriesPerPage = pageSize / entrySize;
+
+        const auto& [fieldKeys, fieldValues] =
+            NES::ChainedEntryMemoryProvider::createFieldOffsets(inputSchema.addField("pos", NES::DataType::Type::UINT64),
+                fieldKeyNames, {"pos"});
 
         NES::HashMapOptions hashMapOptions{
             std::make_unique<NES::MurMur3HashFunction>(),
@@ -231,7 +263,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                 case NES::Configurations::PredictionCacheType::NONE: {
                     NES_DEBUG("Lower InferModel operator to IREEBatchInferenceOperator");
 
-                    auto hashMapOptions = createHashMapOptions(inputFunctions, inputSchema, conf);
+                    auto hashMapOptions = createDuplicatesHashMapOptions(inputFunctions, inputSchema, conf);
                     auto ireeOperator = NES::IREEBatchInferenceOperator(
                         handlerId,
                         inputFunctions,
@@ -275,7 +307,7 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                     NES::Configurations::PredictionCacheOptions predictionCacheOptions{
                         predictionCacheType.getValue(),
                         predictionCacheSize.getValue()};
-                    auto hashMapOptions = createHashMapOptions(inputFunctions, inputSchema, conf);
+                    auto hashMapOptions = createDuplicatesHashMapOptions(inputFunctions, inputSchema, conf);
                     auto ireeOperator = NES::IREEBatchCacheInferenceOperator(
                         handlerId,
                         inputFunctions,

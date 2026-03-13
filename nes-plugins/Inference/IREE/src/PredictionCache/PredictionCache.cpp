@@ -13,6 +13,7 @@
 */
 
 #include <Nautilus/DataTypes/DataTypesUtil.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMapRef.hpp>
 #include <PredictionCache/PredictionCache.hpp>
 #include <IREEInferenceLocalState.hpp>
 
@@ -66,29 +67,47 @@ nautilus::val<std::byte*> PredictionCache::getDataStructure(const nautilus::val<
     return dataStructure;
 }
 
-nautilus::val<bool> PredictionCache::foundRecord(const nautilus::val<uint64_t>& pos, const nautilus::val<std::byte*>& candidateRecord)
-{
-    const auto cacheRecord = getRecord(pos);
-    return nautilus::invoke(+[](std::byte* candidate, std::byte* cache, size_t size)
-    {
-        if (cache != nullptr)
-        {
-            return std::memcmp(candidate, cache, size) == 0;
-        }
-        return false;
-    }, candidateRecord, cacheRecord, nautilus::val(inputSize));
-}
+// nautilus::val<bool> PredictionCache::foundRecord(const nautilus::val<uint64_t>& pos, const nautilus::val<std::byte*>& candidateRecord)
+// {
+//     const auto cacheRecord = getRecord(pos);
+//     return nautilus::invoke(+[](std::byte* candidate, std::byte* cache, size_t size)
+//     {
+//         if (cache != nullptr)
+//         {
+//             return std::memcmp(candidate, cache, size) == 0;
+//         }
+//         return false;
+//     }, candidateRecord, cacheRecord, nautilus::val(inputSize));
+// }
 
-nautilus::val<uint64_t> PredictionCache::searchInCache(const nautilus::val<std::byte*>& record)
+nautilus::val<uint64_t> PredictionCache::searchInCache(
+    const Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr)
 {
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; i = i + 1)
-    {
-        if (foundRecord(i, record))
+    ChainedHashMapRef hashMap{
+        hashMapPtr,
+        hashMapOptions.fieldKeys,
+        hashMapOptions.fieldValues,
+        hashMapOptions.entriesPerPage,
+        hashMapOptions.entrySize};
+
+    return hashMap.findEntry(record, *hashMapOptions.hashFunction,
+        [&](const nautilus::val<AbstractHashMapEntry*>& entry)
         {
-            return i;
-        }
-    }
-    return nautilus::val<uint64_t>(NOT_FOUND);
+            const ChainedHashMapRef::ChainedEntryRef ref(entry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+            Record posRecord;
+            return posRecord.read("pos").cast<nautilus::val<uint64_t>>();
+        });
+
+    // for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; i = i + 1)
+    // {
+    //     if (foundRecord(i, record))
+    //     {
+    //         return i;
+    //     }
+    // }
+    // return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
 nautilus::val<uint64_t*> PredictionCache::getHitsRef(){ return this->numberOfHits; }

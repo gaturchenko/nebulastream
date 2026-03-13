@@ -60,10 +60,14 @@ void PredictionCacheLRU::updateValues(const nautilus::val<uint64_t>& pos, const 
     updateFunction(PredictionCacheEntryToReplace, pos);
 }
 
-nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
+nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(
+    Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr,
+    const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
     /// First, we check if the record is already in the cache. If this is the case, we update its access timestamp.
-    if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
+    if (const auto dataStructurePos = PredictionCache::searchInCache(record, hashMapOptions, hashMapPtr); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
         accessCounter = accessCounter + 1;
@@ -85,10 +89,14 @@ nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::
 }
 
 nautilus::val<std::byte*>
-PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction)
+PredictionCacheLRU::getDataStructureRef(
+    Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr,
+    const PredictionCache::PredictionCacheReplacement& replacementFunction)
 {
     /// First, we check if the record is already in the cache. If this is the case, we update its access timestamp.
-    if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
+    if (const auto dataStructurePos = PredictionCache::searchInCache(record, hashMapOptions, hashMapPtr); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
         accessCounter = accessCounter + 1;

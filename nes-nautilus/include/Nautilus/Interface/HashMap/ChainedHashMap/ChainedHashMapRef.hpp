@@ -118,6 +118,10 @@ public:
     ChainedHashMapRef& operator=(const ChainedHashMapRef& other);
     ~ChainedHashMapRef() override = default;
 
+    nautilus::val<uint64_t> findEntry(
+        const Record& recordKey,
+        const HashFunction& hashFunction,
+        const std::function<nautilus::val<int64_t>(nautilus::val<AbstractHashMapEntry*>&)>& onFound);
     nautilus::val<AbstractHashMapEntry*> findOrCreateEntry(
         const Record& recordKey,
         const HashFunction& hashFunction,

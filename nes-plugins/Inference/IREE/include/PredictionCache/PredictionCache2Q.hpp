@@ -77,9 +77,17 @@ public:
         const uint64_t lruQueueSize,
         const nautilus::val<size_t>& inputSize);
     ~PredictionCache2Q() override = default;
-    nautilus::val<std::byte*>
-    getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction) override;
-    nautilus::val<uint64_t> updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
+
+    nautilus::val<std::byte*> getDataStructureRef(
+        Record& record,
+        const HashMapOptions& hashMapOptions,
+        const nautilus::val<HashMap*>& hashMapPtr,
+        const PredictionCache::PredictionCacheReplacement& replacementFunction) override;
+    nautilus::val<uint64_t> updateKeys(
+        Record& record,
+        const HashMapOptions& hashMapOptions,
+        const nautilus::val<HashMap*>& hashMapPtr,
+        const PredictionCache::PredictionCacheUpdate& updateFunction) override;
     void updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction) override;
     nautilus::val<uint64_t> getReplacementPos() override;
     void setReplacementPos(nautilus::val<uint64_t>) override { /* noop */ }

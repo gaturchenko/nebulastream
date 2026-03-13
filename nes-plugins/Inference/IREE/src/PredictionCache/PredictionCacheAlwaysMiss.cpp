@@ -40,8 +40,11 @@ PredictionCacheAlwaysMiss::updateValues(const nautilus::val<uint64_t>&, const Pr
     updateFunction(predictionCacheEntryToReplace, 0);
 }
 
-nautilus::val<uint64_t>
-PredictionCacheAlwaysMiss::updateKeys(const nautilus::val<std::byte*>&, const PredictionCache::PredictionCacheUpdate& updateFunction)
+nautilus::val<uint64_t> PredictionCacheAlwaysMiss::updateKeys(
+    Record&,
+    const HashMapOptions&,
+    const nautilus::val<HashMap*>&,
+    const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
     const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries;
     updateFunction(predictionCacheEntryToReplace, 0);
@@ -49,7 +52,11 @@ PredictionCacheAlwaysMiss::updateKeys(const nautilus::val<std::byte*>&, const Pr
 }
 
 nautilus::val<std::byte*>
-PredictionCacheAlwaysMiss::getDataStructureRef(const nautilus::val<std::byte*>&, const PredictionCache::PredictionCacheReplacement& replacementFunction)
+PredictionCacheAlwaysMiss::getDataStructureRef(
+    Record&,
+    const HashMapOptions&,
+    const nautilus::val<HashMap*>&,
+    const PredictionCache::PredictionCacheReplacement& replacementFunction)
 {
     /// We never check if the slice is already in the cache, thus, we always have a cache miss.
     incrementNumberOfMisses();

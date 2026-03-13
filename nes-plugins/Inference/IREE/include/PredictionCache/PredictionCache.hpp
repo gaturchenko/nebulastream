@@ -21,6 +21,7 @@
 #include <Nautilus/Util.hpp>
 #include <nautilus/val.hpp>
 #include <nautilus/val_ptr.hpp>
+#include <HashMapOptions.hpp>
 
 namespace NES
 {
@@ -50,10 +51,16 @@ public:
     using PredictionCacheUpdate = std::function<void(
         const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>& replacementIndex)>;
 
-    virtual nautilus::val<std::byte*>
-    getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction) = 0;
-    virtual nautilus::val<uint64_t>
-    updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction) = 0;
+    virtual nautilus::val<std::byte*> getDataStructureRef(
+        Record& record,
+        const HashMapOptions& hashMapOptions,
+        const nautilus::val<HashMap*>& hashMapPtr,
+        const PredictionCache::PredictionCacheReplacement& replacementFunction) = 0;
+    virtual nautilus::val<uint64_t> updateKeys(
+        Record& record,
+        const HashMapOptions& hashMapOptions,
+        const nautilus::val<HashMap*>& hashMapPtr,
+        const PredictionCache::PredictionCacheUpdate& updateFunction) = 0;
     virtual void updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction) = 0;
 
     virtual nautilus::val<std::byte*> getRecord(const nautilus::val<uint64_t>& pos);
@@ -74,7 +81,10 @@ protected:
     void incrementNumberOfMisses();
 
     /// Helper function to search for a timestamp in the cache. If the timestamp is found, the position is returned, otherwise, we return UINT64_MAX
-    nautilus::val<uint64_t> searchInCache(const nautilus::val<std::byte*>& record);
+    nautilus::val<uint64_t> searchInCache(
+    const Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr);
 
     /// Helper function to check if a timestamp is in the cache. We assume a timestamp is in the cache if it is in the range [sliceStart, sliceEnd).
     nautilus::val<bool> foundRecord(const nautilus::val<uint64_t>& pos, const nautilus::val<std::byte*>& record);

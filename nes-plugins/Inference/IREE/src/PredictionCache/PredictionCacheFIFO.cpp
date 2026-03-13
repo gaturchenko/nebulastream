@@ -48,10 +48,14 @@ void PredictionCacheFIFO::updateValues(const nautilus::val<uint64_t>& pos, const
     updateFunction(predictionCacheEntryToReplace, pos);
 }
 
-nautilus::val<uint64_t> PredictionCacheFIFO::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
+nautilus::val<uint64_t> PredictionCacheFIFO::updateKeys(
+    Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr,
+    const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
     /// First, we check if the timestamp is already in the cache.
-    if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
+    if (const auto dataStructurePos = PredictionCache::searchInCache(record, hashMapOptions, hashMapPtr); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
         return dataStructurePos;
@@ -70,11 +74,14 @@ nautilus::val<uint64_t> PredictionCacheFIFO::updateKeys(const nautilus::val<std:
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
-nautilus::val<std::byte*>
-PredictionCacheFIFO::getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction)
+nautilus::val<std::byte*> PredictionCacheFIFO::getDataStructureRef(
+    Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr,
+    const PredictionCache::PredictionCacheReplacement& replacementFunction)
 {
     /// First, we check if the timestamp is already in the cache.
-    if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
+    if (const auto dataStructurePos = PredictionCache::searchInCache(record, hashMapOptions, hashMapPtr); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
         return getDataStructure(dataStructurePos);

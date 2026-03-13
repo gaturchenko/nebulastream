@@ -64,9 +64,16 @@ void PredictionCache2Q::updateValues(const nautilus::val<uint64_t>& pos, const P
     updateFunction(PredictionCacheEntryToReplace, lruQueueSize + pos);
 }
 
-nautilus::val<uint64_t> PredictionCache2Q::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
+nautilus::val<uint64_t> PredictionCache2Q::updateKeys(
+    Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr,
+    const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
-/// First, we have to increment all age bits by one.
+    (void)hashMapOptions;
+    (void)hashMapPtr;
+    (void)record;
+    /// First, we have to increment all age bits by one.
     nautilus::val<uint64_t> maxAge = 0;
     nautilus::val<uint64_t> maxAgeIndex = 0;
     for (nautilus::val<uint64_t> i = 0; i < lruQueueSize; ++i)
@@ -86,7 +93,7 @@ nautilus::val<uint64_t> PredictionCache2Q::updateKeys(const nautilus::val<std::b
     for (nautilus::val<uint64_t> i = 0; i < lruQueueSize; i = i + 1)
     {
         /// We assume that a timestamp is in the cache, if the timestamp is in the range of the slice, e.g., sliceStart <= timestamp < sliceEnd.
-        if (foundRecord(i, record))
+        if (foundRecord(i, nullptr))
         {
             incrementNumberOfHits();
             auto ageBit = getAgeBit(i);
@@ -101,7 +108,7 @@ nautilus::val<uint64_t> PredictionCache2Q::updateKeys(const nautilus::val<std::b
     for (nautilus::val<uint64_t> i = lruQueueSize; i < lruQueueSize + fifoQueueSize; i = i + 1)
     {
         /// We assume that a timestamp is in the cache, if the timestamp is in the range of the slice, e.g., sliceStart <= timestamp < sliceEnd.
-        if (foundRecord(i, record))
+        if (foundRecord(i, nullptr))
         {
             incrementNumberOfHits();
             movePredictionCacheEntryToLRUQueue(i, maxAgeIndex);
@@ -123,8 +130,15 @@ nautilus::val<uint64_t> PredictionCache2Q::updateKeys(const nautilus::val<std::b
 }
 
 nautilus::val<std::byte*>
-PredictionCache2Q::getDataStructureRef(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction)
+PredictionCache2Q::getDataStructureRef(
+    Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr,
+    const PredictionCache::PredictionCacheReplacement& replacementFunction)
 {
+    (void)hashMapOptions;
+    (void)hashMapPtr;
+    (void)record;
     /// First, we have to increment all age bits by one.
     nautilus::val<uint64_t> maxAge = 0;
     nautilus::val<uint64_t> maxAgeIndex = 0;
@@ -145,7 +159,7 @@ PredictionCache2Q::getDataStructureRef(const nautilus::val<std::byte*>& record, 
     for (nautilus::val<uint64_t> i = 0; i < lruQueueSize; i = i + 1)
     {
         /// We assume that a timestamp is in the cache, if the timestamp is in the range of the slice, e.g., sliceStart <= timestamp < sliceEnd.
-        if (foundRecord(i, record))
+        if (foundRecord(i, nullptr))
         {
             incrementNumberOfHits();
             auto ageBit = getAgeBit(i);
@@ -160,7 +174,7 @@ PredictionCache2Q::getDataStructureRef(const nautilus::val<std::byte*>& record, 
     for (nautilus::val<uint64_t> i = lruQueueSize; i < lruQueueSize + fifoQueueSize; i = i + 1)
     {
         /// We assume that a timestamp is in the cache, if the timestamp is in the range of the slice, e.g., sliceStart <= timestamp < sliceEnd.
-        if (foundRecord(i, record))
+        if (foundRecord(i, nullptr))
         {
             incrementNumberOfHits();
             movePredictionCacheEntryToLRUQueue(i, maxAgeIndex);

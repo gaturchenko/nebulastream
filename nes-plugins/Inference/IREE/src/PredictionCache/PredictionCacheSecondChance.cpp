@@ -53,10 +53,13 @@ void PredictionCacheSecondChance::updateValues(const nautilus::val<uint64_t>& po
     updateFunction(PredictionCacheEntryToReplace, pos);
 }
 
-nautilus::val<uint64_t> PredictionCacheSecondChance::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheUpdate& updateFunction)
+nautilus::val<uint64_t> PredictionCacheSecondChance::updateKeys(Record& record,
+        const HashMapOptions& hashMapOptions,
+        const nautilus::val<HashMap*>& hashMapPtr,
+        const PredictionCache::PredictionCacheUpdate& updateFunction)
 {
     /// First, we check if the timestamp is already in the cache.
-    if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
+    if (const auto dataStructurePos = PredictionCache::searchInCache(record, hashMapOptions, hashMapPtr); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
         auto secondChanceBit = getSecondChanceBit(dataStructurePos);
@@ -86,10 +89,12 @@ nautilus::val<uint64_t> PredictionCacheSecondChance::updateKeys(const nautilus::
 
 nautilus::val<std::byte*>
 PredictionCacheSecondChance::getDataStructureRef(
-    const nautilus::val<std::byte*>& record, const PredictionCache::PredictionCacheReplacement& replacementFunction)
+    Record& record,
+    const HashMapOptions& hashMapOptions,
+    const nautilus::val<HashMap*>& hashMapPtr, const PredictionCache::PredictionCacheReplacement& replacementFunction)
 {
     /// First, we check if the timestamp is already in the cache.
-    if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
+    if (const auto dataStructurePos = PredictionCache::searchInCache(record, hashMapOptions, hashMapPtr); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
         auto secondChanceBit = getSecondChanceBit(dataStructurePos);

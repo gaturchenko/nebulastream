@@ -198,6 +198,30 @@ nautilus::val<AbstractHashMapEntry*> ChainedHashMapRef::findEntry(const nautilus
     return entryRef;
 }
 
+nautilus::val<uint64_t> ChainedHashMapRef::findEntry(
+    const Record& recordKey,
+    const HashFunction& hashFunction,
+    const std::function<nautilus::val<int64_t>(nautilus::val<AbstractHashMapEntry*>&)>& onFound)
+{
+    std::vector<VarVal> keyValues;
+    for (const auto& [fieldIdentifier, type, fieldOffset] : nautilus::static_iterable(fieldKeys))
+    {
+        const auto& keyValue = recordKey.read(fieldIdentifier);
+        keyValues.emplace_back(keyValue);
+    }
+
+    ///  If entry contains nullptr, there does not exist a key with the same values.
+    const auto hashValue = hashFunction.calculate(keyValues);
+    const auto entryRef = findKey(recordKey, hashValue);
+    if (entryRef == nullptr)
+    {
+        return nautilus::val<uint64_t>(UINT64_MAX);
+    }
+
+    auto castedEntryRef = static_cast<nautilus::val<AbstractHashMapEntry*>>(entryRef);
+    return onFound(castedEntryRef);
+}
+
 nautilus::val<AbstractHashMapEntry*> ChainedHashMapRef::findOrCreateEntry(
     const Record& recordKey,
     const HashFunction& hashFunction,
