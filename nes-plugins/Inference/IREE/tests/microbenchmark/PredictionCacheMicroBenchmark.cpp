@@ -16,6 +16,7 @@
 #include <DataTypes/DataType.hpp>
 #include <Nautilus/Util.hpp>
 #include <Nautilus/DataTypes/DataTypesUtil.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 #include <PredictionCache/PredictionCache.hpp>
 #include <PredictionCache/PredictionCacheAlwaysMiss.hpp>
 #include <PredictionCache/PredictionCacheFIFO.hpp>
@@ -23,6 +24,8 @@
 #include <PredictionCache/PredictionCacheLRU.hpp>
 #include <PredictionCache/PredictionCacheSecondChance.hpp>
 #include <PredictionCache/PredictionCacheUtil.hpp>
+#include <Runtime/AbstractBufferProvider.hpp>
+#include <Runtime/BufferManager.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
 #include <nautilus/val.hpp>
 #include <nautilus/Engine.hpp>
@@ -364,13 +367,16 @@ auto createPredictionCacheFillFunction(
             nautilus::val<std::byte**> inputData,
             nautilus::val<uint64_t> sizeInputData,
             nautilus::val<int8_t*> startOfEntries,
-            nautilus::val<size_t> inputSize)
+            nautilus::val<size_t> inputSize,
+            nautilus::val<NES::ChainedHashMap*> lookupIndex,
+            nautilus::val<NES::AbstractBufferProvider*> bufferProvider)
         {
             using namespace nautilus;
 
             const val<int8_t*> globalOperatorHandler = nullptr;
             const auto predictionCache = NES::Util::createPredictionCache(
                 copyOfPredictionCacheOptions, globalOperatorHandler, startOfEntries, inputSize);
+            predictionCache->configureLookupIndex(lookupIndex, bufferProvider);
 
             for (val<uint64_t> i = 0; i < sizeInputData; ++i)
             {
@@ -421,6 +427,15 @@ runBenchmark(const BenchmarkParameters& benchmarkParams, const int numReps, Benc
             + sizeof(NES::HitsAndMisses);
         std::vector<int8_t> predictionCacheMemory(neededSize);
         std::memset(predictionCacheMemory.data(), 0, neededSize);
+        auto bufferManager = NES::BufferManager::create();
+        constexpr uint64_t minPageSize = 4096;
+        const auto lookupIndexEntrySize = sizeof(NES::ChainedHashMapEntry) + TUPLE_SIZE + 2 * sizeof(uint64_t);
+        const auto lookupIndexPageSize = std::max(static_cast<uint64_t>(lookupIndexEntrySize), minPageSize);
+        auto lookupIndex = std::make_unique<NES::ChainedHashMap>(
+            TUPLE_SIZE,
+            2 * sizeof(uint64_t),
+            benchmarkParams.predictionCacheOptions.numberOfEntries,
+            lookupIndexPageSize);
 
         const auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -428,7 +443,9 @@ runBenchmark(const BenchmarkParameters& benchmarkParams, const int numReps, Benc
             benchmarkDataRefs.data(),
             benchmarkDataRefs.size(),
             predictionCacheMemory.data(),
-            TUPLE_SIZE);
+            TUPLE_SIZE,
+            lookupIndex.get(),
+            bufferManager.get());
 
         const auto duration = std::chrono::high_resolution_clock::now() - startTime;
 

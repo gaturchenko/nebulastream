@@ -145,7 +145,7 @@ nautilus::val<uint64_t> PredictionCache::searchInCache(const nautilus::val<std::
                 const uint64_t numberOfPredictionCacheEntries,
                 const uint64_t notFoundValue)
             {
-                if (lookupMap == nullptr || recordPtr == nullptr)
+                if (lookupMap == nullptr || recordPtr == nullptr || lookupMap->getNumberOfTuples() == 0)
                 {
                     return notFoundValue;
                 }
@@ -160,14 +160,17 @@ nautilus::val<uint64_t> PredictionCache::searchInCache(const nautilus::val<std::
                         if (std::memcmp(keyStart, recordPtr, recordSize) == 0)
                         {
                             uint64_t pos = notFoundValue;
+                            uint64_t expectedRecordPtrRaw = 0;
                             std::memcpy(&pos, keyStart + recordSize, sizeof(uint64_t));
+                            std::memcpy(&expectedRecordPtrRaw, keyStart + recordSize + sizeof(uint64_t), sizeof(uint64_t));
 
                             if (pos < numberOfPredictionCacheEntries)
                             {
                                 const auto* predictionCacheEntry = reinterpret_cast<const PredictionCacheEntry*>(
                                     startOfEntriesPtr + pos * sizeOfPredictionCacheEntry);
-                                if (predictionCacheEntry->record != nullptr
-                                    && std::memcmp(predictionCacheEntry->record, recordPtr, recordSize) == 0)
+                                const auto currentRecordPtrRaw
+                                    = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(predictionCacheEntry->record));
+                                if (currentRecordPtrRaw == expectedRecordPtrRaw)
                                 {
                                     return pos;
                                 }
@@ -187,14 +190,6 @@ nautilus::val<uint64_t> PredictionCache::searchInCache(const nautilus::val<std::
             numberOfEntries,
             nautilus::val<uint64_t>(NOT_FOUND));
     }
-
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; i = i + 1)
-    {
-        if (foundRecord(i, record))
-        {
-            return i;
-        }
-    }
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
@@ -204,9 +199,19 @@ void PredictionCache::addLookupIndexEntry(const nautilus::val<std::byte*>& recor
     {
         return;
     }
+    const auto cachedRecord = getRecord(pos);
+    const auto cachedRecordPtrRaw = nautilus::invoke(+[](const std::byte* ptr)
+    {
+        return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(ptr));
+    }, cachedRecord);
 
     nautilus::invoke(
-        +[](ChainedHashMap* lookupMap, AbstractBufferProvider* bufferProvider, std::byte* recordPtr, const size_t recordSize, const uint64_t posValue)
+        +[](ChainedHashMap* lookupMap,
+            AbstractBufferProvider* bufferProvider,
+            std::byte* recordPtr,
+            const size_t recordSize,
+            const uint64_t posValue,
+            const uint64_t cachedRecordPtrRaw)
         {
             if (lookupMap == nullptr || bufferProvider == nullptr || recordPtr == nullptr)
             {
@@ -216,14 +221,18 @@ void PredictionCache::addLookupIndexEntry(const nautilus::val<std::byte*>& recor
             const auto hashValue = hashRecord(recordPtr, recordSize);
             auto* entry = static_cast<ChainedHashMapEntry*>(lookupMap->insertEntry(hashValue, bufferProvider));
             auto* keyStart = getEntryKeyStart(entry);
+
+            /// layout: key bytes | pos | record_ptr_token
             std::memcpy(keyStart, recordPtr, recordSize);
             std::memcpy(keyStart + recordSize, &posValue, sizeof(uint64_t));
+            std::memcpy(keyStart + recordSize + sizeof(uint64_t), &cachedRecordPtrRaw, sizeof(uint64_t));
         },
         lookupIndex,
         lookupIndexBufferProvider,
         record,
         inputSize,
-        pos);
+        pos,
+        cachedRecordPtrRaw);
 
     const auto numberOfIndexedEntries = nautilus::invoke(+[](const ChainedHashMap* lookupMap)
     {
@@ -247,42 +256,52 @@ void PredictionCache::rebuildLookupIndex()
         return;
     }
 
-    nautilus::invoke(
-        +[](ChainedHashMap* lookupMap,
-            AbstractBufferProvider* bufferProvider,
-            int8_t* startOfEntriesPtr,
-            const uint64_t numberOfPredictionCacheEntries,
-            const uint64_t sizeOfPredictionCacheEntry,
-            const size_t recordSize)
+    nautilus::invoke(+[](ChainedHashMap* lookupMap)
+    {
+        if (lookupMap != nullptr)
         {
-            if (lookupMap == nullptr || bufferProvider == nullptr)
-            {
-                return;
-            }
-
             lookupMap->clear();
+        }
+    }, lookupIndex);
 
-            for (uint64_t i = 0; i < numberOfPredictionCacheEntries; ++i)
+    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
+    {
+        const auto record = getRecord(i);
+        if (record == nullptr)
+        {
+            continue;
+        }
+
+        nautilus::invoke(
+            +[](ChainedHashMap* lookupMap,
+                AbstractBufferProvider* bufferProvider,
+                std::byte* recordPtr,
+                const size_t recordSize,
+                const uint64_t posValue,
+                const uint64_t cachedRecordPtrRaw)
             {
-                const auto* predictionCacheEntry = reinterpret_cast<const PredictionCacheEntry*>(startOfEntriesPtr + i * sizeOfPredictionCacheEntry);
-                if (predictionCacheEntry->record == nullptr)
+                if (lookupMap == nullptr || bufferProvider == nullptr || recordPtr == nullptr)
                 {
-                    continue;
+                    return;
                 }
 
-                const auto hashValue = hashRecord(predictionCacheEntry->record, recordSize);
+                const auto hashValue = hashRecord(recordPtr, recordSize);
                 auto* entry = static_cast<ChainedHashMapEntry*>(lookupMap->insertEntry(hashValue, bufferProvider));
                 auto* keyStart = getEntryKeyStart(entry);
-                std::memcpy(keyStart, predictionCacheEntry->record, recordSize);
-                std::memcpy(keyStart + recordSize, &i, sizeof(uint64_t));
-            }
-        },
-        lookupIndex,
-        lookupIndexBufferProvider,
-        startOfEntries,
-        numberOfEntries,
-        sizeOfEntry,
-        inputSize);
+                std::memcpy(keyStart, recordPtr, recordSize);
+                std::memcpy(keyStart + recordSize, &posValue, sizeof(uint64_t));
+                std::memcpy(keyStart + recordSize + sizeof(uint64_t), &cachedRecordPtrRaw, sizeof(uint64_t));
+            },
+            lookupIndex,
+            lookupIndexBufferProvider,
+            record,
+            inputSize,
+            i,
+            nautilus::invoke(+[](const std::byte* ptr)
+            {
+                return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(ptr));
+            }, record));
+    }
 }
 
 nautilus::val<uint64_t*> PredictionCache::getHitsRef(){ return this->numberOfHits; }

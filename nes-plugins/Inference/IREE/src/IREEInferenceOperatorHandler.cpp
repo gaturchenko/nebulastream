@@ -27,7 +27,7 @@ constexpr uint64_t MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE = 4096;
 
 uint64_t getPredictionCacheLookupIndexPageSize(const uint64_t keySize)
 {
-    const auto mapEntrySize = sizeof(ChainedHashMapEntry) + keySize + sizeof(uint64_t);
+    const auto mapEntrySize = sizeof(ChainedHashMapEntry) + keySize + 2 * sizeof(uint64_t);
     return std::max(MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE, mapEntrySize);
 }
 }
@@ -89,7 +89,7 @@ void IREEInferenceOperatorHandler::allocatePredictionCacheEntries(
         const auto keySize = threadLocalAdapters.at(i)->inputSize;
         const auto pageSize = getPredictionCacheLookupIndexPageSize(keySize);
         predictionCacheLookupHashMapsForWorkerThreads.emplace_back(
-            std::make_unique<ChainedHashMap>(keySize, sizeof(uint64_t), numberOfEntries, pageSize));
+            std::make_unique<ChainedHashMap>(keySize, 2 * sizeof(uint64_t), numberOfEntries, pageSize));
     }
 }
 
