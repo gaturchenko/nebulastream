@@ -22,16 +22,61 @@ constexpr uint64_t LOOKUP_INDEX_REBUILD_FACTOR = 2;
 
 uint64_t hashRecord(const std::byte* record, const size_t size)
 {
-    constexpr uint64_t FNV_OFFSET_BASIS = 14695981039346656037ULL;
-    constexpr uint64_t FNV_PRIME = 1099511628211ULL;
+    static constexpr uint64_t m = UINT64_C(0xc6a4a7935bd1e995);
+    static constexpr uint64_t seed = UINT64_C(0xe17a1465);
+    static constexpr unsigned int r = 47;
 
-    uint64_t hashValue = FNV_OFFSET_BASIS;
-    for (size_t i = 0; i < size; ++i)
+    const auto* const data64 = reinterpret_cast<const uint64_t*>(record);
+    uint64_t h = seed ^ (size * m);
+
+    const size_t nBlocks = size / 8;
+    for (size_t i = 0; i < nBlocks; ++i)
     {
-        hashValue ^= static_cast<uint64_t>(std::to_integer<uint8_t>(record[i]));
-        hashValue *= FNV_PRIME;
+        auto k = *(data64 + i);
+
+        k *= m;
+        k ^= k >> r;
+        k *= m;
+
+        h ^= k;
+        h *= m;
     }
-    return hashValue;
+
+    const auto* const data8 = reinterpret_cast<const uint8_t*>(data64 + nBlocks);
+    switch (size & 7U)
+    {
+        case 7:
+            h ^= static_cast<uint64_t>(data8[6]) << 48U;
+            /// FALLTHROUGH
+        case 6:
+            h ^= static_cast<uint64_t>(data8[5]) << 40U;
+            /// FALLTHROUGH
+        case 5:
+            h ^= static_cast<uint64_t>(data8[4]) << 32U;
+            /// FALLTHROUGH
+        case 4:
+            h ^= static_cast<uint64_t>(data8[3]) << 24U;
+            /// FALLTHROUGH
+        case 3:
+            h ^= static_cast<uint64_t>(data8[2]) << 16U;
+            /// FALLTHROUGH
+        case 2:
+            h ^= static_cast<uint64_t>(data8[1]) << 8U;
+            /// FALLTHROUGH
+        case 1:
+            h ^= static_cast<uint64_t>(data8[0]);
+            h *= m;
+            /// FALLTHROUGH
+        default:
+            break;
+    }
+
+    h ^= h >> r;
+
+    /// final step
+    h *= m;
+    h ^= h >> r;
+    return h;
 }
 
 std::byte* getEntryKeyStart(NES::ChainedHashMapEntry* entry)
