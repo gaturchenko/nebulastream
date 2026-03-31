@@ -78,6 +78,7 @@ nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::
     const auto replacementPos = getReplacementPos();
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementPos * sizeOfEntry;
     updateFunction(PredictionCacheEntryToReplace, replacementPos);
+    addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
     accessCounter = accessCounter + 1;
     *getAgeBit(replacementPos) = accessCounter;
@@ -103,6 +104,7 @@ PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     const auto replacementPos = getReplacementPos();
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementPos * sizeOfEntry;
     const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, replacementPos);
+    addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
     accessCounter = accessCounter + 1;
     *getAgeBit(replacementPos) = accessCounter;

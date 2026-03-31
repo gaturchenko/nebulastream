@@ -491,9 +491,10 @@ private:
 int main()
 {
     constexpr auto allPredictionCacheTypes = magic_enum::enum_values<NES::Configurations::PredictionCacheType>();
-    const auto allPredictionCacheSizes = {100}; // {1'000, 10'000};
+    const auto allPredictionCacheSizes = {100, 1'000}; // {100, 1'000, 10'000};
 
     // const auto allDeterministicHitMissRatios = magic_enum::enum_values<HitMissRatio>();
+    const auto allDeterministicHitMissRatios = std::array{magic_enum::enum_value<HitMissRatio, 1>()};
 
     const auto allDriftIntervals = {1'000};
     const auto allDriftFractions = {0.0, 0.1, 0.5, 1.0};
@@ -510,7 +511,7 @@ int main()
     const auto allBurstinessOnPeriods = {1'000};
     const auto allBurstinessNumKeyMultipliers = {10};
 
-    constexpr auto REPS = 10;
+    constexpr auto REPS = 1;
 
     std::filesystem::path csvFilePath("prediction_cache_micro_benchmarks.csv");
     std::error_code removeError;
@@ -551,124 +552,124 @@ int main()
                 continue;
             }
 
-            // for (const auto& hitMissRatio: allDeterministicHitMissRatios)
-            // {
-            //     BenchmarkParameters benchmarkParams{
-            //         PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
-            //         DataGenerator::Deterministic,
-            //         BenchmarkParameters::DeterministicParameters{hitMissRatio}};
-            //     auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
-            //     const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
-            //
-            //     for (const auto& result : results)
-            //     {
-            //         csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-            //         std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-            //     }
-            //     csvFile.flush();
-            //     etaCalculator.update();
-            // }
-
-            for (const auto& driftInterval : allDriftIntervals)
+            for (const auto& hitMissRatio: allDeterministicHitMissRatios)
             {
-                for (const auto& driftFraction : allDriftFractions)
+                BenchmarkParameters benchmarkParams{
+                    PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+                    DataGenerator::Deterministic,
+                    BenchmarkParameters::DeterministicParameters{hitMissRatio}};
+                auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+                const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+
+                for (const auto& result : results)
                 {
-                    for (const auto& zipfNumKeyMultiplier : allZipfNumKeyMultipliers)
-                    {
-                        const size_t zipfNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * zipfNumKeyMultiplier);
-                        for (const double zipfS : allZipfSValues)
-                        {
-                            BenchmarkParameters benchmarkParams{
-                                PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
-                                DataGenerator::Zipf,
-                                BenchmarkParameters::ZipfParameters{
-                                    zipfNumKeys,
-                                    static_cast<size_t>(zipfNumKeyMultiplier),
-                                    zipfS,
-                                    static_cast<size_t>(driftInterval),
-                                    driftFraction}};
-                            auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
-                            const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
-
-                            for (const auto& result : results)
-                            {
-                                csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                                std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                            }
-                            csvFile.flush();
-                            etaCalculator.update();
-                        }
-                    }
-
-                    for (const auto& temporalSeriesLengthMultiplier : allTemporalSeriesLengthMultipliers)
-                    {
-                        for (const auto& temporalWindowSize : allTemporalWindowSizes)
-                        {
-                            const size_t temporalSeriesLength = std::max<size_t>(
-                                static_cast<size_t>(temporalWindowSize),
-                                static_cast<size_t>(predictionCacheSize) * temporalSeriesLengthMultiplier);
-                            for (const auto& temporalOverlapRatio : allTemporalOverlapRatios)
-                            {
-                                for (const auto& temporalUniverseSize : allTemporalUniverseSizes)
-                                {
-                                    BenchmarkParameters benchmarkParams{
-                                        PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
-                                        DataGenerator::TemporalLocality,
-                                        BenchmarkParameters::TemporalLocalityParameters{
-                                            static_cast<size_t>(temporalUniverseSize),
-                                            temporalSeriesLength,
-                                            static_cast<size_t>(temporalWindowSize),
-                                            temporalOverlapRatio,
-                                            static_cast<size_t>(driftInterval),
-                                            driftFraction}};
-
-                                    auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
-                                    const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
-
-                                    for (const auto& result : results)
-                                    {
-                                        csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                                        std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                                    }
-                                    csvFile.flush();
-                                    etaCalculator.update();
-                                }
-                            }
-                        }
-                    }
-
-                    for (const auto& burstinessNumKeyMultiplier : allBurstinessNumKeyMultipliers)
-                    {
-                        const size_t burstinessNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * burstinessNumKeyMultiplier);
-                        for (const auto& burstinessDutyCycle : allBurstinessDutyCycles)
-                        {
-                            for (const auto& burstinessOnPeriod : allBurstinessOnPeriods)
-                            {
-                                BenchmarkParameters benchmarkParams{
-                                    PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
-                                    DataGenerator::Burstiness,
-                                    BenchmarkParameters::BurstinessParameters{
-                                        burstinessDutyCycle,
-                                        static_cast<size_t>(burstinessOnPeriod),
-                                        burstinessNumKeys,
-                                        static_cast<size_t>(driftInterval),
-                                        driftFraction}};
-
-                                auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
-                                const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
-
-                                for (const auto& result : results)
-                                {
-                                    csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                                    std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
-                                }
-                                csvFile.flush();
-                                etaCalculator.update();
-                            }
-                        }
-                    }
+                    csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+                    std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
                 }
+                csvFile.flush();
+                // etaCalculator.update();
             }
+
+            // for (const auto& driftInterval : allDriftIntervals)
+            // {
+            //     for (const auto& driftFraction : allDriftFractions)
+            //     {
+            //         for (const auto& zipfNumKeyMultiplier : allZipfNumKeyMultipliers)
+            //         {
+            //             const size_t zipfNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * zipfNumKeyMultiplier);
+            //             for (const double zipfS : allZipfSValues)
+            //             {
+            //                 BenchmarkParameters benchmarkParams{
+            //                     PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+            //                     DataGenerator::Zipf,
+            //                     BenchmarkParameters::ZipfParameters{
+            //                         zipfNumKeys,
+            //                         static_cast<size_t>(zipfNumKeyMultiplier),
+            //                         zipfS,
+            //                         static_cast<size_t>(driftInterval),
+            //                         driftFraction}};
+            //                 auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+            //                 const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            //
+            //                 for (const auto& result : results)
+            //                 {
+            //                     csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //                     std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //                 }
+            //                 csvFile.flush();
+            //                 etaCalculator.update();
+            //             }
+            //         }
+            //
+            //         for (const auto& temporalSeriesLengthMultiplier : allTemporalSeriesLengthMultipliers)
+            //         {
+            //             for (const auto& temporalWindowSize : allTemporalWindowSizes)
+            //             {
+            //                 const size_t temporalSeriesLength = std::max<size_t>(
+            //                     static_cast<size_t>(temporalWindowSize),
+            //                     static_cast<size_t>(predictionCacheSize) * temporalSeriesLengthMultiplier);
+            //                 for (const auto& temporalOverlapRatio : allTemporalOverlapRatios)
+            //                 {
+            //                     for (const auto& temporalUniverseSize : allTemporalUniverseSizes)
+            //                     {
+            //                         BenchmarkParameters benchmarkParams{
+            //                             PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+            //                             DataGenerator::TemporalLocality,
+            //                             BenchmarkParameters::TemporalLocalityParameters{
+            //                                 static_cast<size_t>(temporalUniverseSize),
+            //                                 temporalSeriesLength,
+            //                                 static_cast<size_t>(temporalWindowSize),
+            //                                 temporalOverlapRatio,
+            //                                 static_cast<size_t>(driftInterval),
+            //                                 driftFraction}};
+            //
+            //                         auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+            //                         const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            //
+            //                         for (const auto& result : results)
+            //                         {
+            //                             csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //                             std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //                         }
+            //                         csvFile.flush();
+            //                         etaCalculator.update();
+            //                     }
+            //                 }
+            //             }
+            //         }
+            //
+            //         for (const auto& burstinessNumKeyMultiplier : allBurstinessNumKeyMultipliers)
+            //         {
+            //             const size_t burstinessNumKeys = std::max<size_t>(1, static_cast<size_t>(predictionCacheSize) * burstinessNumKeyMultiplier);
+            //             for (const auto& burstinessDutyCycle : allBurstinessDutyCycles)
+            //             {
+            //                 for (const auto& burstinessOnPeriod : allBurstinessOnPeriods)
+            //                 {
+            //                     BenchmarkParameters benchmarkParams{
+            //                         PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
+            //                         DataGenerator::Burstiness,
+            //                         BenchmarkParameters::BurstinessParameters{
+            //                             burstinessDutyCycle,
+            //                             static_cast<size_t>(burstinessOnPeriod),
+            //                             burstinessNumKeys,
+            //                             static_cast<size_t>(driftInterval),
+            //                             driftFraction}};
+            //
+            //                     auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+            //                     const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+            //
+            //                     for (const auto& result : results)
+            //                     {
+            //                         csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //                         std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
+            //                     }
+            //                     csvFile.flush();
+            //                     etaCalculator.update();
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
         }
     }
 

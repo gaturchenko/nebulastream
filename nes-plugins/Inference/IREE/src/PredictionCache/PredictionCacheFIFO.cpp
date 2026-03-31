@@ -63,6 +63,7 @@ nautilus::val<uint64_t> PredictionCacheFIFO::updateKeys(const nautilus::val<std:
     /// As we are in the FIFO cache, we need to replace the oldest entry with the new one.
     const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
     updateFunction(predictionCacheEntryToReplace, localReplacementIndex);
+    addLookupIndexEntry(record, localReplacementIndex);
     replacementIndex = localReplacementIndex;
 
     /// Before returning the data structure, we need to update the replacement index.
@@ -86,6 +87,7 @@ PredictionCacheFIFO::getDataStructureRef(const nautilus::val<std::byte*>& record
     /// As we are in the FIFO cache, we need to replace the oldest entry with the new one.
     const nautilus::val<PredictionCacheEntry*> predictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
     const auto dataStructure = replacementFunction(predictionCacheEntryToReplace, localReplacementIndex);
+    addLookupIndexEntry(record, localReplacementIndex);
     replacementIndex = localReplacementIndex;
 
     /// Before returning the data structure, we need to update the replacement index.

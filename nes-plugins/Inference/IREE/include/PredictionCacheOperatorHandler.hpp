@@ -14,8 +14,10 @@
 
 #pragma once
 
+#include <memory>
 #include <Runtime/AbstractBufferProvider.hpp>
 #include <Runtime/TupleBuffer.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 
 namespace NES
 {
@@ -45,10 +47,22 @@ public:
 
     virtual uint64_t getReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const = 0;
     virtual void setReplacementPos(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs, uint64_t idx) = 0;
+    [[nodiscard]] ChainedHashMap*
+    getPredictionCacheLookupHashMapPtr(const StartPredictionCacheEntriesArgs& startPredictionCacheEntriesArgs) const
+    {
+        if (predictionCacheLookupHashMapsForWorkerThreads.empty())
+        {
+            return nullptr;
+        }
+
+        const auto pos = startPredictionCacheEntriesArgs.workerThreadId % predictionCacheLookupHashMapsForWorkerThreads.size();
+        return predictionCacheLookupHashMapsForWorkerThreads.at(pos).get();
+    }
 
 protected:
     std::vector<TupleBuffer> predictionCacheEntriesBufferForWorkerThreads;
     std::vector<uint64_t> predictionCacheReplacementPosForWorkerThreads;
+    std::vector<std::unique_ptr<ChainedHashMap>> predictionCacheLookupHashMapsForWorkerThreads;
     std::atomic<bool> hasPredictionCacheCreated{false};
 };
 

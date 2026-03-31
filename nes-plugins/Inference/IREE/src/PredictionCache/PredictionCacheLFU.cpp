@@ -79,6 +79,7 @@ nautilus::val<uint64_t> PredictionCacheLFU::updateKeys(const nautilus::val<std::
     /// Third, we have to replace the entry at the minFrequencyIndex
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + minFrequencyIndex * sizeOfEntry;
     updateFunction(PredictionCacheEntryToReplace, minFrequency);
+    addLookupIndexEntry(record, minFrequencyIndex);
     replacementIndex = minFrequencyIndex;
     *getFrequency(minFrequencyIndex) = 1;
     return nautilus::val<uint64_t>(NOT_FOUND);
@@ -114,6 +115,7 @@ PredictionCacheLFU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     /// Third, we have to replace the entry at the minFrequencyIndex
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + minFrequencyIndex * sizeOfEntry;
     const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, minFrequency);
+    addLookupIndexEntry(record, minFrequencyIndex);
     replacementIndex = minFrequencyIndex;
     *getFrequency(minFrequencyIndex) = 1;
     return dataStructure;

@@ -17,6 +17,7 @@
 #include <IREECacheInferenceOperator.hpp>
 #include <IREEInferenceOperatorHandler.hpp>
 #include <Nautilus/Interface/Record.hpp>
+#include <PredictionCacheOperatorHandler.hpp>
 #include <PredictionCache/PredictionCacheUtil.hpp>
 #include <QueryExecutionConfiguration.hpp>
 #include <Runtime/AbstractBufferProvider.hpp>
@@ -320,8 +321,21 @@ void IREECacheInferenceOperator::open(ExecutionContext& executionCtx, RecordBuff
                 IREEInferenceOperatorHandler::StartPredictionCacheEntriesIREEInference{workerThreadId});
         }, globalOperatorHandler, executionCtx.workerThreadId);
 
+    const auto lookupIndex = nautilus::invoke(
+        +[](OperatorHandler* handler, const WorkerThreadId workerThreadId)
+        {
+            auto* predictionCacheHandler = dynamic_cast<PredictionCacheOperatorHandler*>(handler);
+            if (predictionCacheHandler == nullptr)
+            {
+                return static_cast<ChainedHashMap*>(nullptr);
+            }
+            return predictionCacheHandler->getPredictionCacheLookupHashMapPtr(
+                PredictionCacheOperatorHandler::StartPredictionCacheEntriesArgs{workerThreadId});
+        }, globalOperatorHandler, executionCtx.workerThreadId);
+
     auto predictionCache = NES::Util::createPredictionCache(
         predictionCacheOptions, globalOperatorHandler, startOfEntries, inputSize);
+    predictionCache->configureLookupIndex(lookupIndex, executionCtx.pipelineMemoryProvider.bufferProvider);
     predictionCache->setReplacementPos(replacementIndex);
     executionCtx.setLocalOperatorState(id, std::move(predictionCache));
 }

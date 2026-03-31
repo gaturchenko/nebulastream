@@ -79,6 +79,7 @@ nautilus::val<uint64_t> PredictionCacheSecondChance::updateKeys(const nautilus::
     /// Replacing the slice and returning the data structure.
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
     updateFunction(PredictionCacheEntryToReplace, localReplacementIndex);
+    addLookupIndexEntry(record, localReplacementIndex);
     replacementIndex = localReplacementIndex;
     *secondChanceBit = true;
     return nautilus::val<uint64_t>(NOT_FOUND);
@@ -112,6 +113,7 @@ PredictionCacheSecondChance::getDataStructureRef(
     /// Replacing the slice and returning the data structure.
     const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + localReplacementIndex * sizeOfEntry;
     const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, localReplacementIndex);
+    addLookupIndexEntry(record, localReplacementIndex);
     replacementIndex = localReplacementIndex;
     *secondChanceBit = true;
     return getDataStructure(localReplacementIndex);

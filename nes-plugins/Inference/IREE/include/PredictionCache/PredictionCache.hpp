@@ -18,7 +18,9 @@
 #include <IREEInferenceLocalState.hpp>
 #include <PredictionCache/PredictionCacheEntry.hpp>
 #include <Nautilus/Interface/Record.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 #include <Nautilus/Util.hpp>
+#include <Runtime/AbstractBufferProvider.hpp>
 #include <nautilus/val.hpp>
 #include <nautilus/val_ptr.hpp>
 
@@ -62,6 +64,9 @@ public:
     nautilus::val<uint64_t*> getHitsRef();
     nautilus::val<uint64_t*> getMissesRef();
     nautilus::val<uint64_t> getReplacementIndex();
+    void configureLookupIndex(
+        const nautilus::val<ChainedHashMap*>& lookupIndex,
+        const nautilus::val<AbstractBufferProvider*>& bufferProvider);
 
     virtual nautilus::val<uint64_t> getReplacementPos() = 0;
     virtual void setReplacementPos(nautilus::val<uint64_t> pos) = 0;
@@ -78,6 +83,8 @@ protected:
 
     /// Helper function to check if a timestamp is in the cache. We assume a timestamp is in the cache if it is in the range [sliceStart, sliceEnd).
     nautilus::val<bool> foundRecord(const nautilus::val<uint64_t>& pos, const nautilus::val<std::byte*>& record);
+    void addLookupIndexEntry(const nautilus::val<std::byte*>& record, const nautilus::val<uint64_t>& pos);
+    void rebuildLookupIndex();
 
     /// Members for iterating over the cache
     nautilus::val<int8_t*> startOfEntries;
@@ -89,5 +96,7 @@ private:
     nautilus::val<uint64_t*> numberOfHits;
     nautilus::val<uint64_t*> numberOfMisses;
     nautilus::val<size_t> inputSize;
+    nautilus::val<ChainedHashMap*> lookupIndex;
+    nautilus::val<AbstractBufferProvider*> lookupIndexBufferProvider;
 };
 }

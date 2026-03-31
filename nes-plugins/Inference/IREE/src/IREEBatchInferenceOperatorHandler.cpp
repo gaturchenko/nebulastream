@@ -19,9 +19,21 @@
 #include <PipelineExecutionContext.hpp>
 #include <PredictionCache.hpp>
 #include <WindowBasedOperatorHandler.hpp>
+#include <algorithm>
 
 namespace NES
 {
+namespace
+{
+constexpr uint64_t MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE = 4096;
+
+uint64_t getPredictionCacheLookupIndexPageSize(const uint64_t keySize)
+{
+    const auto mapEntrySize = sizeof(ChainedHashMapEntry) + keySize + sizeof(uint64_t);
+    return std::max(MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE, mapEntrySize);
+}
+}
+
 IREEBatchInferenceOperatorHandler::IREEBatchInferenceOperatorHandler(
     const std::vector<OriginId>& inputOrigins,
     OriginId outputOriginId,
@@ -221,6 +233,11 @@ void IREEBatchInferenceOperatorHandler::allocatePredictionCacheEntries(
         std::ranges::fill(bufferOpt.value().getAvailableMemoryArea(), std::byte{0});
         predictionCacheEntriesBufferForWorkerThreads.emplace_back(bufferOpt.value());
         predictionCacheReplacementPosForWorkerThreads.emplace_back(uint64_t{0});
+
+        const auto keySize = threadLocalAdapters.at(i)->inputSize / batchSize;
+        const auto pageSize = getPredictionCacheLookupIndexPageSize(keySize);
+        predictionCacheLookupHashMapsForWorkerThreads.emplace_back(
+            std::make_unique<ChainedHashMap>(keySize, sizeof(uint64_t), numberOfEntries, pageSize));
     }
 }
 
