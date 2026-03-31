@@ -388,6 +388,92 @@ inline BenchmarkData createDeterministicBenchmarkData(
     return records;
 }
 
+inline void driftActiveSet(
+    std::vector<size_t>& activeSet,
+    const size_t universeSize,
+    const double driftFraction,
+    std::mt19937_64& rng)
+{
+    if (!(0.0 <= driftFraction && driftFraction <= 1.0))
+    {
+        throw std::invalid_argument("driftFraction must be in [0.0, 1.0]");
+    }
+
+    if (activeSet.empty() || universeSize == 0 || driftFraction == 0.0)
+    {
+        return;
+    }
+
+    const size_t replaceCount =
+        std::min(activeSet.size(), static_cast<size_t>(std::llround(activeSet.size() * driftFraction)));
+
+    if (replaceCount == 0)
+    {
+        return;
+    }
+
+    std::shuffle(activeSet.begin(), activeSet.end(), rng);
+
+    std::vector<bool> inActive(universeSize, false);
+    for (const size_t key : activeSet)
+    {
+        inActive[key] = true;
+    }
+
+    std::vector<size_t> candidates;
+    candidates.reserve(universeSize - activeSet.size());
+    for (size_t key = 0; key < universeSize; ++key)
+    {
+        if (!inActive[key])
+        {
+            candidates.push_back(key);
+        }
+    }
+
+    if (candidates.size() < replaceCount)
+    {
+        throw std::runtime_error("Not enough replacement candidates for drift");
+    }
+
+    std::shuffle(candidates.begin(), candidates.end(), rng);
+
+    for (size_t i = 0; i < replaceCount; ++i)
+    {
+        activeSet[i] = candidates[i];
+    }
+}
+
+inline BenchmarkData materializeAccessKeys(
+    const std::vector<uint64_t>& accessKeys,
+    const size_t numKeys,
+    const size_t recordSize,
+    std::mt19937_64& rngData)
+{
+    if (recordSize == 0)
+    {
+        throw std::invalid_argument("recordSize must be greater than 0");
+    }
+
+    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
+    keyTemplates.reserve(numKeys);
+    for (size_t key = 0; key < numKeys; ++key)
+    {
+        keyTemplates.emplace_back(createRecord(recordSize, static_cast<uint64_t>(key), rngData));
+    }
+
+    BenchmarkData records;
+    records.reserve(accessKeys.size());
+
+    for (const uint64_t key : accessKeys)
+    {
+        auto record = std::make_unique<std::byte[]>(recordSize);
+        std::memcpy(record.get(), keyTemplates[static_cast<size_t>(key)].get(), recordSize);
+        records.emplace_back(std::move(record));
+    }
+
+    return records;
+}
+
 inline std::vector<double> createZipfPopularity(const size_t numKeys, const double s)
 {
     if (numKeys == 0)
@@ -416,11 +502,18 @@ inline BenchmarkData createZipfBenchmarkData(
     const size_t totalRecords,
     const size_t recordSize,
     const uint64_t seed,
-    const double s = 1.0)
+    const double zipfExponent,
+    const size_t driftInterval,
+    const double driftFraction)
 {
     if (totalRecords == 0)
     {
         return {};
+    }
+
+    if (numKeys == 0)
+    {
+        throw std::invalid_argument("numKeys must be greater than 0");
     }
 
     if (recordSize == 0)
@@ -428,30 +521,41 @@ inline BenchmarkData createZipfBenchmarkData(
         throw std::invalid_argument("recordSize must be greater than 0");
     }
 
-    const auto zipfPopularity = createZipfPopularity(numKeys, s);
+    const auto zipfPopularity = createZipfPopularity(numKeys, zipfExponent);
+    std::discrete_distribution<size_t> rankDistribution(zipfPopularity.begin(), zipfPopularity.end());
 
     std::mt19937_64 rngPattern(seed);
     std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
-    std::discrete_distribution<size_t> keyDistribution(zipfPopularity.begin(), zipfPopularity.end());
 
-    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
-    keyTemplates.reserve(numKeys);
-    for (size_t key = 0; key < numKeys; ++key)
-    {
-        keyTemplates.emplace_back(createRecord(recordSize, static_cast<uint64_t>(key), rngData));
-    }
+    // rankToKey[rank] = concrete key currently occupying that popularity rank
+    std::vector<size_t> rankToKey(numKeys);
+    std::iota(rankToKey.begin(), rankToKey.end(), 0);
 
-    BenchmarkData records;
-    records.reserve(totalRecords);
+    const size_t hotsetSize = std::max<size_t>(1, numKeys / 10);
+
+    std::vector<uint64_t> accessKeys;
+    accessKeys.reserve(totalRecords);
+
     for (size_t i = 0; i < totalRecords; ++i)
     {
-        const size_t sampledKey = keyDistribution(rngPattern);
-        auto record = std::make_unique<std::byte[]>(recordSize);
-        std::memcpy(record.get(), keyTemplates[sampledKey].get(), recordSize);
-        records.emplace_back(std::move(record));
+        if (driftInterval > 0 && i > 0 && i % driftInterval == 0)
+        {
+            std::vector<size_t> topHotset(rankToKey.begin(), rankToKey.begin() + hotsetSize);
+            driftActiveSet(topHotset, numKeys, driftFraction, rngPattern);
+            std::copy(topHotset.begin(), topHotset.end(), rankToKey.begin());
+
+            // Re-randomize the colder tail slightly to avoid persistent positional artifacts.
+            if (hotsetSize < numKeys)
+            {
+                std::shuffle(rankToKey.begin() + static_cast<std::ptrdiff_t>(hotsetSize), rankToKey.end(), rngPattern);
+            }
+        }
+
+        const size_t sampledRank = rankDistribution(rngPattern);
+        accessKeys.emplace_back(static_cast<uint64_t>(rankToKey[sampledRank]));
     }
 
-    return records;
+    return materializeAccessKeys(accessKeys, numKeys, recordSize, rngData);
 }
 
 inline std::vector<std::vector<uint64_t>> generateSlidingWindows(
@@ -493,68 +597,95 @@ inline std::vector<std::vector<uint64_t>> generateSlidingWindows(
 }
 
 inline BenchmarkData createTemporalLocalityBenchmarkData(
+    const size_t universeSize,
     const size_t seriesLength,
     const size_t windowSize,
     const double overlapRatio,
     const size_t totalRecords,
     const size_t recordSize,
-    const uint64_t seed)
+    const uint64_t seed,
+    const size_t driftInterval,
+    const double driftFraction)
 {
     if (totalRecords == 0)
     {
         return {};
     }
 
-    if (recordSize == 0)
+    if (universeSize == 0)
     {
-        throw std::invalid_argument("recordSize must be greater than 0");
+        throw std::invalid_argument("universeSize must be greater than 0");
     }
+
+    if (seriesLength == 0)
+    {
+        throw std::invalid_argument("seriesLength must be greater than 0");
+    }
+
+    if (windowSize == 0 || windowSize > seriesLength)
+    {
+        throw std::invalid_argument("windowSize must be in (0, seriesLength]");
+    }
+
+    if (universeSize < seriesLength)
+    {
+        throw std::invalid_argument("universeSize must be >= seriesLength");
+    }
+
+    std::mt19937_64 rngPattern(seed);
+    std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
 
     const auto windows = generateSlidingWindows(seriesLength, windowSize, overlapRatio);
     if (windows.empty())
     {
-        throw std::invalid_argument("TemporalLocality requires seriesLength >= windowSize and at least one generated window");
-    }
-
-    std::vector<uint64_t> accessKeys;
-    for (const auto& window : windows)
-    {
-        accessKeys.insert(accessKeys.end(), window.begin(), window.end());
-    }
-
-    if (accessKeys.empty())
-    {
         throw std::invalid_argument("TemporalLocality generated an empty access pattern");
     }
 
-    std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
-    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
-    keyTemplates.reserve(seriesLength);
-    for (size_t key = 0; key < seriesLength; ++key)
+    std::vector<uint64_t> accessKeys;
+    accessKeys.reserve(totalRecords);
+
+    size_t emitted = 0;
+    size_t base = 0;
+
+    while (emitted < totalRecords)
     {
-        keyTemplates.emplace_back(createRecord(recordSize, static_cast<uint64_t>(key), rngData));
+        for (const auto& window : windows)
+        {
+            for (const auto localKey : window)
+            {
+                if (emitted >= totalRecords)
+                {
+                    break;
+                }
+
+                const size_t key = (base + static_cast<size_t>(localKey)) % universeSize;
+                accessKeys.emplace_back(static_cast<uint64_t>(key));
+                ++emitted;
+
+                if (driftInterval > 0 && emitted % driftInterval == 0)
+                {
+                    const size_t shift =
+                        std::max<size_t>(1, static_cast<size_t>(std::llround(seriesLength * driftFraction)));
+
+                    // Shift the active series segment through the larger universe.
+                    base = (base + shift) % universeSize;
+                }
+            }
+        }
     }
 
-    BenchmarkData records;
-    records.reserve(totalRecords);
-    for (size_t i = 0; i < totalRecords; ++i)
-    {
-        const size_t keyIndex = static_cast<size_t>(accessKeys[i % accessKeys.size()]);
-        auto record = std::make_unique<std::byte[]>(recordSize);
-        std::memcpy(record.get(), keyTemplates[keyIndex].get(), recordSize);
-        records.emplace_back(std::move(record));
-    }
-
-    return records;
+    return materializeAccessKeys(accessKeys, universeSize, recordSize, rngData);
 }
 
 inline BenchmarkData createBurstinessBenchmarkData(
-    const double dutyCycle,       // interpreted as fraction of records generated in bursts
-    const size_t onPeriod,        // number of records in one burst
+    const double dutyCycle,
+    const size_t onPeriod,
     const size_t numKeys,
     const size_t totalRecords,
     const size_t recordSize,
-    const uint64_t seed)
+    const uint64_t seed,
+    const size_t driftInterval,
+    const double driftFraction)
 {
     if (totalRecords == 0)
     {
@@ -584,13 +715,9 @@ inline BenchmarkData createBurstinessBenchmarkData(
     std::mt19937_64 rngPattern(seed);
     std::mt19937_64 rngData(seed ^ 0x9E3779B97F4A7C15ULL);
 
-    // Temporary hot subset size:
-    // smaller dutyCycle -> tighter bursts / stronger short-term locality
     const size_t burstHotsetSize =
         std::max<size_t>(1, std::min(numKeys, static_cast<size_t>(std::llround(numKeys * dutyCycle))));
 
-    // Number of emitted records between bursts.
-    // dutyCycle = 1.0 => no cool-down gap, fully burst-dense.
     const size_t offPeriod =
         (dutyCycle < 1.0)
             ? std::max<size_t>(
@@ -598,90 +725,71 @@ inline BenchmarkData createBurstinessBenchmarkData(
                   static_cast<size_t>(std::llround(static_cast<double>(onPeriod) * (1.0 - dutyCycle) / dutyCycle)))
             : 0;
 
+    std::vector<size_t> activeBurstSet(burstHotsetSize);
+    std::iota(activeBurstSet.begin(), activeBurstSet.end(), 0);
+    std::shuffle(activeBurstSet.begin(), activeBurstSet.end(), rngPattern);
+
     std::vector<uint64_t> accessKeys;
     accessKeys.reserve(totalRecords);
 
-    // To avoid global skew, rotate burst windows over a shuffled permutation of keys.
-    std::vector<size_t> keyOrder(numKeys);
-    std::iota(keyOrder.begin(), keyOrder.end(), 0);
-    std::shuffle(keyOrder.begin(), keyOrder.end(), rngPattern);
-
-    size_t burstStart = 0;
-
-    while (accessKeys.size() < totalRecords)
+    size_t emitted = 0;
+    while (emitted < totalRecords)
     {
-        // ---- ON phase: sample repeatedly from the current temporary hot subset ----
-        std::uniform_int_distribution<size_t> burstKeyOffsetDist(0, burstHotsetSize - 1);
+        // ON phase: repeated accesses from a temporary active burst hotset
+        std::uniform_int_distribution<size_t> burstDist(0, activeBurstSet.size() - 1);
+        const size_t endOn = std::min(totalRecords, emitted + onPeriod);
 
-        const size_t endOn = std::min(totalRecords, accessKeys.size() + onPeriod);
-        while (accessKeys.size() < endOn)
+        while (emitted < endOn)
         {
-            const size_t offset = burstKeyOffsetDist(rngPattern);
-            const size_t keyIdx = (burstStart + offset) % numKeys;
-            accessKeys.emplace_back(static_cast<uint64_t>(keyOrder[keyIdx]));
+            accessKeys.emplace_back(static_cast<uint64_t>(activeBurstSet[burstDist(rngPattern)]));
+            ++emitted;
         }
 
-        if (accessKeys.size() >= totalRecords)
+        if (emitted >= totalRecords)
         {
             break;
         }
 
-        // ---- OFF phase: emit dispersed accesses from outside the current hot subset ----
+        // OFF phase: dispersed accesses outside the current burst hotset
         if (offPeriod > 0)
         {
-            std::vector<size_t> coldPool;
-            coldPool.reserve(numKeys - burstHotsetSize);
-
-            for (size_t i = 0; i < numKeys; ++i)
+            std::vector<bool> inBurst(numKeys, false);
+            for (const size_t key : activeBurstSet)
             {
-                const size_t circularIdx = (burstStart + i) % numKeys;
-                if (i < burstHotsetSize)
+                inBurst[key] = true;
+            }
+
+            std::vector<size_t> coldPool;
+            coldPool.reserve(numKeys - activeBurstSet.size());
+            for (size_t key = 0; key < numKeys; ++key)
+            {
+                if (!inBurst[key])
                 {
-                    continue; // skip current burst hot subset
+                    coldPool.push_back(key);
                 }
-                coldPool.emplace_back(keyOrder[circularIdx]);
             }
 
             if (!coldPool.empty())
             {
                 std::uniform_int_distribution<size_t> coldDist(0, coldPool.size() - 1);
-                const size_t endOff = std::min(totalRecords, accessKeys.size() + offPeriod);
+                const size_t endOff = std::min(totalRecords, emitted + offPeriod);
 
-                while (accessKeys.size() < endOff)
+                while (emitted < endOff)
                 {
                     accessKeys.emplace_back(static_cast<uint64_t>(coldPool[coldDist(rngPattern)]));
+                    ++emitted;
                 }
             }
         }
 
-        // Rotate to the next burst-local hotset.
-        burstStart = (burstStart + burstHotsetSize) % numKeys;
-
-        // Optional reshuffle after a full cycle to avoid periodic artifacts.
-        if (burstStart == 0)
+        // Drift the active burst hotset after enough emitted records.
+        if (driftInterval > 0 && emitted % driftInterval == 0)
         {
-            std::shuffle(keyOrder.begin(), keyOrder.end(), rngPattern);
+            driftActiveSet(activeBurstSet, numKeys, driftFraction, rngPattern);
         }
     }
 
-    std::vector<std::unique_ptr<std::byte[]>> keyTemplates;
-    keyTemplates.reserve(numKeys);
-    for (size_t key = 0; key < numKeys; ++key)
-    {
-        keyTemplates.emplace_back(createRecord(recordSize, static_cast<uint64_t>(key), rngData));
-    }
-
-    BenchmarkData records;
-    records.reserve(totalRecords);
-
-    for (const uint64_t key : accessKeys)
-    {
-        auto record = std::make_unique<std::byte[]>(recordSize);
-        std::memcpy(record.get(), keyTemplates[static_cast<size_t>(key)].get(), recordSize);
-        records.emplace_back(std::move(record));
-    }
-
-    return records;
+    return materializeAccessKeys(accessKeys, numKeys, recordSize, rngData);
 }
 
 }

@@ -26,6 +26,8 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <cmath>
+#include <string_view>
 
 namespace
 {
@@ -115,6 +117,8 @@ struct ParsedArguments
     size_t records = 100'000;
     size_t recordSize = 32;
     uint64_t seed = 0xC0FFEEULL;
+    size_t driftInterval = 0;
+    double driftFraction = 0.0;
 
     /// Deterministic parameters
     uint64_t deterministicCacheSize = 1'000;
@@ -126,6 +130,7 @@ struct ParsedArguments
     double zipfS = 1.0;
 
     /// TemporalLocality parameters
+    size_t temporalUniverseSize = 10'000;
     size_t temporalSeriesLength = 10'000;
     size_t temporalWindowSize = 128;
     double temporalOverlapRatio = 0.5;
@@ -149,6 +154,8 @@ void printUsage()
         << "  --records <int>\n"
         << "  --record-size <int>\n"
         << "  --seed <int>\n\n"
+        << "  --drift-interval <int>\n"
+        << "  --drift-fraction <float in [0,1]>\n\n"
         << "Deterministic options:\n"
         << "  --det-cache-size <int>\n"
         << "  --det-hit-ratio <100|75|50|25|0>\n"
@@ -157,13 +164,12 @@ void printUsage()
         << "  --zipf-num-keys <int>\n"
         << "  --zipf-s <float>\n\n"
         << "TemporalLocality options:\n"
+        << "  --temporal-universe-size <int>\n"
         << "  --temporal-series-length <int>\n"
         << "  --temporal-window-size <int>\n"
         << "  --temporal-overlap-ratio <float in [0,1)>\n\n"
         << "Burstiness options:\n"
-        << "  --burstiness-total-steps <int>\n"
         << "  --burstiness-duty-cycle <float in (0,1]>\n"
-        << "  --burstiness-lambda-avg <float > 0>\n"
         << "  --burstiness-on-period <int>\n"
         << "  --burstiness-num-keys <int>\n";
 }
@@ -250,6 +256,14 @@ ParsedArguments parseArguments(const int argc, const char* const argv[])
     {
         arguments.seed = parseUInt64(it->second, "--seed");
     }
+    if (const auto it = options.find("--drift-interval"); it != options.end())
+    {
+        arguments.driftInterval = parseSize(it->second, "--drift-interval");
+    }
+    if (const auto it = options.find("--drift-fraction"); it != options.end())
+    {
+        arguments.driftFraction = parseDouble(it->second, "--drift-fraction");
+    }
 
     if (const auto it = options.find("--det-cache-size"); it != options.end())
     {
@@ -273,6 +287,10 @@ ParsedArguments parseArguments(const int argc, const char* const argv[])
         arguments.zipfS = parseDouble(it->second, "--zipf-s");
     }
 
+    if (const auto it = options.find("--temporal-universe-size"); it != options.end())
+    {
+        arguments.temporalUniverseSize = parseSize(it->second, "--temporal-universe-size");
+    }
     if (const auto it = options.find("--temporal-series-length"); it != options.end())
     {
         arguments.temporalSeriesLength = parseSize(it->second, "--temporal-series-length");
@@ -285,18 +303,9 @@ ParsedArguments parseArguments(const int argc, const char* const argv[])
     {
         arguments.temporalOverlapRatio = parseDouble(it->second, "--temporal-overlap-ratio");
     }
-
-    if (const auto it = options.find("--burstiness-total-steps"); it != options.end())
-    {
-        arguments.burstinessTotalSteps = parseSize(it->second, "--burstiness-total-steps");
-    }
     if (const auto it = options.find("--burstiness-duty-cycle"); it != options.end())
     {
         arguments.burstinessDutyCycle = parseDouble(it->second, "--burstiness-duty-cycle");
-    }
-    if (const auto it = options.find("--burstiness-lambda-avg"); it != options.end())
-    {
-        arguments.burstinessLambdaAvg = parseDouble(it->second, "--burstiness-lambda-avg");
     }
     if (const auto it = options.find("--burstiness-on-period"); it != options.end())
     {
@@ -328,15 +337,20 @@ NES::Microbenchmark::BenchmarkData generateData(const ParsedArguments& args)
                 args.records,
                 args.recordSize,
                 args.seed,
-                args.zipfS);
+                args.zipfS,
+                args.driftInterval,
+                args.driftFraction);
         case GeneratorChoice::TemporalLocality:
             return NES::Microbenchmark::createTemporalLocalityBenchmarkData(
+                args.temporalUniverseSize,
                 args.temporalSeriesLength,
                 args.temporalWindowSize,
                 args.temporalOverlapRatio,
                 args.records,
                 args.recordSize,
-                args.seed);
+                args.seed,
+                args.driftInterval,
+                args.driftFraction);
         case GeneratorChoice::Burstiness:
             return NES::Microbenchmark::createBurstinessBenchmarkData(
                 args.burstinessDutyCycle,
@@ -344,7 +358,9 @@ NES::Microbenchmark::BenchmarkData generateData(const ParsedArguments& args)
                 args.burstinessNumKeys,
                 args.records,
                 args.recordSize,
-                args.seed);
+                args.seed,
+                args.driftInterval,
+                args.driftFraction);
     }
     std::unreachable();
 }
@@ -357,7 +373,32 @@ uint64_t extractRecordId(const std::byte* record, const size_t recordSize)
     return id;
 }
 
-void writeDataToCsv(const std::filesystem::path& outputPath, const NES::Microbenchmark::BenchmarkData& data, const size_t recordSize)
+size_t computeBurstinessOffPeriod(const double dutyCycle, const size_t onPeriod)
+{
+    if (dutyCycle >= 1.0)
+    {
+        return 0;
+    }
+
+    return std::max<size_t>(
+        1,
+        static_cast<size_t>(std::llround(static_cast<double>(onPeriod) * (1.0 - dutyCycle) / dutyCycle)));
+}
+
+// std::string_view classifyBurstPhase(
+//     const size_t cyclePosition,
+//     const size_t onPeriod,
+//     const size_t offPeriod)
+// {
+//     (void)offPeriod;
+//     return cyclePosition < onPeriod ? "on" : "off";
+// }
+
+void writeDataToCsv(
+    const std::filesystem::path& outputPath,
+    const NES::Microbenchmark::BenchmarkData& data,
+    const size_t recordSize,
+    const ParsedArguments& args)
 {
     std::ofstream out(outputPath, std::ios::out | std::ios::trunc);
     if (!out.is_open())
@@ -365,11 +406,42 @@ void writeDataToCsv(const std::filesystem::path& outputPath, const NES::Microben
         throw std::runtime_error("Failed to open output file: " + outputPath.string());
     }
 
-    out << "position,key_id\n";
+    if (args.generator != GeneratorChoice::Burstiness)
+    {
+        out << "position,key_id\n";
+        for (size_t i = 0; i < data.size(); ++i)
+        {
+            const uint64_t keyId = extractRecordId(data[i].get(), recordSize);
+            out << i << "," << keyId << "\n";
+        }
+        return;
+    }
+
+    // Burstiness-specific export with phase annotations.
+    const size_t onPeriod = args.burstinessOnPeriod;
+    const size_t offPeriod = computeBurstinessOffPeriod(args.burstinessDutyCycle, onPeriod);
+    const size_t cycleLength = onPeriod + offPeriod;
+
+    out << "position,key_id,phase_id,phase_type,position_in_phase,cycle_position,drift_epoch\n";
+
     for (size_t i = 0; i < data.size(); ++i)
     {
         const uint64_t keyId = extractRecordId(data[i].get(), recordSize);
-        out << i << "," << keyId << "\n";
+
+        const size_t cyclePosition = cycleLength > 0 ? (i % cycleLength) : 0;
+        const bool isOnPhase = cyclePosition < onPeriod;
+        const size_t phaseId = cycleLength > 0 ? (i / cycleLength) : 0;
+        const size_t positionInPhase = isOnPhase ? cyclePosition : (cyclePosition - onPeriod);
+        const size_t driftEpoch =
+            (args.driftInterval > 0) ? (i / args.driftInterval) : 0;
+
+        out << i << ","
+            << keyId << ","
+            << phaseId << ","
+            << (isOnPhase ? "on" : "off") << ","
+            << positionInPhase << ","
+            << cyclePosition << ","
+            << driftEpoch << "\n";
     }
 }
 
@@ -381,7 +453,7 @@ int main(const int argc, const char* const argv[])
     {
         const auto args = parseArguments(argc, argv);
         const auto data = generateData(args);
-        writeDataToCsv(args.outputPath, data, args.recordSize);
+        writeDataToCsv(args.outputPath, data, args.recordSize, args);
         std::cout << "Wrote " << data.size() << " rows to '" << args.outputPath.string() << "'." << std::endl;
         return 0;
     }
