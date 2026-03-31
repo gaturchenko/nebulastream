@@ -28,30 +28,100 @@ PredictionCacheLRU::PredictionCacheLRU(
     const nautilus::val<size_t>& inputSize)
     : PredictionCache(operatorHandler, numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize)
     , accessCounter(0)
+    , nextEmptyPos(0)
+    , lruHead(NOT_FOUND)
+    , lruTail(NOT_FOUND)
 {
 }
 
 nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
 {
-    nautilus::val<uint64_t> minAge = UINT64_MAX;
-    nautilus::val<uint64_t> minAgeIndex = 0;
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
+    if (nextEmptyPos < numberOfEntries)
     {
-        auto ageBit = getAgeBit(i);
-        if (*ageBit < minAge)
-        {
-            minAge = *ageBit;
-            minAgeIndex = i;
-        }
+        const auto replacementPos = nextEmptyPos;
+        nextEmptyPos = nextEmptyPos + 1;
+        appendToTail(replacementPos);
+        return replacementPos;
     }
-    return minAgeIndex;
+
+    const auto replacementPos = lruHead;
+    removeFromList(replacementPos);
+    appendToTail(replacementPos);
+    return replacementPos;
 }
 
 nautilus::val<uint64_t*> PredictionCacheLRU::getAgeBit(const nautilus::val<uint64_t>& pos)
 {
-    const auto PredictionCacheEntry = startOfEntries + pos * sizeOfEntry;
-    const auto ageBitRef = getMemberRef(PredictionCacheEntry, &PredictionCacheEntryLRU::ageBit);
+    const auto predictionCacheEntry = startOfEntries + pos * sizeOfEntry;
+    const auto ageBitRef = getMemberRef(predictionCacheEntry, &PredictionCacheEntryLRU::ageBit);
     return ageBitRef;
+}
+
+nautilus::val<uint64_t*> PredictionCacheLRU::getPreviousPos(const nautilus::val<uint64_t>& pos)
+{
+    const auto predictionCacheEntry = startOfEntries + pos * sizeOfEntry;
+    const auto previousPosRef = getMemberRef(predictionCacheEntry, &PredictionCacheEntryLRU::previousPos);
+    return previousPosRef;
+}
+
+nautilus::val<uint64_t*> PredictionCacheLRU::getNextPos(const nautilus::val<uint64_t>& pos)
+{
+    const auto predictionCacheEntry = startOfEntries + pos * sizeOfEntry;
+    const auto nextPosRef = getMemberRef(predictionCacheEntry, &PredictionCacheEntryLRU::nextPos);
+    return nextPosRef;
+}
+
+void PredictionCacheLRU::appendToTail(const nautilus::val<uint64_t>& pos)
+{
+    *getPreviousPos(pos) = lruTail;
+    *getNextPos(pos) = NOT_FOUND;
+
+    if (lruTail != NOT_FOUND)
+    {
+        *getNextPos(lruTail) = pos;
+    }
+    else
+    {
+        lruHead = pos;
+    }
+    lruTail = pos;
+}
+
+void PredictionCacheLRU::removeFromList(const nautilus::val<uint64_t>& pos)
+{
+    nautilus::val<uint64_t> previousPos{*getPreviousPos(pos)};
+    nautilus::val<uint64_t> nextPos{*getNextPos(pos)};
+
+    if (previousPos != NOT_FOUND)
+    {
+        *getNextPos(previousPos) = nextPos;
+    }
+    else
+    {
+        lruHead = nextPos;
+    }
+
+    if (nextPos != NOT_FOUND)
+    {
+        *getPreviousPos(nextPos) = previousPos;
+    }
+    else
+    {
+        lruTail = previousPos;
+    }
+
+    *getPreviousPos(pos) = NOT_FOUND;
+    *getNextPos(pos) = NOT_FOUND;
+}
+
+void PredictionCacheLRU::touch(const nautilus::val<uint64_t>& pos)
+{
+    if (pos == lruTail)
+    {
+        return;
+    }
+    removeFromList(pos);
+    appendToTail(pos);
 }
 
 void PredictionCacheLRU::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
@@ -68,6 +138,7 @@ nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::
         incrementNumberOfHits();
         accessCounter = accessCounter + 1;
         *getAgeBit(dataStructurePos) = accessCounter;
+        touch(dataStructurePos);
         return dataStructurePos;
     }
 
@@ -94,6 +165,7 @@ PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record,
         incrementNumberOfHits();
         accessCounter = accessCounter + 1;
         *getAgeBit(dataStructurePos) = accessCounter;
+        touch(dataStructurePos);
         return getDataStructure(dataStructurePos);
     }
 

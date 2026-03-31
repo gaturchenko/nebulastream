@@ -507,12 +507,12 @@ private:
 
 int main()
 {
-    // constexpr auto allPredictionCacheTypes = magic_enum::enum_values<NES::Configurations::PredictionCacheType>();
-    constexpr auto allPredictionCacheTypes = std::array{magic_enum::enum_value<NES::Configurations::PredictionCacheType, 4>()};
-    const auto allPredictionCacheSizes = {1'000}; // {100, 1'000, 10'000};
+    constexpr auto allPredictionCacheTypes = magic_enum::enum_values<NES::Configurations::PredictionCacheType>();
+    // constexpr auto allPredictionCacheTypes = std::array{magic_enum::enum_value<NES::Configurations::PredictionCacheType, 4>()};
+    const auto allPredictionCacheSizes = {100, 1'000, 10'000};
 
-    // const auto allDeterministicHitMissRatios = magic_enum::enum_values<HitMissRatio>();
-    const auto allDeterministicHitMissRatios = std::array{magic_enum::enum_value<HitMissRatio, 2>()};
+    const auto allDeterministicHitMissRatios = magic_enum::enum_values<HitMissRatio>();
+    // const auto allDeterministicHitMissRatios = std::array{magic_enum::enum_value<HitMissRatio, 2>()};
 
     const auto allDriftIntervals = {1'000};
     const auto allDriftFractions = {0.0, 0.1, 0.5, 1.0};

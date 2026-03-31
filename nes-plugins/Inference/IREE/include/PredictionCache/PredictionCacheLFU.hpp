@@ -79,6 +79,11 @@ public:
 
 private:
     nautilus::val<uint64_t*> getFrequency(const nautilus::val<uint64_t>& pos);
+    void recomputeMinFrequencyIndex();
+
+    nautilus::val<uint64_t> nextEmptyPos;
+    nautilus::val<uint64_t> minFrequencyIndex;
+    nautilus::val<bool> minFrequencyDirty;
 };
 
 }

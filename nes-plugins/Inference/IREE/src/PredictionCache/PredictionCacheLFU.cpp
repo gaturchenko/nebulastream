@@ -25,23 +25,53 @@ PredictionCacheLFU::PredictionCacheLFU(
     const nautilus::val<uint64_t*>& missesRef,
     const nautilus::val<size_t>& inputSize)
     : PredictionCache(operatorHandler, numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize)
+    , nextEmptyPos(0)
+    , minFrequencyIndex(0)
+    , minFrequencyDirty(true)
 {
 }
 
 nautilus::val<uint64_t> PredictionCacheLFU::getReplacementPos()
 {
+    if (nextEmptyPos < numberOfEntries)
+    {
+        const auto replacementPos = nextEmptyPos;
+        nextEmptyPos = nextEmptyPos + 1;
+
+        if (nextEmptyPos < numberOfEntries)
+        {
+            minFrequencyIndex = nextEmptyPos;
+        }
+        else
+        {
+            minFrequencyIndex = replacementPos;
+        }
+        minFrequencyDirty = false;
+        return replacementPos;
+    }
+
+    if (minFrequencyDirty)
+    {
+        recomputeMinFrequencyIndex();
+    }
+    return minFrequencyIndex;
+}
+
+void PredictionCacheLFU::recomputeMinFrequencyIndex()
+{
     nautilus::val<uint64_t> minFrequency = UINT64_MAX;
-    nautilus::val<uint64_t> minFrequencyIndex = 0;
+    nautilus::val<uint64_t> minFrequencyPos = 0;
     for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
     {
         nautilus::val<uint64_t> frequency{*getFrequency(i)};
         if (frequency < minFrequency)
         {
             minFrequency = frequency;
-            minFrequencyIndex = i;
+            minFrequencyPos = i;
         }
     }
-    return minFrequencyIndex;
+    minFrequencyIndex = minFrequencyPos;
+    minFrequencyDirty = false;
 }
 
 void PredictionCacheLFU::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCache::PredictionCacheUpdate& updateFunction)
@@ -59,29 +89,25 @@ nautilus::val<uint64_t> PredictionCacheLFU::updateKeys(const nautilus::val<std::
         auto frequency = getFrequency(dataStructurePos);
         const auto newFrequency = nautilus::val<uint64_t>(*frequency) + nautilus::val<uint64_t>(1);
         *frequency = newFrequency;
+        if (dataStructurePos == minFrequencyIndex)
+        {
+            minFrequencyDirty = true;
+        }
         return dataStructurePos;
     }
 
-    /// Second, if this is not the case, we need to find the item with the lowest frequency.
+    /// Second, if this is not the case, we replace the current LFU entry.
     incrementNumberOfMisses();
-    nautilus::val<uint64_t> minFrequency = UINT64_MAX;
-    nautilus::val<uint64_t> minFrequencyIndex = 0;
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
-    {
-        nautilus::val<uint64_t> frequency{*getFrequency(i)};
-        if (frequency < minFrequency)
-        {
-            minFrequency = frequency;
-            minFrequencyIndex = i;
-        }
-    }
+    const auto replacementPos = getReplacementPos();
 
-    /// Third, we have to replace the entry at the minFrequencyIndex
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + minFrequencyIndex * sizeOfEntry;
-    updateFunction(PredictionCacheEntryToReplace, minFrequency);
-    addLookupIndexEntry(record, minFrequencyIndex);
-    replacementIndex = minFrequencyIndex;
-    *getFrequency(minFrequencyIndex) = 1;
+    /// Third, we have to replace the entry at replacementPos.
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementPos * sizeOfEntry;
+    updateFunction(PredictionCacheEntryToReplace, replacementPos);
+    addLookupIndexEntry(record, replacementPos);
+    replacementIndex = replacementPos;
+    *getFrequency(replacementPos) = 1;
+    minFrequencyIndex = replacementPos;
+    minFrequencyDirty = false;
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
@@ -95,29 +121,25 @@ PredictionCacheLFU::getDataStructureRef(const nautilus::val<std::byte*>& record,
         auto frequency = getFrequency(dataStructurePos);
         const auto newFrequency = nautilus::val<uint64_t>(*frequency) + nautilus::val<uint64_t>(1);
         *frequency = newFrequency;
+        if (dataStructurePos == minFrequencyIndex)
+        {
+            minFrequencyDirty = true;
+        }
         return getDataStructure(dataStructurePos);
     }
 
-    /// Second, if this is not the case, we need to find the item with the lowest frequency.
+    /// Second, if this is not the case, we replace the current LFU entry.
     incrementNumberOfMisses();
-    nautilus::val<uint64_t> minFrequency = UINT64_MAX;
-    nautilus::val<uint64_t> minFrequencyIndex = 0;
-    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
-    {
-        nautilus::val<uint64_t> frequency{*getFrequency(i)};
-        if (frequency < minFrequency)
-        {
-            minFrequency = frequency;
-            minFrequencyIndex = i;
-        }
-    }
+    const auto replacementPos = getReplacementPos();
 
-    /// Third, we have to replace the entry at the minFrequencyIndex
-    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + minFrequencyIndex * sizeOfEntry;
-    const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, minFrequency);
-    addLookupIndexEntry(record, minFrequencyIndex);
-    replacementIndex = minFrequencyIndex;
-    *getFrequency(minFrequencyIndex) = 1;
+    /// Third, we have to replace the entry at replacementPos.
+    const nautilus::val<PredictionCacheEntry*> PredictionCacheEntryToReplace = startOfEntries + replacementPos * sizeOfEntry;
+    const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, replacementPos);
+    addLookupIndexEntry(record, replacementPos);
+    replacementIndex = replacementPos;
+    *getFrequency(replacementPos) = 1;
+    minFrequencyIndex = replacementPos;
+    minFrequencyDirty = false;
     return dataStructure;
 }
 

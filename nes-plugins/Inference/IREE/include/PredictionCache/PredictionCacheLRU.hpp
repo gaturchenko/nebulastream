@@ -20,6 +20,8 @@ namespace NES
 struct PredictionCacheEntryLRU : PredictionCacheEntry
 {
     uint64_t ageBit = 0;
+    uint64_t previousPos = UINT64_MAX;
+    uint64_t nextPos = UINT64_MAX;
 
     PredictionCacheEntryLRU() = default;
 
@@ -78,8 +80,16 @@ public:
 
 private:
     nautilus::val<uint64_t*> getAgeBit(const nautilus::val<uint64_t>& pos);
+    nautilus::val<uint64_t*> getPreviousPos(const nautilus::val<uint64_t>& pos);
+    nautilus::val<uint64_t*> getNextPos(const nautilus::val<uint64_t>& pos);
+    void appendToTail(const nautilus::val<uint64_t>& pos);
+    void removeFromList(const nautilus::val<uint64_t>& pos);
+    void touch(const nautilus::val<uint64_t>& pos);
 
     /// Monotonic access counter used as a timestamp for LRU tracking.
     nautilus::val<uint64_t> accessCounter;
+    nautilus::val<uint64_t> nextEmptyPos;
+    nautilus::val<uint64_t> lruHead;
+    nautilus::val<uint64_t> lruTail;
 };
 }
