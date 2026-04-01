@@ -50,6 +50,7 @@
 #include <system_error>
 #include <variant>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace
@@ -307,6 +308,22 @@ BenchmarkData createBenchmarkData(
         }
     }
     std::unreachable();
+}
+
+std::pair<uint64_t, uint64_t> getExpectedDeterministicHitsAndMisses(const size_t totalRecords, const HitMissRatio hitMissRatio)
+{
+    const uint32_t hitPercentage = getHitPercentage(hitMissRatio);
+    uint64_t expectedHits = (totalRecords * hitPercentage) / 100;
+    uint64_t expectedMisses = totalRecords - expectedHits;
+
+    if (expectedMisses == 0 && totalRecords > 0)
+    {
+        // Cold cache cannot produce a pure-hit workload.
+        expectedMisses = 1;
+        expectedHits = totalRecords - 1;
+    }
+
+    return {expectedHits, expectedMisses};
 }
 
 struct BenchmarkRunMeasurements
@@ -572,15 +589,31 @@ int main()
 
             for (const auto& hitMissRatio: allDeterministicHitMissRatios)
             {
+                constexpr size_t deterministicTotalRecords = 1'000'000;
                 BenchmarkParameters benchmarkParams{
                     PredictionCacheOptionsMicroBenchmark{predictionCacheType, predictionCacheSize},
                     DataGenerator::Deterministic,
                     BenchmarkParameters::DeterministicParameters{hitMissRatio}};
-                auto benchmarkData = createBenchmarkData(benchmarkParams, 1'000'000);
+                auto benchmarkData = createBenchmarkData(benchmarkParams, deterministicTotalRecords);
                 const auto results = runBenchmark(benchmarkParams, REPS, benchmarkData);
+                const auto [expectedHits, expectedMisses] =
+                    getExpectedDeterministicHitsAndMisses(deterministicTotalRecords, hitMissRatio);
 
                 for (const auto& result : results)
                 {
+                    if (result.cacheHits != expectedHits || result.cacheMisses != expectedMisses)
+                    {
+                        throw std::runtime_error(fmt::format(
+                            "Deterministic benchmark mismatch for cacheType={}, cacheSize={}, hitRatio={}%. Expected hits/misses={}/{}, got {}/{}.",
+                            magic_enum::enum_name(predictionCacheType),
+                            predictionCacheSize,
+                            getHitPercentage(hitMissRatio),
+                            expectedHits,
+                            expectedMisses,
+                            result.cacheHits,
+                            result.cacheMisses));
+                    }
+
                     csvFile << createNewCsvFileLine(benchmarkParams, result) << std::endl;
                     std::cout << createNewCsvFileLine(benchmarkParams, result) << std::endl;
                 }

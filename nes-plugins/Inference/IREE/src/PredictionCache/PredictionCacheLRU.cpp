@@ -27,7 +27,6 @@ PredictionCacheLRU::PredictionCacheLRU(
     const nautilus::val<uint64_t*>& missesRef,
     const nautilus::val<size_t>& inputSize)
     : PredictionCache(operatorHandler, numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize)
-    , accessCounter(0)
     , nextEmptyPos(0)
     , lruHead(NOT_FOUND)
     , lruTail(NOT_FOUND)
@@ -48,13 +47,6 @@ nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
     removeFromList(replacementPos);
     appendToTail(replacementPos);
     return replacementPos;
-}
-
-nautilus::val<uint64_t*> PredictionCacheLRU::getAgeBit(const nautilus::val<uint64_t>& pos)
-{
-    const auto predictionCacheEntry = startOfEntries + pos * sizeOfEntry;
-    const auto ageBitRef = getMemberRef(predictionCacheEntry, &PredictionCacheEntryLRU::ageBit);
-    return ageBitRef;
 }
 
 nautilus::val<uint64_t*> PredictionCacheLRU::getPreviousPos(const nautilus::val<uint64_t>& pos)
@@ -136,8 +128,6 @@ nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::
     if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
-        accessCounter = accessCounter + 1;
-        *getAgeBit(dataStructurePos) = accessCounter;
         touch(dataStructurePos);
         return dataStructurePos;
     }
@@ -151,8 +141,6 @@ nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::
     updateFunction(PredictionCacheEntryToReplace, replacementPos);
     addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
-    accessCounter = accessCounter + 1;
-    *getAgeBit(replacementPos) = accessCounter;
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
@@ -163,8 +151,6 @@ PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     if (const auto dataStructurePos = PredictionCache::searchInCache(record); dataStructurePos != PredictionCache::NOT_FOUND)
     {
         incrementNumberOfHits();
-        accessCounter = accessCounter + 1;
-        *getAgeBit(dataStructurePos) = accessCounter;
         touch(dataStructurePos);
         return getDataStructure(dataStructurePos);
     }
@@ -178,8 +164,6 @@ PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     const auto dataStructure = replacementFunction(PredictionCacheEntryToReplace, replacementPos);
     addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
-    accessCounter = accessCounter + 1;
-    *getAgeBit(replacementPos) = accessCounter;
     return dataStructure;
 }
 }

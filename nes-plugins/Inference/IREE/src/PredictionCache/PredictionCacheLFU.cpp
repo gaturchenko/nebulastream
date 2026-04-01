@@ -37,16 +37,6 @@ nautilus::val<uint64_t> PredictionCacheLFU::getReplacementPos()
     {
         const auto replacementPos = nextEmptyPos;
         nextEmptyPos = nextEmptyPos + 1;
-
-        if (nextEmptyPos < numberOfEntries)
-        {
-            minFrequencyIndex = nextEmptyPos;
-        }
-        else
-        {
-            minFrequencyIndex = replacementPos;
-        }
-        minFrequencyDirty = false;
         return replacementPos;
     }
 
@@ -106,8 +96,20 @@ nautilus::val<uint64_t> PredictionCacheLFU::updateKeys(const nautilus::val<std::
     addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
     *getFrequency(replacementPos) = 1;
-    minFrequencyIndex = replacementPos;
-    minFrequencyDirty = false;
+    if (nextEmptyPos < numberOfEntries)
+    {
+        return nautilus::val<uint64_t>(NOT_FOUND);
+    }
+
+    if (minFrequencyDirty)
+    {
+        recomputeMinFrequencyIndex();
+    }
+    else
+    {
+        minFrequencyIndex = replacementPos;
+        minFrequencyDirty = false;
+    }
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
@@ -138,8 +140,20 @@ PredictionCacheLFU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
     *getFrequency(replacementPos) = 1;
-    minFrequencyIndex = replacementPos;
-    minFrequencyDirty = false;
+    if (nextEmptyPos < numberOfEntries)
+    {
+        return dataStructure;
+    }
+
+    if (minFrequencyDirty)
+    {
+        recomputeMinFrequencyIndex();
+    }
+    else
+    {
+        minFrequencyIndex = replacementPos;
+        minFrequencyDirty = false;
+    }
     return dataStructure;
 }
 
