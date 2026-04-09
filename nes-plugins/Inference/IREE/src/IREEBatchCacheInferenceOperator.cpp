@@ -386,7 +386,7 @@ void IREEBatchCacheInferenceOperator::performInference(
     const PagedVectorRef& pagedVectorRef,
     TupleBufferRef& tupleBufferRef,
     ExecutionContext& executionCtx,
-    nautilus::val<HashMap*> hashMapPtr,
+    const nautilus::val<HashMap*>& hashMapPtr,
     ChainedHashMapRef& hashMap) const
 {
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
@@ -554,7 +554,7 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
     const PagedVectorRef& pagedVectorRef,
     TupleBufferRef& tupleBufferRef,
     ExecutionContext& executionCtx,
-    nautilus::val<HashMap*> hashMapPtr,
+    const nautilus::val<HashMap*>& hashMapPtr,
     ChainedHashMapRef& hashMap) const
 {
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();

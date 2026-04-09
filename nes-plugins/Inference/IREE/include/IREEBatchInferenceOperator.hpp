@@ -70,7 +70,7 @@ protected:
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
         ExecutionContext& executionCtx,
-        nautilus::val<HashMap*> hashMapPtr,
+        const nautilus::val<HashMap*>& hashMapPtr,
         ChainedHashMapRef& hashMap) const;
 
     template <class T>
@@ -78,7 +78,7 @@ protected:
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
         ExecutionContext& executionCtx,
-        nautilus::val<HashMap*> hashMapPtr,
+        const nautilus::val<HashMap*>& hashMapPtr,
         ChainedHashMapRef& hashMap) const;
 };
 
