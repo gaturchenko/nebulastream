@@ -191,6 +191,7 @@ size_t IREEAdapter::inferCombine(size_t outputSize, size_t outputFields, bool is
     switch (currentReductionLevel)
     {
         default:
+            noReductions += 1;
             ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
             break;
         case LOW:

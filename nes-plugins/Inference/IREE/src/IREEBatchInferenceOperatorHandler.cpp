@@ -64,6 +64,7 @@ void IREEBatchInferenceOperatorHandler::stop(QueryTerminationType, PipelineExecu
     if (model.getInputs()[0].isType(DataType::Type::VARSIZED))
     {
         uint64_t misses{0};
+        uint64_t noReductions{0};
         uint64_t lowReductions{0};
         uint64_t mediumReductions{0};
         uint64_t highReductions{0};
@@ -72,14 +73,15 @@ void IREEBatchInferenceOperatorHandler::stop(QueryTerminationType, PipelineExecu
         for (const auto& adapter : threadLocalAdapters)
         {
             misses += adapter->misses;
+            noReductions += adapter->noReductions;
             lowReductions += adapter->lowReductions;
             mediumReductions += adapter->mediumReductions;
             highReductions += adapter->highReductions;
             fullReductions += adapter->fullReductions;
         }
 
-        NES_INFO("{{\"pipeline_id\": {}, \"misses\": {}, \"low_reductions\": {}, \"medium_reductions\": {}, \"high_reductions\": {}, \"full_reductions\": {}}}"
-            , pipelineExecutionContext.getPipelineId(), misses, lowReductions, mediumReductions, highReductions, fullReductions)
+        NES_INFO("{{\"pipeline_id\": {}, \"misses\": {}, \"no_reductions\": {}, \"low_reductions\": {}, \"medium_reductions\": {}, \"high_reductions\": {}, \"full_reductions\": {}}}"
+            , pipelineExecutionContext.getPipelineId(), misses, noReductions, lowReductions, mediumReductions, highReductions, fullReductions)
     }
     threadLocalAdapters.clear();
 }

@@ -146,6 +146,7 @@ public:
 
     /// caching statistics
     uint64_t misses;
+    uint64_t noReductions;
     uint64_t lowReductions;
     uint64_t mediumReductions;
     uint64_t highReductions;
