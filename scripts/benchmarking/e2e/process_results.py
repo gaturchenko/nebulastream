@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -18,6 +19,7 @@ except ImportError:  # pragma: no cover - runtime environment dependent
 DEFAULT_INFERENCE_PARAMS = {
     "use_batch_deduplication": "false",
 }
+SOURCE_NAME_PATTERN = re.compile(r"LogicalSource\(name:\s*([^,\s)]+)")
 
 
 def repo_root() -> Path:
@@ -65,6 +67,22 @@ def parse_event_throughput(event: Dict[str, object]) -> Optional[float]:
     if dur_val <= 0:
         return None
     return tuples_val * 1_000_000.0 / dur_val
+
+
+def parse_source_name(events: List[object]) -> Optional[str]:
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        args = event.get("args")
+        if not isinstance(args, dict):
+            continue
+        query = args.get("query")
+        if not isinstance(query, str):
+            continue
+        match = SOURCE_NAME_PATTERN.search(query)
+        if match:
+            return match.group(1)
+    return None
 
 
 def infer_context(results_dir: Path, json_path: Path) -> Optional[Dict[str, str]]:
@@ -123,6 +141,7 @@ def iter_pipeline_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
         events = payload.get("traceEvents")
         if not isinstance(events, list):
             continue
+        source_name = parse_source_name(events)
 
         for event in events:
             if not isinstance(event, dict):
@@ -144,6 +163,7 @@ def iter_pipeline_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
                 "inference_config_param_value": inference_parts["param_value"],
                 "pipeline_id": pipeline_id,
                 "repetition": context["repetition"],
+                "source_name": source_name,
                 "throughput": throughput,
             }
 
@@ -220,6 +240,7 @@ def compute_throughput_stats(results_dir: Path) -> "pd.DataFrame":
         return pd.DataFrame(
             columns=[
                 "query_name",
+                "source_name",
                 "inference_config_param_name",
                 "inference_config_param_value",
                 "pipeline_id",
@@ -233,7 +254,13 @@ def compute_throughput_stats(results_dir: Path) -> "pd.DataFrame":
         df = df.drop(columns=["repetition"])
     return (
         df.groupby(
-            ["query_name", "inference_config_param_name", "inference_config_param_value", "pipeline_id"],
+            [
+                "query_name",
+                "source_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+                "pipeline_id",
+            ],
             dropna=False,
         )
         .agg(
@@ -250,6 +277,7 @@ def compute_throughput_rows(results_dir: Path) -> "pd.DataFrame":
         return pd.DataFrame(
             columns=[
                 "query_name",
+                "source_name",
                 "inference_config_param_name",
                 "inference_config_param_value",
                 "pipeline_id",
