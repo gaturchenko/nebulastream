@@ -36,35 +36,17 @@ ConcatPhysicalFunction::ConcatPhysicalFunction(PhysicalFunction leftPhysicalFunc
 
 VarVal ConcatPhysicalFunction::execute(const Record& record, ArenaRef& arena) const
 {
-    const nautilus::val<uint32_t> floatSize{4};
-
     const auto leftValue = leftPhysicalFunction.execute(record, arena).cast<VariableSizedData>();
     const auto leftSize = leftValue.getContentSize();
-    const auto leftCount = leftSize / floatSize;
 
     const auto rightValue = rightPhysicalFunction.execute(record, arena).cast<VariableSizedData>();
     const auto rightSize = rightValue.getContentSize();
-    const auto rightCount = rightSize / floatSize;
 
     const auto newSize = leftSize + rightSize;
     auto newVarSizeData = arena.allocateVariableSizedData(newSize);
 
-    auto rightFloatsToCopyPerOneLeft = rightCount / leftCount;
-    nautilus::val<uint32_t> outIdx{0};
-    for (nautilus::val<uint32_t> i = 0; i < leftCount; ++i)
-    {
-        nautilus::memcpy(
-            newVarSizeData.getContent() + outIdx * floatSize,
-            leftValue.getContent() + i * floatSize,
-            floatSize);
-        ++outIdx;
-
-        nautilus::memcpy(
-            newVarSizeData.getContent() + outIdx * floatSize,
-            rightValue.getContent() + i * rightFloatsToCopyPerOneLeft * floatSize,
-            rightFloatsToCopyPerOneLeft * floatSize);
-        outIdx += rightFloatsToCopyPerOneLeft;
-    }
+    nautilus::memcpy(newVarSizeData.getContent(), leftValue.getContent(), leftSize);
+    nautilus::memcpy(newVarSizeData.getContent() + leftSize, rightValue.getContent(), rightSize);
 
     VarVal(nautilus::val<uint32_t>(newSize)).writeToMemory(newVarSizeData.getReference());
     return newVarSizeData;
