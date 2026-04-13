@@ -11,16 +11,14 @@
 # limitations under the License.
 
 
-add_plugin("ImageManipToBase64" LogicalFunction nes-logical-operators NodeFunctionImageManip.cpp)
-add_plugin("ImageManipFromBase64" LogicalFunction nes-logical-operators NodeFunctionImageManip.cpp)
-add_plugin("ImageManipFromBase64ToTensor" LogicalFunction nes-logical-operators NodeFunctionImageManip.cpp)
+add_plugin(ToBase64 LogicalFunction nes-logical-operators ToBase64LogicalFunction.cpp)
+add_plugin_as_library(ToBase64 PhysicalFunction nes-physical-operators to-base-64 ToBase64PhysicalFunction.cpp)
 
-add_plugin_as_library("ImageManipToBase64" PhysicalFunction nes-physical-operators image-manip-functions ExecutableFunctionImageManip.cpp)
-add_plugin("ImageManipFromBase64" PhysicalFunction image-manip-functions ExecutableFunctionImageManip.cpp)
-add_plugin("ImageManipFromBase64ToTensor" PhysicalFunction image-manip-functions ExecutableFunctionImageManip.cpp)
+add_plugin(FromBase64 LogicalFunction nes-logical-operators FromBase64LogicalFunction.cpp)
+add_plugin_as_library(FromBase64 PhysicalFunction nes-physical-operators from-base-64 FromBase64PhysicalFunction.cpp)
 
 find_package(OpenSSL CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED)
 
-target_link_libraries(image-manip-functions PRIVATE OpenSSL::SSL opencv_imgproc opencv_objdetect opencv_imgcodecs)
-target_include_directories(image-manip-functions PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(from-base-64 PRIVATE OpenSSL::SSL)
+target_link_libraries(to-base-64 PRIVATE OpenSSL::SSL)
