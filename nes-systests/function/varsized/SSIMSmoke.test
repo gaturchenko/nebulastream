@@ -1,0 +1,16 @@
+# name: SSIMSmoke
+# description: Smoke test for SSIM function registration and stateful execution
+# groups: [Function, Varsized]
+
+CREATE LOGICAL SOURCE imageStream(img VARSIZED);
+CREATE PHYSICAL SOURCE FOR imageStream TYPE File;
+ATTACH INLINE
+abc
+def
+
+CREATE SINK imageSink(out VARSIZED) TYPE File;
+
+SELECT SSIM(img, FLOAT32(0.95)) AS out FROM imageStream INTO imageSink;
+----
+abc
+def

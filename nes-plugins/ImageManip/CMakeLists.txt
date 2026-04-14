@@ -11,14 +11,26 @@
 # limitations under the License.
 
 
-add_plugin(ToBase64 LogicalFunction nes-logical-operators ToBase64LogicalFunction.cpp)
-add_plugin_as_library(ToBase64 PhysicalFunction nes-physical-operators to-base-64 ToBase64PhysicalFunction.cpp)
+add_plugin(ToBase64 LogicalFunction nes-logical-operators src/ToBase64LogicalFunction.cpp)
+add_plugin_as_library(ToBase64 PhysicalFunction nes-physical-operators to-base-64 src/ToBase64PhysicalFunction.cpp)
 
-add_plugin(FromBase64 LogicalFunction nes-logical-operators FromBase64LogicalFunction.cpp)
-add_plugin_as_library(FromBase64 PhysicalFunction nes-physical-operators from-base-64 FromBase64PhysicalFunction.cpp)
+add_plugin(FromBase64 LogicalFunction nes-logical-operators src/FromBase64LogicalFunction.cpp)
+add_plugin_as_library(FromBase64 PhysicalFunction nes-physical-operators from-base-64 src/FromBase64PhysicalFunction.cpp)
+
+add_plugin(SSIM LogicalFunction nes-logical-operators src/SSIMLogicalFunction.cpp)
+add_plugin_as_library(SSIM PhysicalFunction nes-physical-operators ssim-function src/SSIMPhysicalFunction.cpp)
+
+add_plugin(ResizeImage LogicalFunction nes-logical-operators src/ResizeImageLogicalFunction.cpp)
+add_plugin_as_library(ResizeImage PhysicalFunction nes-physical-operators resize-image src/ResizeImagePhysicalFunction.cpp)
+
+add_plugin(ToggleGrayRgb LogicalFunction nes-logical-operators src/ToggleGrayRgbLogicalFunction.cpp)
+add_plugin_as_library(ToggleGrayRgb PhysicalFunction nes-physical-operators toggle-gray-rgb src/ToggleGrayRgbPhysicalFunction.cpp)
 
 find_package(OpenSSL CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED)
 
 target_link_libraries(from-base-64 PRIVATE OpenSSL::SSL)
 target_link_libraries(to-base-64 PRIVATE OpenSSL::SSL)
+target_link_libraries(ssim-function PRIVATE ${OpenCV_LIBS})
+target_link_libraries(resize-image PRIVATE ${OpenCV_LIBS})
+target_link_libraries(toggle-gray-rgb PRIVATE ${OpenCV_LIBS})

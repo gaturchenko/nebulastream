@@ -1,0 +1,23 @@
+GlobalConfiguration enable_event_trace: [true]
+
+CREATE LOGICAL SOURCE osuRgbSource(frameBase64 VARSIZED);
+CREATE PHYSICAL SOURCE FOR osuRgbSource TYPE File;
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+CREATE SINK osuRgbVarsizedDiscard(detectedObjects VARSIZED) TYPE Discard;
+
+CREATE MODEL yoloV4Tiny(
+    PATH "TESTDATA/model/osu/pretrained/yolov4/yolov4_tiny_26x26.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (detectedObjects VARSIZED)
+);
+
+SELECT detectedObjects FROM (
+    SELECT INFER_MODEL(yoloV4Tiny, (framePreprocessed))
+    FROM (
+        SELECT ResizeImage(FromBase64(frameBase64), UINT32(416), UINT32(416)) AS framePreprocessed
+        FROM osuRgbSource
+    )
+)
+INTO osuRgbVarsizedDiscard;
+----
