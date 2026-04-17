@@ -126,6 +126,26 @@ nautilus::val<uint32_t> min(const nautilus::val<uint32_t>& lhs, const nautilus::
     return lhs < rhs ? lhs : rhs;
 }
 
+int* allocateOutputRowIndicesProxy(uint64_t numberOfTuples)
+{
+    return new int[numberOfTuples];
+}
+
+void freeOutputRowIndicesProxy(int* outputRowIndices)
+{
+    delete[] outputRowIndices;
+}
+
+void setOutputRowIndexProxy(int* outputRowIndices, uint64_t tupleIndex, int outputRowIndex)
+{
+    outputRowIndices[tupleIndex] = outputRowIndex;
+}
+
+int getOutputRowIndexProxy(int* outputRowIndices, uint64_t tupleIndex)
+{
+    return outputRowIndices[tupleIndex];
+}
+
 void garbageCollectBatchesProxy(OperatorHandler* handler, WorkerThreadId thread)
 {
     auto* inferModelHandler = getHandler(handler);
@@ -387,7 +407,8 @@ void IREEBatchCacheInferenceOperator::performInference(
     TupleBufferRef& tupleBufferRef,
     ExecutionContext& executionCtx,
     const nautilus::val<HashMap*>& hashMapPtr,
-    ChainedHashMapRef& hashMap) const
+    ChainedHashMapRef& hashMap,
+    const nautilus::val<int*>& deduplicatedOutputRowIndices) const
 {
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     auto* predictionCache = dynamic_cast<PredictionCache*>(executionCtx.getLocalState(id));
@@ -395,6 +416,7 @@ void IREEBatchCacheInferenceOperator::performInference(
 
     /// iterate over records in the paged vector, i.e., over tuples in a single batch
     nautilus::val<int> rowIndex(0);
+    nautilus::val<uint64_t> tupleIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
@@ -419,19 +441,27 @@ void IREEBatchCacheInferenceOperator::performInference(
                 }, executionCtx.pipelineMemoryProvider.bufferProvider);
 
             const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
-            auto entryRowIndex = entryRef.getValue().read("rowInputIndex").cast<nautilus::val<int>>();
+            Record valueRecord = entryRef.getValue();
+            auto entryRowIndex = valueRecord.read("rowInputIndex").cast<nautilus::val<int>>();
+            nautilus::val<int> deduplicatedOutputRowIndex = valueRecord.read("rowOutputIndex").cast<nautilus::val<int>>();
 
             /// the entry has already been inserted, so the record is a duplicate and we can continue iterating over the batch
             if (entryRowIndex != rowIndex)
             {
+                nautilus::invoke(
+                    IREEBatchCacheInference::setOutputRowIndexProxy,
+                    deduplicatedOutputRowIndices,
+                    tupleIndex,
+                    deduplicatedOutputRowIndex);
+                ++tupleIndex;
                 continue;
             }
 
             if (!this->isVarSizedInput)
             {
                 /// 1. fill a byte array for a record to probe into the cache
-                Record valueRecord = entryRef.getValue();
-                valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
+                deduplicatedOutputRowIndex = outputRowIndex;
+                valueRecord.write("rowOutputIndex", VarVal(deduplicatedOutputRowIndex));
                 entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
 
                 cacheProbeTuple = createCacheProbeTuple<T>(cacheProbeTuple, operatorHandler, executionCtx, record);
@@ -451,8 +481,8 @@ void IREEBatchCacheInferenceOperator::performInference(
             else
             {
                 /// 1. fill a byte array for a record to probe into the cache
-                Record valueRecord = entryRef.getValue();
-                valueRecord.write("rowOutputIndex", VarVal(rowIndex));
+                deduplicatedOutputRowIndex = rowIndex;
+                valueRecord.write("rowOutputIndex", VarVal(deduplicatedOutputRowIndex));
                 entryRef.copyValuesToEntry(valueRecord, executionCtx.pipelineMemoryProvider.bufferProvider);
 
                 const VarVal inputValue = inputs.at(0).execute(record, executionCtx.pipelineMemoryProvider.arena);
@@ -474,6 +504,12 @@ void IREEBatchCacheInferenceOperator::performInference(
 
                 rowIndex += inputs.size();
             }
+
+            nautilus::invoke(
+                IREEBatchCacheInference::setOutputRowIndexProxy,
+                deduplicatedOutputRowIndices,
+                tupleIndex,
+                deduplicatedOutputRowIndex);
         }
         else
         {
@@ -517,6 +553,7 @@ void IREEBatchCacheInferenceOperator::performInference(
                 rowIndex += inputs.size();
             }
         }
+        ++tupleIndex;
     }
 
     /// 4. call the model on the tuples which had a cache miss during probing
@@ -554,26 +591,22 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
     const PagedVectorRef& pagedVectorRef,
     TupleBufferRef& tupleBufferRef,
     ExecutionContext& executionCtx,
-    const nautilus::val<HashMap*>& hashMapPtr,
-    ChainedHashMapRef& hashMap) const
+    const nautilus::val<int*>& deduplicatedOutputRowIndices) const
 {
     const auto fields = tupleBufferRef.getMemoryLayout()->getSchema().getFieldNames();
     auto* predictionCache = dynamic_cast<PredictionCache*>(executionCtx.getLocalState(id));
     const auto operatorHandler = predictionCache->getOperatorHandler();
 
     nautilus::val<int> rowIndex(0);
+    nautilus::val<uint64_t> tupleIndex(0);
     for (auto it = pagedVectorRef.begin(fields); it != pagedVectorRef.end(fields); ++it)
     {
         auto record = createRecord(*it, fields);
 
         if (useBatchDeduplication)
         {
-            const auto hashMapEntry = hashMap.findOrCreateEntry(
-                record,
-                *hashMapOptions.hashFunction,
-                [&](const nautilus::val<AbstractHashMapEntry*>&){},
-                executionCtx.pipelineMemoryProvider.bufferProvider);
-            const ChainedHashMapRef::ChainedEntryRef entryRef(hashMapEntry, hashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+            const auto deduplicatedOutputRowIndex = nautilus::invoke(
+                IREEBatchCacheInference::getOutputRowIndexProxy, deduplicatedOutputRowIndices, tupleIndex);
 
             if (!this->isVarSizedOutput)
             {
@@ -581,7 +614,7 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
                 {
                     VarVal result = VarVal(nautilus::invoke(
                         IREEBatchCacheInference::getValueFromModelProxy<T>,
-                        entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>() + i,
+                        deduplicatedOutputRowIndex + i,
                         operatorHandler,
                         executionCtx.workerThreadId));
 
@@ -595,7 +628,7 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
 
                 nautilus::invoke(
                     IREEBatchCacheInference::copyVarSizedFromModelProxy,
-                    entryRef.getValue().read("rowOutputIndex").cast<nautilus::val<int>>(),
+                    deduplicatedOutputRowIndex,
                     output.getContent(),
                     output.getContentSize(),
                     operatorHandler,
@@ -637,6 +670,7 @@ void IREEBatchCacheInferenceOperator::writeOutputRecord(
                 rowIndex += outputFieldNames.size();
             }
         }
+        ++tupleIndex;
         executeChild(executionCtx, record);
     }
 }
@@ -724,18 +758,45 @@ void IREEBatchCacheInferenceOperator::open(ExecutionContext& executionCtx, Recor
         hashMapOptions.entriesPerPage,
         hashMapOptions.entrySize};
 
+    auto deduplicatedOutputRowIndices = nautilus::invoke(+[](){ return static_cast<int*>(nullptr); });
+    if (useBatchDeduplication)
+    {
+        deduplicatedOutputRowIndices = nautilus::invoke(
+            IREEBatchCacheInference::allocateOutputRowIndicesProxy, batchPagedVectorRef.getNumberOfTuples());
+    }
+
     switch (inputDtype.type)
     {
-        case DataType::Type::UINT8: performInference<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::UINT16: performInference<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::UINT32: performInference<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::UINT64: performInference<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT8: performInference<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT16: performInference<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT32: performInference<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT64: performInference<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::FLOAT32: performInference<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::FLOAT64: performInference<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT8:
+            performInference<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::UINT16:
+            performInference<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::UINT32:
+            performInference<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::UINT64:
+            performInference<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT8:
+            performInference<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT16:
+            performInference<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT32:
+            performInference<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT64:
+            performInference<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::FLOAT32:
+            performInference<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::FLOAT64:
+            performInference<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap, deduplicatedOutputRowIndices);
+            break;
 
         case DataType::Type::BOOLEAN:
         case DataType::Type::CHAR:
@@ -747,16 +808,36 @@ void IREEBatchCacheInferenceOperator::open(ExecutionContext& executionCtx, Recor
 
     switch (outputDtype.type)
     {
-        case DataType::Type::UINT8: writeOutputRecord<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::UINT16: writeOutputRecord<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::UINT32: writeOutputRecord<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::UINT64: writeOutputRecord<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT8: writeOutputRecord<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT16: writeOutputRecord<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT32: writeOutputRecord<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::INT64: writeOutputRecord<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::FLOAT32: writeOutputRecord<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
-        case DataType::Type::FLOAT64: writeOutputRecord<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx, hashMapPtr, hashMap); break;
+        case DataType::Type::UINT8:
+            writeOutputRecord<uint8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::UINT16:
+            writeOutputRecord<uint16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::UINT32:
+            writeOutputRecord<uint32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::UINT64:
+            writeOutputRecord<uint64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT8:
+            writeOutputRecord<int8_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT16:
+            writeOutputRecord<int16_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT32:
+            writeOutputRecord<int32_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::INT64:
+            writeOutputRecord<int64_t>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::FLOAT32:
+            writeOutputRecord<float>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
+        case DataType::Type::FLOAT64:
+            writeOutputRecord<double>(batchPagedVectorRef, *tupleBufferRef, executionCtx, deduplicatedOutputRowIndices);
+            break;
 
         case DataType::Type::BOOLEAN:
         case DataType::Type::CHAR:
@@ -764,6 +845,11 @@ void IREEBatchCacheInferenceOperator::open(ExecutionContext& executionCtx, Recor
         case DataType::Type::VARSIZED:
         case DataType::Type::VARSIZED_POINTER_REP:
             throw UnknownDataType("Physical Type: type {} is currently not implemented", magic_enum::enum_name(outputDtype.type));
+    }
+
+    if (useBatchDeduplication)
+    {
+        nautilus::invoke(IREEBatchCacheInference::freeOutputRowIndicesProxy, deduplicatedOutputRowIndices);
     }
 
     nautilus::invoke(

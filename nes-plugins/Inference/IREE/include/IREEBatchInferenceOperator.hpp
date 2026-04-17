@@ -71,15 +71,15 @@ protected:
         TupleBufferRef& tupleBufferRef,
         ExecutionContext& executionCtx,
         const nautilus::val<HashMap*>& hashMapPtr,
-        ChainedHashMapRef& hashMap) const;
+        ChainedHashMapRef& hashMap,
+        const nautilus::val<int*>& deduplicatedOutputRowIndices) const;
 
     template <class T>
     void writeOutputRecord(
         const PagedVectorRef& pagedVectorRef,
         TupleBufferRef& tupleBufferRef,
         ExecutionContext& executionCtx,
-        const nautilus::val<HashMap*>& hashMapPtr,
-        ChainedHashMapRef& hashMap) const;
+        const nautilus::val<int*>& deduplicatedOutputRowIndices) const;
 };
 
 }
