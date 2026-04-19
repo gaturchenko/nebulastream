@@ -148,7 +148,7 @@ nautilus::val<std::byte*> IREECacheInferenceOperator::performInference(
         {
             auto handler = dynamic_cast<IREEInferenceOperatorHandler*>(inferModelHandler);
             auto adapter = handler->getIREEAdapter(thread);
-            return adapter->inputData.get();
+            return adapter->getCurrentInputData();
         }, operatorHandler, executionCtx.workerThreadId);
 
     return predictionCache->getDataStructureRef(
@@ -166,7 +166,7 @@ nautilus::val<std::byte*> IREECacheInferenceOperator::performInference(
 
                     predictionCacheEntry->recordSize = adapter->inputSize;
                     predictionCacheEntry->record = new std::byte[adapter->inputSize];
-                    std::memcpy(predictionCacheEntry->record, adapter->inputData.get(), adapter->inputSize);
+                    std::memcpy(predictionCacheEntry->record, adapter->getCurrentInputData(), adapter->inputSize);
 
                     predictionCacheEntry->dataSize = adapter->outputSize;
                     predictionCacheEntry->dataStructure = new std::byte[adapter->outputSize];

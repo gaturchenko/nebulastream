@@ -30,7 +30,8 @@ public:
     , session(nullptr, &iree_runtime_session_release)
     , function{} {};
     void setup(iree_const_byte_span_t compiledModel);
-    iree_hal_buffer_view_t* execute(std::string functionName, void* inputData, size_t inputSize, uint8_t scaleFactor);
+    iree_hal_buffer_view_t*
+    execute(std::string functionName, const void* inputData, size_t inputSize, uint8_t scaleFactor, bool zeroCopyInput = false);
 
     void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData);
     void copyOutput(iree_hal_buffer_view_t* outputView, void* outputData, size_t dtypeSize, size_t outputSize, std::set<int> missIndices, size_t outputFields, bool isVarSizedOutput);

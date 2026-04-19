@@ -53,11 +53,17 @@ void IREEAdapter::initializeModel(Nebuli::Inference::Model& model, uint64_t batc
     this->outputData = std::make_unique<std::byte[]>(outputSize);
     this->outputSize = outputSize;
     runtimeWrapper.setOutputDtype(dtypeMap.at(model.getOutputDtype()));
+
+    hasZeroCopyInput = false;
+    zeroCopyInputData = nullptr;
 }
 
 template <class T>
 uint64_t IREEAdapter::addModelInputPartial(T value)
 {
+    hasZeroCopyInput = false;
+    zeroCopyInputData = nullptr;
+
     const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
     const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
     const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
@@ -105,6 +111,9 @@ uint64_t IREEAdapter::addModelInputPartial(T value)
 
 void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> content, size_t tupleSize)
 {
+    hasZeroCopyInput = false;
+    zeroCopyInputData = nullptr;
+
     const size_t thresholdHigh = std::ceil(1 / float(HIGH) * inputSize);
     const size_t thresholdMedium = std::ceil(1 / float(MEDIUM) * inputSize);
     const size_t thresholdLow = std::ceil(1 / float(LOW) * inputSize);
@@ -152,7 +161,9 @@ void IREEAdapter::addModelInputBatchPartial(int index, std::span<std::byte> cont
 template <class T>
 void IREEAdapter::infer()
 {
-    auto ireeOutputBV = runtimeWrapper.execute(functionName, inputData.get(), inputSize, currentReductionLevel);
+    const auto canExecuteZeroCopy = hasZeroCopyInput && zeroCopyInputData != nullptr && currentReductionLevel == NONE && bytesProcessed == 0;
+    const auto* modelInputData = canExecuteZeroCopy ? zeroCopyInputData : inputData.get();
+    auto ireeOutputBV = runtimeWrapper.execute(functionName, modelInputData, inputSize, currentReductionLevel, canExecuteZeroCopy);
     runtimeWrapper.copyOutput(ireeOutputBV, reinterpret_cast<T*>(outputData.get()));
 }
 
@@ -220,18 +231,41 @@ size_t IREEAdapter::inferCombine(size_t outputSize, size_t outputFields, bool is
 template <class T>
 void IREEAdapter::addModelInput(size_t index, T value)
 {
+    hasZeroCopyInput = false;
+    zeroCopyInputData = nullptr;
+
     PRECONDITION(index < inputSize / sizeof(T), "Index is too large");
     std::bit_cast<T*>(inputData.get())[index] = value;
 }
 
 void IREEAdapter::addModelInput(std::span<std::byte> content)
 {
+    if (content.size() >= inputSize)
+    {
+        hasZeroCopyInput = true;
+        zeroCopyInputData = content.data();
+        return;
+    }
+
+    hasZeroCopyInput = false;
+    zeroCopyInputData = nullptr;
     std::ranges::copy_n(content.data(), std::min(content.size(), inputSize), inputData.get());
 }
 
 void IREEAdapter::addModelInputBatch(int index, std::span<std::byte> content, size_t tupleSize)
 {
+    hasZeroCopyInput = false;
+    zeroCopyInputData = nullptr;
     std::ranges::copy_n(content.data(), std::min(content.size(), tupleSize), inputData.get() + index * tupleSize);
+}
+
+std::byte* IREEAdapter::getCurrentInputData()
+{
+    if (hasZeroCopyInput && zeroCopyInputData != nullptr)
+    {
+        return const_cast<std::byte*>(zeroCopyInputData);
+    }
+    return inputData.get();
 }
 
 template <class T>

@@ -15,6 +15,7 @@
 #pragma once
 
 #include <ostream>
+#include <span>
 #include <DataTypes/DataTypeProvider.hpp>
 #include <ErrorHandling.hpp>
 #include <Model.hpp>
@@ -107,6 +108,7 @@ public:
     void addModelInput(size_t index, T value);
     void addModelInput(std::span<std::byte> content);
     void addModelInputBatch(int index, std::span<std::byte> content, size_t tupleSize);
+    std::byte* getCurrentInputData();
 
     template <class T>
     uint64_t addModelInputPartial(T value);
@@ -153,6 +155,9 @@ public:
     uint64_t fullReductions;
 
 private:
+    const std::byte* zeroCopyInputData = nullptr;
+    bool hasZeroCopyInput = false;
+
     std::string functionName;
     IREERuntimeWrapper runtimeWrapper;
 

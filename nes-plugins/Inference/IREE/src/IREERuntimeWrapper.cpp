@@ -20,6 +20,53 @@
 
 namespace NES
 {
+namespace
+{
+iree_status_t importInputBufferView(
+    iree_runtime_session_t* session,
+    const iree_host_size_t rank,
+    const iree_hal_dim_t* shape,
+    const iree_hal_element_type_t elementType,
+    const void* inputData,
+    const size_t inputSize,
+    iree_hal_buffer_view_t** view)
+{
+    PRECONDITION(session != nullptr, "IREE session should not be null");
+    PRECONDITION(view != nullptr, "Output view should not be null");
+
+    const iree_hal_buffer_params_t params{
+        .usage = IREE_HAL_BUFFER_USAGE_DEFAULT,
+        .access = IREE_HAL_MEMORY_ACCESS_READ,
+        .type = IREE_HAL_MEMORY_TYPE_HOST_LOCAL | IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE,
+        .queue_affinity = 0,
+        .min_alignment = 0};
+
+    iree_hal_external_buffer_t externalBuffer{};
+    externalBuffer.type = IREE_HAL_EXTERNAL_BUFFER_TYPE_HOST_ALLOCATION;
+    externalBuffer.flags = IREE_HAL_EXTERNAL_BUFFER_FLAG_NONE;
+    externalBuffer.size = inputSize;
+    externalBuffer.handle.host_allocation.ptr = const_cast<void*>(inputData);
+
+    iree_hal_buffer_t* importedBuffer = nullptr;
+    IREE_RETURN_IF_ERROR(iree_hal_allocator_import_buffer(
+        iree_runtime_session_device_allocator(session),
+        params,
+        &externalBuffer,
+        iree_hal_buffer_release_callback_null(),
+        &importedBuffer));
+
+    iree_status_t status = iree_hal_buffer_view_create(
+        importedBuffer,
+        rank,
+        shape,
+        elementType,
+        IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR,
+        iree_runtime_session_host_allocator(session),
+        view);
+    iree_hal_buffer_release(importedBuffer);
+    return status;
+}
+}
 
 void IREERuntimeWrapper::setup(iree_const_byte_span_t compiledModel)
 {
@@ -57,7 +104,8 @@ void IREERuntimeWrapper::setup(iree_const_byte_span_t compiledModel)
     this->session = std::move(ireeSession);
 }
 
-iree_hal_buffer_view_t* IREERuntimeWrapper::execute(std::string functionName, void* inputData, size_t inputSize, uint8_t scaleFactor)
+iree_hal_buffer_view_t* IREERuntimeWrapper::execute(
+    std::string functionName, const void* inputData, size_t inputSize, uint8_t scaleFactor, bool zeroCopyInput)
 {
     iree_runtime_call_t call;
     // Cache the function after the first call such that initializing subsequent calls is cheaper
@@ -81,28 +129,41 @@ iree_hal_buffer_view_t* IREERuntimeWrapper::execute(std::string functionName, vo
     auto inputShape = this->inputShape;
     inputShape.at(0) = std::ceil(inputShape.at(0) / float(scaleFactor));
 
-    status = iree_hal_buffer_view_allocate_buffer_copy(
-        iree_runtime_session_device(session.get()),
-        iree_runtime_session_device_allocator(session.get()),
-        // Shape rank and dimensions:
-        this->nDim,
-        inputShape.data(),
-        // Element type:
-        this->inputDtype,
-        // Encoding type:
-        IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR,
-        iree_hal_buffer_params_t{// Intended usage of the buffer (transfers, dispatches, etc):
-                                 .usage = IREE_HAL_BUFFER_USAGE_DEFAULT,
-                                 // Access to allow to this memory:
-                                 .access = IREE_HAL_MEMORY_ACCESS_ALL,
-                                 // Where to allocate (host or device):
-                                 .type = IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL,
-                                 .queue_affinity = 0,
-                                 .min_alignment = 0},
-        // The actual heap buffer to wrap or clone and its allocator:
-        iree_make_const_byte_span(inputData, inputSize),
-        // Buffer view + storage are returned and owned by the caller:
-        &view);
+    if (zeroCopyInput)
+    {
+        status = importInputBufferView(session.get(), this->nDim, inputShape.data(), this->inputDtype, inputData, inputSize, &view);
+        if (!iree_status_is_ok(status))
+        {
+            iree_status_ignore(status);
+            view = nullptr;
+        }
+    }
+
+    if (view == nullptr)
+    {
+        status = iree_hal_buffer_view_allocate_buffer_copy(
+            iree_runtime_session_device(session.get()),
+            iree_runtime_session_device_allocator(session.get()),
+            // Shape rank and dimensions:
+            this->nDim,
+            inputShape.data(),
+            // Element type:
+            this->inputDtype,
+            // Encoding type:
+            IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR,
+            iree_hal_buffer_params_t{// Intended usage of the buffer (transfers, dispatches, etc):
+                                     .usage = IREE_HAL_BUFFER_USAGE_DEFAULT,
+                                     // Access to allow to this memory:
+                                     .access = IREE_HAL_MEMORY_ACCESS_ALL,
+                                     // Where to allocate (host or device):
+                                     .type = IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL,
+                                     .queue_affinity = 0,
+                                     .min_alignment = 0},
+            // The actual heap buffer to wrap or clone and its allocator:
+            iree_make_const_byte_span(inputData, inputSize),
+            // Buffer view + storage are returned and owned by the caller:
+            &view);
+    }
 
     /// print the input tensor in debug
     #ifndef NO_ASSERT
