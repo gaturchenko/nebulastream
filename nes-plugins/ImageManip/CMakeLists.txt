@@ -23,8 +23,8 @@ add_plugin_as_library(SSIM PhysicalFunction nes-physical-operators ssim-function
 add_plugin(ResizeImage LogicalFunction nes-logical-operators src/ResizeImageLogicalFunction.cpp)
 add_plugin_as_library(ResizeImage PhysicalFunction nes-physical-operators resize-image src/ResizeImagePhysicalFunction.cpp)
 
-add_plugin(ToggleGrayRgb LogicalFunction nes-logical-operators src/ToggleGrayRgbLogicalFunction.cpp)
-add_plugin_as_library(ToggleGrayRgb PhysicalFunction nes-physical-operators toggle-gray-rgb src/ToggleGrayRgbPhysicalFunction.cpp)
+add_plugin(ConvertColorScheme LogicalFunction nes-logical-operators src/ConvertColorSchemeLogicalFunction.cpp)
+add_plugin_as_library(ConvertColorScheme PhysicalFunction nes-physical-operators convert-color-scheme src/ConvertColorSchemePhysicalFunction.cpp)
 
 find_package(OpenSSL CONFIG REQUIRED)
 find_package(OpenCV CONFIG REQUIRED)
@@ -33,4 +33,4 @@ target_link_libraries(from-base-64 PRIVATE OpenSSL::SSL)
 target_link_libraries(to-base-64 PRIVATE OpenSSL::SSL)
 target_link_libraries(ssim-function PRIVATE ${OpenCV_LIBS})
 target_link_libraries(resize-image PRIVATE ${OpenCV_LIBS})
-target_link_libraries(toggle-gray-rgb PRIVATE ${OpenCV_LIBS})
+target_link_libraries(convert-color-scheme PRIVATE ${OpenCV_LIBS})

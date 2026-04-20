@@ -1,0 +1,79 @@
+# name: function/varsized/ConvertColorScheme.test
+# description: Dedicated tests for ConvertColorScheme varsized function
+# groups: [Function, Varsized]
+
+CREATE LOGICAL SOURCE grayImageStream(encoded VARSIZED);
+CREATE PHYSICAL SOURCE FOR grayImageStream TYPE File;
+ATTACH INLINE
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNoAAAAggCB2kUIOwAAAABJRU5ErkJggg==
+
+CREATE LOGICAL SOURCE rgbImageStream(encoded VARSIZED);
+CREATE PHYSICAL SOURCE FOR rgbImageStream TYPE File;
+ATTACH INLINE
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mPgOiEHAAHQAPEaoUJYAAAAAElFTkSuQmCC
+
+CREATE LOGICAL SOURCE brgImageStream(encoded VARSIZED);
+CREATE PHYSICAL SOURCE FOR brgImageStream TYPE File;
+ATTACH INLINE
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQIHWOQ4zoBAAE6APFIfSriAAAAAElFTkSuQmCC
+
+CREATE LOGICAL SOURCE grayAlphaImageStream(encoded VARSIZED);
+CREATE PHYSICAL SOURCE FOR grayAlphaImageStream TYPE File;
+ATTACH INLINE
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mPY8h8AAmoBtOvSGasAAAAASUVORK5CYII=
+
+CREATE SINK colorSink(converted VARSIZED) TYPE File;
+
+# grayscale -> RGB.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("grayscale_to_rgb"))) AS converted
+FROM grayImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQIHWNoaGgAAAMEAYHZ9rm7AAAAAElFTkSuQmCC
+
+# RGB -> grayscale.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("rgb_to_grayscale"))) AS converted
+FROM rgbImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVQIHWOoAQAAfgB9/z6bjwAAAABJRU5ErkJggg==
+
+# RGB/alpha -> grayscale.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("rgb_to_grayscale"))) AS converted
+FROM grayAlphaImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVQIHWPYAgAAtgC1n8G0cAAAAABJRU5ErkJggg==
+
+# RGB -> BRG.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("rgb_to_brg"))) AS converted
+FROM rgbImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQIHWOQ4zoBAAE6APFIfSriAAAAAElFTkSuQmCC
+
+# BRG -> RGB.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("brg_to_rgb"))) AS converted
+FROM brgImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQIHWPgOiEHAAHQAPG2efpfAAAAAElFTkSuQmCC
+
+# BRG -> grayscale.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("BRG_TO_GRAYSCALE"))) AS converted
+FROM brgImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVQIHWOoAQAAfgB9/z6bjwAAAABJRU5ErkJggg==
+
+# grayscale -> BRG.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("grayscale_to_brg"))) AS converted
+FROM grayImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQIHWNoaGgAAAMEAYHZ9rm7AAAAAElFTkSuQmCC
+
+# RGB -> grayscale.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("RGB_TO_GRAYSCALE"))) AS converted
+FROM rgbImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVQIHWOoAQAAfgB9/z6bjwAAAABJRU5ErkJggg==
+
+# grayscale -> RGB.
+SELECT ToBase64(ConvertColorScheme(FromBase64(encoded), VARSIZED("grayscale_to_rgb"))) AS converted
+FROM grayImageStream INTO colorSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQIHWNoaGgAAAMEAYHZ9rm7AAAAAElFTkSuQmCC
