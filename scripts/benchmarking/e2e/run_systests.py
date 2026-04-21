@@ -21,6 +21,11 @@ except ImportError:  # pragma: no cover - runtime environment dependent
 REPETITIONS_DEFAULT = 5
 INFERENCE_CONFIG_PREFIX = "worker.default_query_execution.inference."
 INFERENCE_CONFIG_LABEL_PREFIX = "inference."
+BATCH_SIZE_KEY = f"{INFERENCE_CONFIG_PREFIX}batch_size"
+USE_BATCH_DEDUPLICATION_KEY = f"{INFERENCE_CONFIG_PREFIX}use_batch_deduplication"
+PREDICTION_CACHE_TYPE_KEY = f"{INFERENCE_CONFIG_PREFIX}prediction_cache_type"
+PREDICTION_CACHE_ENTRIES_KEY = f"{INFERENCE_CONFIG_PREFIX}number_of_entries_prediction_cache"
+PREDICTION_CACHE_NONE = "NONE"
 DEFAULT_USE_BATCH_DEDUPLICATION = False
 
 
@@ -66,15 +71,27 @@ def normalize_values(values: object) -> List[object]:
 
 def normalize_inference_config(config: Dict[str, object]) -> Dict[str, object]:
     normalized: Dict[str, object] = {}
-    full_key = f"{INFERENCE_CONFIG_PREFIX}use_batch_deduplication"
 
     for key, value in config.items():
         if key == "use_batch_deduplication":
-            key = full_key
+            key = USE_BATCH_DEDUPLICATION_KEY
         normalized[key] = value
 
-    if full_key not in normalized:
-        normalized[full_key] = DEFAULT_USE_BATCH_DEDUPLICATION
+    if USE_BATCH_DEDUPLICATION_KEY not in normalized:
+        normalized[USE_BATCH_DEDUPLICATION_KEY] = DEFAULT_USE_BATCH_DEDUPLICATION
+
+    return normalized
+
+
+def normalize_combination(combo: Dict[str, object]) -> Dict[str, object]:
+    normalized = dict(combo)
+
+    if normalized.get(BATCH_SIZE_KEY) == 1:
+        normalized.pop(USE_BATCH_DEDUPLICATION_KEY, None)
+
+    cache_type = normalized.get(PREDICTION_CACHE_TYPE_KEY)
+    if isinstance(cache_type, str) and cache_type.upper() == PREDICTION_CACHE_NONE:
+        normalized.pop(PREDICTION_CACHE_ENTRIES_KEY, None)
 
     return normalized
 
@@ -85,8 +102,14 @@ def expand_combinations(config: Dict[str, object]) -> Iterable[Dict[str, object]
         return
     keys = list(config.keys())
     values = [normalize_values(config[key]) for key in keys]
+    seen = set()
     for combination in itertools.product(*values):
-        yield dict(zip(keys, combination))
+        normalized_combo = normalize_combination(dict(zip(keys, combination)))
+        combo_key = tuple((key, format_value(value)) for key, value in normalized_combo.items())
+        if combo_key in seen:
+            continue
+        seen.add(combo_key)
+        yield normalized_combo
 
 
 def format_value(value: object) -> str:
