@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - runtime environment dependent
     sys.exit(1)
 
 REPETITIONS_DEFAULT = 5
+QUERY_RETRIES = 3
 INFERENCE_CONFIG_PREFIX = "worker.default_query_execution.inference."
 INFERENCE_CONFIG_LABEL_PREFIX = "inference."
 BATCH_SIZE_KEY = f"{INFERENCE_CONFIG_PREFIX}batch_size"
@@ -125,6 +126,15 @@ def sanitize_name(text: str) -> str:
     sanitized = sanitized.replace(":", "_")
     sanitized = sanitized.replace(" ", "_")
     return sanitized
+
+
+def missing_repetitions(query_dir: Path, repetitions: int) -> List[int]:
+    missing: List[int] = []
+    for repetition in range(1, repetitions + 1):
+        rep_dir = query_dir / f"rep-{repetition:02d}"
+        if not rep_dir.is_dir():
+            missing.append(repetition)
+    return missing
 
 
 def combination_name(combo: Dict[str, object]) -> str:
@@ -287,17 +297,50 @@ def main() -> int:
     if not results_base.is_absolute():
         results_base = root / results_base
     results_base = results_base.resolve()
-    results_base_created = False
+    if results_base.exists() and not results_base.is_dir():
+        print(f"Results path exists and is not a directory: {results_base}", file=sys.stderr)
+        return 1
+    results_base_created = results_base.exists()
+
+    query_specs = []
+    for query in resolved_queries:
+        query_path, query_suffix = split_query(query)
+        query_name = sanitize_name(Path(query_path).name + query_suffix)
+        query_specs.append((query, query_name))
+
+    all_combinations = list(expand_combinations(inference_config))
+    pending_combinations = []
+    for combo in all_combinations:
+        combo_label = combination_name(combo)
+        combo_dir = results_base / combo_label
+        if combo_dir.exists() and not combo_dir.is_dir():
+            print(f"Combination results path exists and is not a directory: {combo_dir}", file=sys.stderr)
+            return 1
+
+        combo_complete = True
+        for _, query_name in query_specs:
+            if missing_repetitions(combo_dir / query_name, args.repetitions):
+                combo_complete = False
+                break
+        if not combo_complete:
+            pending_combinations.append(combo)
+
+    skipped_count = len(all_combinations) - len(pending_combinations)
+    if skipped_count > 0:
+        print(f"Skipping {skipped_count} already processed combination(s) from {results_base}.")
+    if not pending_combinations:
+        print("All combinations are already processed. Nothing to run.")
+        return 0
 
     systest_dir = root / "cmake-build-release" / "nes-systests" / "systest"
     build_dir = root / "cmake-build-release" / "nes-systests"
 
-    for combo in expand_combinations(inference_config):
+    for combo in pending_combinations:
         combo_label = combination_name(combo)
         combo_dir = results_base / combo_label
-        if combo_dir.exists():
+        if combo_dir.exists() and not combo_dir.is_dir():
             print(
-                f"Results directory already exists: {combo_dir}. Remove it or choose --results-dir.",
+                f"Combination results path exists and is not a directory: {combo_dir}.",
                 file=sys.stderr,
             )
             return 1
@@ -306,30 +349,52 @@ def main() -> int:
         # params = dict(default_config)
         params.update(combo)
 
-        for query in resolved_queries:
-            query_path, query_suffix = split_query(query)
-            query_name = sanitize_name(Path(query_path).name + query_suffix)
+        for query, query_name in query_specs:
             query_dir = combo_dir / query_name
+            missing_query_repetitions = missing_repetitions(query_dir, args.repetitions)
+            if not missing_query_repetitions:
+                print(f"Skipping already processed query: {combo_label}/{query_name}")
+                continue
 
-            for repetition in range(1, args.repetitions + 1):
+            for repetition in missing_query_repetitions:
                 rep_dir = query_dir / f"rep-{repetition:02d}"
 
-                json_before = snapshot_files(systest_dir, "*.json")
-                log_before_build = snapshot_files(build_dir, "*.log")
-                log_before_systest = snapshot_files(systest_dir, "*.log")
                 cmd = build_command(systest_path, query, params)
 
                 print(" ".join(cmd))
                 if args.dry_run:
                     continue
 
-                result = subprocess.run(cmd, check=False, cwd=systest_dir)
-                if result.returncode != 0:
-                    print(
-                        f"systest failed with exit code {result.returncode}.",
-                        file=sys.stderr,
-                    )
-                    return result.returncode
+                total_attempts = QUERY_RETRIES + 1
+                result: subprocess.CompletedProcess[List[str]] | None = None
+                run_snapshots: Tuple[Dict[Path, float], Dict[Path, float], Dict[Path, float]] | None = None
+                for attempt in range(1, total_attempts + 1):
+                    json_before = snapshot_files(systest_dir, "*.json")
+                    log_before_build = snapshot_files(build_dir, "*.log")
+                    log_before_systest = snapshot_files(systest_dir, "*.log")
+
+                    result = subprocess.run(cmd, check=False, cwd=systest_dir)
+                    if result.returncode == 0:
+                        run_snapshots = (json_before, log_before_build, log_before_systest)
+                        break
+
+                    if attempt < total_attempts:
+                        print(
+                            f"systest failed with exit code {result.returncode} "
+                            f"(attempt {attempt}/{total_attempts}). Retrying...",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"systest failed with exit code {result.returncode} "
+                            f"after {QUERY_RETRIES} retries. Terminating run.",
+                            file=sys.stderr,
+                        )
+                        return result.returncode
+
+                if run_snapshots is None:
+                    print("systest run ended without a successful attempt.", file=sys.stderr)
+                    return 1
 
                 if not results_base_created:
                     results_base.mkdir(parents=True, exist_ok=True)
@@ -345,9 +410,9 @@ def main() -> int:
                     systest_dir,
                     build_dir,
                     rep_dir,
-                    json_before,
-                    log_before_build,
-                    log_before_systest,
+                    run_snapshots[0],
+                    run_snapshots[1],
+                    run_snapshots[2],
                 )
 
     return 0
