@@ -6,16 +6,16 @@ ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
 
 CREATE SINK osuRgbVarsizedDiscard(detectedObjects VARSIZED) TYPE Discard;
 
-CREATE MODEL yoloV4Tiny(
-    PATH "TESTDATA/model/osu/pretrained/yolov4/yolov4_tiny_26x26.onnx"
+CREATE MODEL nanodet(
+    PATH "TESTDATA/model/osu/pretrained/nanodet/nanodet.onnx"
     INPUTS (VARSIZED)
     OUTPUTS (detectedObjects VARSIZED)
 );
 
 SELECT detectedObjects FROM (
-    SELECT INFER_MODEL(yoloV4Tiny, (framePreprocessed))
+    SELECT INFER_MODEL(nanodet, (framePreprocessed))
     FROM (
-        SELECT ResizeImage(FromBase64(frameBase64), UINT32(416), UINT32(416)) AS framePreprocessed
+        SELECT ResizeImage(FromBase64(frameBase64), UINT32(320), UINT32(320)) AS framePreprocessed
         FROM osuRgbSource
     )
 )
