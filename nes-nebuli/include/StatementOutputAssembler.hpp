@@ -68,8 +68,9 @@ constexpr std::array<std::string_view, 6> sourceDescriptorOutputColumns{
 using SinkDescriptorOutputRowType = std::tuple<std::string, Schema, std::string, NES::DescriptorConfig::Config>;
 constexpr std::array<std::string_view, 4> sinkDescriptorOutputColumns{"sink_name", "schema", "sink_type", "sink_config"};
 
-using ModelDescriptorOutputRowType = std::tuple<std::string, std::string, std::vector<DataType>, Schema>;
-constexpr std::array<std::string_view, 4> modelDescriptorOutputColumns{"model_name", "model_path", "input_types", "output_schema"};
+using ModelDescriptorOutputRowType = std::tuple<std::string, std::string, std::string, std::vector<DataType>, Schema>;
+constexpr std::array<std::string_view, 5> modelDescriptorOutputColumns{
+    "model_name", "model_path", "backend", "input_types", "output_schema"};
 
 using QueryIdOutputRowType = std::tuple<QueryId>;
 constexpr std::array<std::string_view, 1> queryIdOutputColumns{"query_id"};
@@ -133,6 +134,7 @@ struct StatementOutputAssembler<CreateModelStatementResult>
             std::vector{std::make_tuple(
                 result.created.name,
                 result.created.path,
+                std::string{Nebuli::Inference::modelBackendToString(result.created.backend)},
                 result.created.inputs,
                 result.created.outputs)});
     }
@@ -206,7 +208,7 @@ struct StatementOutputAssembler<ShowModelsStatementResult>
         output.reserve(result.models.size());
         for (const auto& model : result.models)
         {
-            output.emplace_back(model.name, model.path, model.inputs, model.outputs);
+            output.emplace_back(model.name, model.path, std::string{Nebuli::Inference::modelBackendToString(model.backend)}, model.inputs, model.outputs);
         }
         return std::make_pair(modelDescriptorOutputColumns, output);
     }
@@ -269,6 +271,7 @@ struct StatementOutputAssembler<DropModelStatementResult>
             std::vector{std::make_tuple(
                 result.dropped.name,
                 result.dropped.path,
+                std::string{Nebuli::Inference::modelBackendToString(result.dropped.backend)},
                 result.dropped.inputs,
                 result.dropped.outputs)});
     }

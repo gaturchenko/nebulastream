@@ -531,10 +531,17 @@ struct SystestBinder::Impl
 
     static void createModel(Nebuli::Inference::ModelCatalog& modelCatalog, const CreateModelStatement& statement)
     {
+        const auto backend = Nebuli::Inference::parseModelBackend(statement.modelBackend);
+        if (!backend.has_value())
+        {
+            throw InvalidQuerySyntax("MODEL backend must be either IREE or OPENVINO but got '{}'", statement.modelBackend);
+        }
+
         Nebuli::Inference::ModelDescriptor model;
 
         model.name = statement.modelName;
         model.path = statement.modelPath;
+        model.backend = *backend;
         model.inputs = std::move(statement.inputTypes);
         model.outputs = std::move(statement.outputs);
 

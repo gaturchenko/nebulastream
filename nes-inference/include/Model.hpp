@@ -14,7 +14,15 @@
 
 #pragma once
 
+#include <cstdint>
+#include <expected>
+#include <filesystem>
 #include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 #include <Util/Logger/Logger.hpp>
 #include <fmt/ranges.h>
@@ -26,6 +34,15 @@ namespace NES::Nebuli::Inference
 {
 struct ModelLoadError;
 struct ModelOptions;
+
+enum class ModelBackend : uint8_t
+{
+    IREE = 0,
+    OPENVINO = 1,
+};
+
+std::optional<ModelBackend> parseModelBackend(std::string_view backend);
+std::string_view modelBackendToString(ModelBackend backend);
 
 class Model
 {
@@ -41,7 +58,10 @@ class Model
         std::span<const std::byte> getBuffer() const { return {buffer.get(), size}; }
     };
 
+    ModelBackend backend = ModelBackend::IREE;
     RefCountedByteBuffer byteCode;
+    RefCountedByteBuffer openVinoXml;
+    RefCountedByteBuffer openVinoBin;
     mutable std::vector<size_t> inputShape;
     std::vector<size_t> outputShape;
     std::string functionName;
@@ -55,9 +75,25 @@ class Model
     DataType outputDtype;
 
 public:
-    Model(std::shared_ptr<std::byte[]> modelByteCode, size_t modelSize) : byteCode(std::move(modelByteCode), modelSize) { }
+    Model(std::shared_ptr<std::byte[]> modelByteCode, size_t modelSize)
+        : backend(ModelBackend::IREE), byteCode(std::move(modelByteCode), modelSize)
+    {
+    }
 
+    Model(std::shared_ptr<std::byte[]> xmlBuffer, size_t xmlSize, std::shared_ptr<std::byte[]> binBuffer, size_t binSize)
+        : backend(ModelBackend::OPENVINO), openVinoXml(std::move(xmlBuffer), xmlSize), openVinoBin(std::move(binBuffer), binSize)
+    {
+    }
+
+    [[nodiscard]] ModelBackend getBackend() const { return backend; }
     std::span<const std::byte> getByteCode() const { return byteCode.getBuffer(); }
+    std::span<const std::byte> getOpenVinoXml() const { return openVinoXml.getBuffer(); }
+    std::span<const std::byte> getOpenVinoBin() const { return openVinoBin.getBuffer(); }
+    void setFunctionName(std::string name) { functionName = std::move(name); }
+    void setInputShape(std::vector<size_t> shape) { inputShape = std::move(shape); }
+    void setOutputShape(std::vector<size_t> shape) { outputShape = std::move(shape); }
+    void setInputDtype(const DataType dtype) { inputDtype = dtype; }
+    void setOutputDtype(const DataType dtype) { outputDtype = dtype; }
     const std::vector<DataType>& getInputs() const { return inputs; }
     const std::vector<std::pair<std::string, DataType>>& getOutputs() const { return outputs; }
 

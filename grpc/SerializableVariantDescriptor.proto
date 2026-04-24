@@ -86,6 +86,11 @@ message ModelOutputParameter {
 }
 
 message SerializableModel {
+  enum ModelBackend {
+    IREE = 0;
+    OPENVINO = 1;
+  }
+
   bytes bytecode = 1;
   int32 dims = 2;
   repeated int32 shape = 3;
@@ -98,6 +103,9 @@ message SerializableModel {
   repeated ModelOutputParameter outputs = 10;
   SerializableDataType inputDtype = 11;
   SerializableDataType outputDtype = 12;
+  ModelBackend backend = 13;
+  bytes openvinoXml = 14;
+  bytes openvinoBin = 15;
 }
 
 message SerializableVariantDescriptor {

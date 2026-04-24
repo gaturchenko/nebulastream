@@ -173,8 +173,14 @@ ModelStatementHandler::ModelStatementHandler(const std::shared_ptr<Nebuli::Infer
 
 std::expected<CreateModelStatementResult, Exception> ModelStatementHandler::operator()(const NES::CreateModelStatement& statement)
 {
+    const auto backend = Nebuli::Inference::parseModelBackend(statement.modelBackend);
+    if (!backend)
+    {
+        return std::unexpected{InvalidQuerySyntax("MODEL backend must be either IREE or OPENVINO but got '{}'", statement.modelBackend)};
+    }
+
     if (auto created = modelCatalog->addModelDescriptor(
-        statement.modelName, statement.modelPath, statement.inputTypes, statement.outputs))
+        statement.modelName, statement.modelPath, *backend, statement.inputTypes, statement.outputs))
     {
         return CreateModelStatementResult{created.value()};
     }

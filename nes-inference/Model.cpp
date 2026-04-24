@@ -17,16 +17,72 @@
 
 #include <Serialization/DataTypeSerializationUtil.hpp>
 #include <Model.hpp>
+#include <Util/Strings.hpp>
+#include <ranges>
+#include <utility>
+
+namespace
+{
+std::pair<std::shared_ptr<std::byte[]>, size_t> copyToByteBuffer(const std::string& source)
+{
+    const auto size = source.size();
+    auto buffer = std::make_shared<std::byte[]>(size);
+    std::ranges::copy(
+        source | std::views::transform([](const auto& character) { return static_cast<std::byte>(character); }),
+        buffer.get());
+    return {std::move(buffer), size};
+}
+}
+
+std::optional<NES::Nebuli::Inference::ModelBackend> NES::Nebuli::Inference::parseModelBackend(const std::string_view backend)
+{
+    const auto normalized = toUpperCase(backend);
+    if (normalized == "IREE")
+    {
+        return ModelBackend::IREE;
+    }
+    if (normalized == "OPENVINO")
+    {
+        return ModelBackend::OPENVINO;
+    }
+    return std::nullopt;
+}
+
+std::string_view NES::Nebuli::Inference::modelBackendToString(const ModelBackend backend)
+{
+    switch (backend)
+    {
+        case ModelBackend::IREE: return "IREE";
+        case ModelBackend::OPENVINO: return "OPENVINO";
+    }
+    std::unreachable();
+}
+
 NES::Nebuli::Inference::Model NES::Nebuli::Inference::deserializeModel(const SerializableModel& grpcModel)
 {
-    auto modelByteCodeSize = grpcModel.bytecode().size();
-    auto modelByteCodeBuffer = std::make_shared<std::byte[]>(modelByteCodeSize);
-    std::ranges::copy(
-        grpcModel.bytecode() | std::views::transform([](const auto& character) { return static_cast<std::byte>(character); }),
-        modelByteCodeBuffer.get());
+    ModelBackend backend = ModelBackend::IREE;
+    switch (grpcModel.backend())
+    {
+        case SerializableModel_ModelBackend_IREE: backend = ModelBackend::IREE; break;
+        case SerializableModel_ModelBackend_OPENVINO: backend = ModelBackend::OPENVINO; break;
+        default:
+            backend = ModelBackend::IREE;
+            break;
+    }
 
-    Model model{modelByteCodeBuffer, modelByteCodeSize};
+    Model model = [&]()
+    {
+        if (backend == ModelBackend::OPENVINO)
+        {
+            const auto [xmlBuffer, xmlSize] = copyToByteBuffer(grpcModel.openvinoxml());
+            const auto [binBuffer, binSize] = copyToByteBuffer(grpcModel.openvinobin());
+            return Model{xmlBuffer, xmlSize, binBuffer, binSize};
+        }
+        const auto [byteCodeBuffer, byteCodeSize] = copyToByteBuffer(grpcModel.bytecode());
+        return Model{byteCodeBuffer, byteCodeSize};
+    }();
 
+    model.backend = backend;
     model.functionName = grpcModel.functionname();
     model.inputDims = grpcModel.dims();
     model.inputShape.assign(grpcModel.shape().begin(), grpcModel.shape().end());
@@ -58,8 +114,28 @@ NES::Nebuli::Inference::Model NES::Nebuli::Inference::deserializeModel(const Ser
 
 void NES::Nebuli::Inference::serializeModel(const Model& model, SerializableModel& target)
 {
-    auto modelBytes = model.getByteCode() | std::views::transform([](const std::byte& byte) { return static_cast<const char>(byte); });
-    target.mutable_bytecode()->assign(modelBytes.begin(), modelBytes.end());
+    switch (model.backend)
+    {
+        case ModelBackend::IREE: {
+            auto modelBytes = model.getByteCode() | std::views::transform([](const std::byte& byte) { return static_cast<const char>(byte); });
+            target.mutable_bytecode()->assign(modelBytes.begin(), modelBytes.end());
+            break;
+        }
+        case ModelBackend::OPENVINO: {
+            auto xmlBytes = model.getOpenVinoXml() | std::views::transform([](const std::byte& byte) { return static_cast<const char>(byte); });
+            target.mutable_openvinoxml()->assign(xmlBytes.begin(), xmlBytes.end());
+            auto binBytes = model.getOpenVinoBin() | std::views::transform([](const std::byte& byte) { return static_cast<const char>(byte); });
+            target.mutable_openvinobin()->assign(binBytes.begin(), binBytes.end());
+            break;
+        }
+    }
+
+    switch (model.backend)
+    {
+        case ModelBackend::IREE: target.set_backend(SerializableModel_ModelBackend_IREE); break;
+        case ModelBackend::OPENVINO: target.set_backend(SerializableModel_ModelBackend_OPENVINO); break;
+    }
+
     target.set_dims(model.inputDims);
     for (int shape : model.inputShape)
     {

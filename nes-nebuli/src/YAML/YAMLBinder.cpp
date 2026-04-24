@@ -114,6 +114,10 @@ struct convert<NES::CLI::Model>
             = node["inputs"].as<std::vector<std::string>>() | std::views::transform(stringToFieldType) | std::ranges::to<std::vector>();
         rhs.outputs = node["outputs"].as<std::vector<NES::CLI::SchemaField>>();
         rhs.path = node["path"].as<std::string>();
+        if (node["backend"].IsDefined())
+        {
+            rhs.backend = node["backend"].as<std::string>();
+        }
         return true;
     }
 };
@@ -223,13 +227,19 @@ std::vector<Nebuli::Inference::ModelDescriptor> CLI::YAMLBinder::bindRegisterMod
         | std::views::transform(
                            [](const auto& model)
                            {
+                               const auto backend = Nebuli::Inference::parseModelBackend(model.backend);
+                               if (!backend.has_value())
+                               {
+                                   throw InvalidQuerySyntax("MODEL backend must be either IREE or OPENVINO but got '{}'", model.backend);
+                               }
+
                                Schema schema{};
                                for (auto [name, type] : model.outputs)
                                {
                                    schema.addField(name, type);
                                }
                                return Nebuli::Inference::ModelDescriptor{
-                               model.name, model.path, model.inputs, schema};
+                               model.name, model.path, *backend, model.inputs, schema};
                            })
         | std::ranges::to<std::vector>();
     std::ranges::for_each(boundModels, [&](const auto& model) { modelCatalog->registerModel(model); });

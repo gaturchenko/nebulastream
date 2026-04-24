@@ -77,6 +77,7 @@ struct CreateModelStatement
 {
     std::string modelName;
     std::string modelPath;
+    std::string modelBackend;
     std::vector<DataType> inputTypes;
     Schema outputs;
 };

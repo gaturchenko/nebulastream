@@ -29,6 +29,7 @@ struct ModelDescriptor
 {
     std::string name;
     std::filesystem::path path;
+    ModelBackend backend = ModelBackend::IREE;
     std::vector<DataType> inputs;
     Schema outputs;
 };
@@ -42,7 +43,8 @@ public:
     void registerModel(const ModelDescriptor& model);
     Model load(const std::string Model) const;
 
-    std::optional<ModelDescriptor> addModelDescriptor(std::string name, std::string path, std::vector<DataType> inputs, Schema outputs);
+    std::optional<ModelDescriptor>
+    addModelDescriptor(std::string name, std::string path, ModelBackend backend, std::vector<DataType> inputs, Schema outputs);
     std::optional<ModelDescriptor> getModelDescriptor(const std::string name);
     std::vector<ModelDescriptor> getAllModelDescriptors() const;
     bool removeModelDescriptor(const ModelDescriptor& modelDescriptor);
@@ -65,7 +67,9 @@ inline Model ModelCatalog::load(const std::string modelName) const
     auto modelsLock = registeredModels.rlock();
     if (auto it = modelsLock->find(modelName); it != modelsLock->end())
     {
-        auto result = Inference::load(it->second.path, {});
+        ModelOptions modelOptions{};
+        modelOptions.backend = it->second.backend;
+        auto result = Inference::load(it->second.path, modelOptions);
         if (result)
         {
             auto second = it->second;
@@ -108,9 +112,10 @@ inline Model ModelCatalog::load(const std::string modelName) const
     }
 }
 
-inline std::optional<ModelDescriptor> ModelCatalog::addModelDescriptor(std::string name, std::string path, std::vector<DataType> inputs, Schema outputs)
+inline std::optional<ModelDescriptor>
+ModelCatalog::addModelDescriptor(std::string name, std::string path, ModelBackend backend, std::vector<DataType> inputs, Schema outputs)
 {
-    auto model = ModelDescriptor{std::move(name), std::move(path), std::move(inputs), std::move(outputs)};
+    auto model = ModelDescriptor{std::move(name), std::move(path), backend, std::move(inputs), std::move(outputs)};
     auto modelsLock = registeredModels.wlock();
     modelsLock->emplace(std::move(name), model);
     return model;

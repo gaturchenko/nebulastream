@@ -72,6 +72,7 @@ createSinkDefinition: SINK sinkName=identifier schemaDefinition TYPE type=identi
 
 createModelDefinition: MODEL modelName=identifier '('
                              PATH modelPath=constant
+                             (BACKEND modelBackend=identifier)?
                              INPUTS typeChain
                              OUTPUTS schemaDefinition
                        ')';
@@ -592,6 +593,7 @@ MODEL: 'MODEL';
 PATH: 'PATH';
 INPUTS: 'INPUTS';
 OUTPUTS: 'OUTPUTS';
+BACKEND: 'BACKEND';
 
 //Make sure that you add lexer rules for keywords before the identifier rule,
 //otherwise it will take priority and your grammars will not work

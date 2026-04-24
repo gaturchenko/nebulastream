@@ -20,6 +20,10 @@ add_plugin_as_library(InferenceModel RewriteRule nes-query-optimizer iree_infere
         IREEInferenceOperatorHandler.cpp
         IREEAdapter.cpp
         IREERuntimeWrapper.cpp
+        OpenVINOInferenceOperator.cpp
+        OpenVINOInferenceOperatorHandler.cpp
+        OpenVINOAdapter.cpp
+        OpenVINORuntimeWrapper.cpp
         BatchingPhysicalOperator.cpp
         InterBufferBatchingPhysicalOperator.cpp
         PredictionCache/PredictionCache.cpp
@@ -32,11 +36,13 @@ add_plugin_as_library(InferenceModel RewriteRule nes-query-optimizer iree_infere
         PredictionCache/PredictionCacheUtil.cpp
 )
 find_package(IREERuntime CONFIG REQUIRED)
+find_package(OpenVINO CONFIG REQUIRED COMPONENTS Runtime)
 target_include_directories(iree_inference_plugin_library PUBLIC ../include ../include/PredictionCache)
 target_include_directories(iree_inference_plugin_library SYSTEM PRIVATE ${_IREE_COMPILER_API})
 
 target_link_libraries(iree_inference_plugin_library PUBLIC
         iree_runtime_runtime
+        openvino::runtime
         nes-physical-operators
         nes-query-optimizer
         nes-runtime

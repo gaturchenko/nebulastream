@@ -28,6 +28,8 @@
 #include <IREEInferenceOperatorHandler.hpp>
 #include <InferModelLogicalOperator.hpp>
 #include <InterBufferBatchingPhysicalOperator.hpp>
+#include <OpenVINOInferenceOperator.hpp>
+#include <OpenVINOInferenceOperatorHandler.hpp>
 #include <Nautilus/Interface/Hash/MurMur3HashFunction.hpp>
 #include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedEntryMemoryProvider.hpp>
 #include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
@@ -111,10 +113,43 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
 
         const auto inputDtype = model.getInputDtype();
         const auto outputDtype = model.getOutputDtype();
+        const auto isVarSizedInput = inferModelOperator->getInputFields().size() == 1
+            && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED;
+        const auto isVarSizedOutput = model.getOutputs().size() == 1 && model.getOutputs().at(0).second.type == NES::DataType::Type::VARSIZED;
 
         /// if the batch size is 1, then we simply use the inference operator with PipelineLocation::INTERMEDIATE
         /// else, add the batching operator (custom emit) and batch inference operator (custom scan)
         std::shared_ptr<NES::PhysicalOperatorWrapper> wrapper = nullptr;
+        if (model.getBackend() == NES::Nebuli::Inference::ModelBackend::OPENVINO)
+        {
+            if (batchSize.getValue() != 1)
+            {
+                throw NES::NotImplemented("OpenVINO backend currently supports only batch size 1");
+            }
+
+            if (predictionCacheType.getValue() != NES::Configurations::PredictionCacheType::NONE)
+            {
+                throw NES::NotImplemented("OpenVINO backend currently supports only PredictionCacheType::NONE");
+            }
+
+            NES_DEBUG("Lower InferModel operator to OpenVINOInferenceOperator");
+            auto handler = std::make_shared<NES::OpenVINOInferenceOperatorHandler>(model);
+            auto openVinoOperator = NES::OpenVINOInferenceOperator(handlerId, inputFunctions, outputNames, inputDtype, outputDtype);
+            openVinoOperator.isVarSizedInput = isVarSizedInput;
+            openVinoOperator.isVarSizedOutput = isVarSizedOutput;
+            openVinoOperator.outputSize = model.outputSize();
+            openVinoOperator.inputSize = model.inputSize();
+
+            wrapper = std::make_shared<NES::PhysicalOperatorWrapper>(
+                openVinoOperator,
+                logicalOperator->getInputSchemas().at(0),
+                logicalOperator->getOutputSchema(),
+                handlerId,
+                std::move(handler),
+                NES::PhysicalOperatorWrapper::PipelineLocation::INTERMEDIATE);
+            return {wrapper, {wrapper}};
+        }
+
         if (batchSize.getValue() == 1)
         {
             auto handler = std::make_shared<NES::IREEInferenceOperatorHandler>(model);
@@ -124,16 +159,8 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                 case NES::Configurations::PredictionCacheType::NONE: {
                     NES_DEBUG("Lower InferModel operator to IREEInferenceOperator");
                     auto ireeOperator = NES::IREEInferenceOperator(handlerId, inputFunctions, outputNames, inputDtype, outputDtype);
-                    if (inferModelOperator->getInputFields().size() == 1
-                        && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedInput = true;
-                    }
-
-                    if (model.getOutputs().size() == 1 && model.getOutputs().at(0).second.type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedOutput = true;
-                    }
+                    ireeOperator.isVarSizedInput = isVarSizedInput;
+                    ireeOperator.isVarSizedOutput = isVarSizedOutput;
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 
@@ -158,17 +185,8 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                         predictionCacheType.getValue(),
                         predictionCacheSize.getValue()};
                     auto ireeOperator = NES::IREECacheInferenceOperator(handlerId, inputFunctions, outputNames, predictionCacheOptions, inputDtype, outputDtype);
-
-                    if (inferModelOperator->getInputFields().size() == 1
-                        && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedInput = true;
-                    }
-
-                    if (model.getOutputs().size() == 1 && model.getOutputs().at(0).second.type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedOutput = true;
-                    }
+                    ireeOperator.isVarSizedInput = isVarSizedInput;
+                    ireeOperator.isVarSizedOutput = isVarSizedOutput;
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 
@@ -241,17 +259,8 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                         outputDtype,
                         hashMapOptions,
                         useBatchDeduplication.getValue());
-
-                    if (inferModelOperator->getInputFields().size() == 1
-                        && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedInput = true;
-                    }
-
-                    if (model.getOutputs().size() == 1 && model.getOutputs().at(0).second.type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedOutput = true;
-                    }
+                    ireeOperator.isVarSizedInput = isVarSizedInput;
+                    ireeOperator.isVarSizedOutput = isVarSizedOutput;
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 
@@ -286,17 +295,8 @@ struct LowerToPhysicalIREEInferenceOperator : NES::AbstractRewriteRule
                         outputDtype,
                         hashMapOptions,
                         useBatchDeduplication.getValue());
-
-                    if (inferModelOperator->getInputFields().size() == 1
-                        && inferModelOperator->getInputFields().at(0).getDataType().type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedInput = true;
-                    }
-
-                    if (model.getOutputs().size() == 1 && model.getOutputs().at(0).second.type == NES::DataType::Type::VARSIZED)
-                    {
-                        ireeOperator.isVarSizedOutput = true;
-                    }
+                    ireeOperator.isVarSizedInput = isVarSizedInput;
+                    ireeOperator.isVarSizedOutput = isVarSizedOutput;
                     ireeOperator.outputSize = model.outputSize();
                     ireeOperator.inputSize = model.inputSize();
 

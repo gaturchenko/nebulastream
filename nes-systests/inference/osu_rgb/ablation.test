@@ -8,6 +8,7 @@ CREATE SINK osuRgbVarsizedDiscard(detectedObjects VARSIZED) TYPE Discard;
 
 CREATE MODEL nanodet(
     PATH "TESTDATA/model/osu/pretrained/nanodet/nanodet.onnx"
+    BACKEND OPENVINO
     INPUTS (VARSIZED)
     OUTPUTS (detectedObjects VARSIZED)
 );

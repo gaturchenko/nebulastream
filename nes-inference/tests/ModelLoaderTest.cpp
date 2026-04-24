@@ -39,7 +39,8 @@ TEST(ModelLoaderTest, TestLoadingModel)
     ASSERT_TRUE(std::filesystem::exists(std::filesystem::path(TEST_DATA_DIR) / "convit_tiny_Opset17.onnx"));
 
     auto result = NES::Nebuli::Inference::load(
-        std::filesystem::path(TEST_DATA_DIR) / "convit_tiny_Opset17.onnx", NES::Nebuli::Inference::ModelOptions{.opset = 17});
+        std::filesystem::path(TEST_DATA_DIR) / "convit_tiny_Opset17.onnx",
+        NES::Nebuli::Inference::ModelOptions{.opset = 17, .backend = NES::Nebuli::Inference::ModelBackend::IREE});
     ASSERT_TRUE(result.has_value()) << "Loading model failed: " << result.error().message;
     EXPECT_GE(result->getByteCode().size(), 25000000)
         << "The estimated size of the Model does not match. Reproduce by using: \n"
@@ -59,7 +60,8 @@ TEST(Model, TestModelSerialization)
     ASSERT_TRUE(std::filesystem::exists(std::filesystem::path(TEST_DATA_DIR) / "convit_tiny_Opset17.onnx"));
 
     auto result = NES::Nebuli::Inference::load(
-        std::filesystem::path(TEST_DATA_DIR) / "convit_tiny_Opset17.onnx", NES::Nebuli::Inference::ModelOptions{.opset = 17});
+        std::filesystem::path(TEST_DATA_DIR) / "convit_tiny_Opset17.onnx",
+        NES::Nebuli::Inference::ModelOptions{.opset = 17, .backend = NES::Nebuli::Inference::ModelBackend::IREE});
     ASSERT_TRUE(result.has_value());
 
     auto serialized = NES::SerializableModel();
