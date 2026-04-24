@@ -4,16 +4,16 @@ CREATE LOGICAL SOURCE windPowerSource(timestamp UINT64, value FLOAT64);
 CREATE PHYSICAL SOURCE FOR windPowerSource TYPE File;
 ATTACH FILE large/wind_power/wind-power.csv
 
-CREATE SINK windPowerVarsizedDiscard(powerProdNext2Min VARSIZED) TYPE Discard;
-CREATE SINK windPowerVarsizedDiscard2(powerProdNext24Sec VARSIZED) TYPE Discard;
+CREATE SINK windPowerVarsizedDiscard2min(powerProdNext2Min VARSIZED) TYPE Discard;
+CREATE SINK windPowerVarsizedDiscard24sec(powerProdNext24Sec VARSIZED) TYPE Discard;
 
-CREATE MODEL dLinear(
+CREATE MODEL dLinear10min(
     PATH "TESTDATA/model/wind_power/pretrained/dlinear/dlinear_wind_size_600_stride_60.onnx"
     INPUTS (VARSIZED)
     OUTPUTS (powerProdNext2Min VARSIZED)
 );
 
-CREATE MODEL dLinear2(
+CREATE MODEL dLinear2min(
     PATH "TESTDATA/model/wind_power/pretrained/dlinear/dlinear_wind_size_120_stride_12.onnx"
     INPUTS (VARSIZED)
     OUTPUTS (powerProdNext24Sec VARSIZED)
@@ -23,24 +23,24 @@ Configuration worker.number_of_buffers_in_global_buffer_manager: [500000]
 Configuration worker.default_query_execution.operator_buffer_size: [131072]
 Configuration worker.default_query_execution.page_size: [16384]
 SELECT powerProdNext2Min FROM (
-    SELECT INFER_MODEL(dLinear, (value_10_min))
+    SELECT INFER_MODEL(dLinear10min, (value_10_min))
     FROM (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM windPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
     )
-) INTO windPowerVarsizedDiscard;
+) INTO windPowerVarsizedDiscard2min;
 ----
 
 Configuration worker.number_of_buffers_in_global_buffer_manager: [5000000]
 Configuration worker.default_query_execution.operator_buffer_size: [16384]
 Configuration worker.default_query_execution.page_size: [4096]
 SELECT powerProdNext24Sec FROM (
-    SELECT INFER_MODEL(dLinear2, (value_120_sec))
+    SELECT INFER_MODEL(dLinear2min, (value_120_sec))
     FROM (
         SELECT ARRAY_AGG(value) AS value_120_sec
         FROM windPowerSource
         WINDOW SLIDING(timestamp, SIZE 120000 ms, ADVANCE BY 12000 ms)
     )
-) INTO windPowerVarsizedDiscard2;
+) INTO windPowerVarsizedDiscard24sec;
 ----
