@@ -164,6 +164,9 @@ nautilus::val<std::byte*> IREECacheInferenceOperator::performInference(
                     adapter->infer<T>();
                     adapter->misses += 1;
 
+                    delete[] predictionCacheEntry->record;
+                    delete[] predictionCacheEntry->dataStructure;
+
                     predictionCacheEntry->recordSize = adapter->inputSize;
                     predictionCacheEntry->record = new std::byte[adapter->inputSize];
                     std::memcpy(predictionCacheEntry->record, adapter->getCurrentInputData(), adapter->inputSize);

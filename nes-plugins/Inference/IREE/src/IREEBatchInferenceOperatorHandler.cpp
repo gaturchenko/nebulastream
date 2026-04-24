@@ -83,6 +83,7 @@ void IREEBatchInferenceOperatorHandler::stop(QueryTerminationType, PipelineExecu
         NES_INFO("{{\"pipeline_id\": {}, \"misses\": {}, \"no_reductions\": {}, \"low_reductions\": {}, \"medium_reductions\": {}, \"high_reductions\": {}, \"full_reductions\": {}}}"
             , pipelineExecutionContext.getPipelineId(), misses, noReductions, lowReductions, mediumReductions, highReductions, fullReductions)
     }
+    cleanupPredictionCacheEntries();
     threadLocalAdapters.clear();
 }
 
@@ -225,6 +226,7 @@ void IREEBatchInferenceOperatorHandler::allocatePredictionCacheEntries(
     }
 
     PRECONDITION(bufferProvider != nullptr, "Buffer provider should not be null");
+    registerPredictionCacheLayout(sizeOfEntry, numberOfEntries);
     for (uint64_t i = 0; i < threadLocalAdapters.size(); ++i)
     {
         const auto neededSize = numberOfEntries * sizeOfEntry + sizeof(HitsAndMisses);

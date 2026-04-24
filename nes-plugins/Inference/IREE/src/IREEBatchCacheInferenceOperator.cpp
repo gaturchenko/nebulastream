@@ -238,6 +238,7 @@ std::pair<nautilus::val<uint64_t>, nautilus::val<std::byte*>> IREEBatchCacheInfe
                 +[](PredictionCacheEntry* predictionCacheEntry, std::byte* tuple, size_t size)
                 {
                     predictionCacheEntry->dataStructure = nullptr;
+                    predictionCacheEntry->dataSize = 0;
                     predictionCacheEntry->recordSize = size;
                     predictionCacheEntry->record = new std::byte[size];
 

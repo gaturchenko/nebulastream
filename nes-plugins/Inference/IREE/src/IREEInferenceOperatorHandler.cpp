@@ -53,6 +53,7 @@ void IREEInferenceOperatorHandler::stop(QueryTerminationType, PipelineExecutionC
         for (const auto& adapter : threadLocalAdapters) { misses += adapter->misses; }
         NES_INFO("{{\"pipeline_id\": {}, \"misses\": {}}}", pipelineExecutionContext.getPipelineId(), misses)
     }
+    cleanupPredictionCacheEntries();
     threadLocalAdapters.clear();
 }
 
@@ -75,6 +76,7 @@ void IREEInferenceOperatorHandler::allocatePredictionCacheEntries(
     }
 
     PRECONDITION(bufferProvider != nullptr, "Buffer provider should not be null");
+    registerPredictionCacheLayout(sizeOfEntry, numberOfEntries);
     for (uint64_t i = 0; i < threadLocalAdapters.size(); ++i)
     {
         const auto neededSize = numberOfEntries * sizeOfEntry + sizeof(HitsAndMisses);
