@@ -65,7 +65,12 @@
     "boost-filesystem",
     "boost-process",
     "boost-graph",
-    "ireeruntime"
+    "ireeruntime",
+    {
+      "name": "openvino",
+      "default-features": false,
+      "features": ["cpu", "ir"]
+    }
   ],
   "overrides": [
     {

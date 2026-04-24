@@ -1,0 +1,6 @@
+openvino is compatible with CMake's find_package:
+
+    find_package(OpenVINO CONFIG REQUIRED)
+
+    # Link against the components you need, e.g.:
+    target_link_libraries(main PRIVATE openvino::runtime)
