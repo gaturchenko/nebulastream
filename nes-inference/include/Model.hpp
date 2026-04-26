@@ -58,7 +58,7 @@ class Model
         std::span<const std::byte> getBuffer() const { return {buffer.get(), size}; }
     };
 
-    ModelBackend backend = ModelBackend::IREE;
+    ModelBackend backend = ModelBackend::OPENVINO;
     RefCountedByteBuffer byteCode;
     RefCountedByteBuffer openVinoXml;
     RefCountedByteBuffer openVinoBin;

@@ -72,7 +72,7 @@ struct Model
 {
     std::string name;
     std::filesystem::path path;
-    std::string backend = "IREE";
+    std::string backend = "OPENVINO";
     std::vector<NES::DataType> inputs;
     std::vector<SchemaField> outputs;
     size_t batchSize;

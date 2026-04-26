@@ -29,7 +29,7 @@ struct ModelDescriptor
 {
     std::string name;
     std::filesystem::path path;
-    ModelBackend backend = ModelBackend::IREE;
+    ModelBackend backend = ModelBackend::OPENVINO;
     std::vector<DataType> inputs;
     Schema outputs;
 };

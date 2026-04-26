@@ -30,7 +30,7 @@ bool enabled();
 struct ModelOptions
 {
     std::optional<size_t> opset;
-    ModelBackend backend = ModelBackend::IREE;
+    ModelBackend backend = ModelBackend::OPENVINO;
 };
 
 struct ModelLoadError

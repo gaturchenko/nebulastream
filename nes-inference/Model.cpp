@@ -60,13 +60,13 @@ std::string_view NES::Nebuli::Inference::modelBackendToString(const ModelBackend
 
 NES::Nebuli::Inference::Model NES::Nebuli::Inference::deserializeModel(const SerializableModel& grpcModel)
 {
-    ModelBackend backend = ModelBackend::IREE;
+    ModelBackend backend = ModelBackend::OPENVINO;
     switch (grpcModel.backend())
     {
         case SerializableModel_ModelBackend_IREE: backend = ModelBackend::IREE; break;
         case SerializableModel_ModelBackend_OPENVINO: backend = ModelBackend::OPENVINO; break;
         default:
-            backend = ModelBackend::IREE;
+            backend = ModelBackend::OPENVINO;
             break;
     }
 

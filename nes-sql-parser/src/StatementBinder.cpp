@@ -165,7 +165,7 @@ public:
         const auto modelPath = bindStringLiteral(dynamic_cast<AntlrSQLParser::StringLiteralContext*>(modelDefAST->modelPath));
         const auto modelBackend = [&]()
         {
-            const auto backend = modelDefAST->modelBackend != nullptr ? toUpperCase(bindIdentifier(modelDefAST->modelBackend)) : "IREE";
+            const auto backend = modelDefAST->modelBackend != nullptr ? toUpperCase(bindIdentifier(modelDefAST->modelBackend)) : "OPENVINO";
             if (backend != "IREE" && backend != "OPENVINO")
             {
                 throw InvalidQuerySyntax("MODEL backend must be either IREE or OPENVINO but got '{}'", backend);
