@@ -24,6 +24,7 @@
 
 namespace NES
 {
+#ifndef NO_ASSERT
 namespace
 {
 constexpr size_t MAX_DEBUG_TENSOR_STRING_SIZE = 4096;
@@ -151,6 +152,7 @@ std::string formatTensor(const ov::Tensor& tensor)
     return result;
 }
 }
+#endif
 
 void OpenVINORuntimeWrapper::setup(
     const std::string& modelXml,
