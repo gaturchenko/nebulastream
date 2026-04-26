@@ -168,8 +168,8 @@ void OpenVINORuntimeWrapper::setup(
         // ov::inference_num_threads(1),
         // ov::num_streams(1));
     inferRequest = compiledModel.create_infer_request();
-    inputTensor = ov::Tensor(inputElementType, inputShape);
-    inferRequest.set_input_tensor(inputTensor);
+    this->inputElementType = inputElementType;
+    this->inputShape = ov::Shape(inputShape.begin(), inputShape.end());
 }
 
 void OpenVINORuntimeWrapper::execute(const void* inputData, size_t inputDataSize, void* outputData, const size_t outputDataSize)
@@ -177,9 +177,9 @@ void OpenVINORuntimeWrapper::execute(const void* inputData, size_t inputDataSize
     PRECONDITION(inputData != nullptr, "Input data pointer must not be null");
     PRECONDITION(outputData != nullptr, "Output data pointer must not be null");
 
-    const auto tensorInputSize = inputTensor.get_byte_size();
-    std::memset(inputTensor.data(), 0, tensorInputSize);
-    std::memcpy(inputTensor.data(), inputData, std::min(inputDataSize, tensorInputSize));
+    (void)inputDataSize;
+    auto inputTensor = ov::Tensor(inputElementType, inputShape, const_cast<void*>(inputData));
+    inferRequest.set_input_tensor(inputTensor);
 
 #ifndef NO_ASSERT
     NES_DEBUG("Model input: {}", formatTensor(inputTensor))

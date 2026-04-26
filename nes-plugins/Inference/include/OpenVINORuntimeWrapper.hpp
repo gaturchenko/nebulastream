@@ -41,7 +41,8 @@ private:
     std::vector<std::uint8_t> weightsBuffer;
     ov::CompiledModel compiledModel;
     ov::InferRequest inferRequest;
-    ov::Tensor inputTensor;
+    ov::element::Type inputElementType;
+    ov::Shape inputShape;
 };
 
 }

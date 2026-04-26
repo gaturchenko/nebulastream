@@ -76,7 +76,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-39,18446744073709550897
+39,18446744073709550921
 
 SELECT powerProdNext8Sec FROM (
     SELECT INFER_MODEL(dLinear, (value_60_sec))
@@ -99,7 +99,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-39,18446744073709551141
+39,18446744073709551165
 
 Configuration worker.default_query_execution.inference.use_batch_deduplication: [true]
 SELECT powerProdNext8Sec FROM (

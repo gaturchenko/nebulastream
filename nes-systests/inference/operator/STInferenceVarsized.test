@@ -79,7 +79,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-11,833
+11,644
 
 SELECT powerProdNext8Sec FROM (
     SELECT INFER_MODEL(dLinear, (value_60_sec))

@@ -89,7 +89,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-14,728
+14,507
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO]
 SELECT powerProdNext8Sec FROM (
@@ -113,7 +113,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-14,728
+14,507
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [LFU]
 SELECT powerProdNext8Sec FROM (
@@ -137,7 +137,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-14,728
+14,507
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [LRU]
 SELECT powerProdNext8Sec FROM (
@@ -161,7 +161,7 @@ SELECT powerProdNext8Sec FROM (
     )
 ) INTO solarPowerVarsizedChecksum;
 ----
-14,728
+14,507
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [SECOND_CHANCE]
 SELECT powerProdNext8Sec FROM (
