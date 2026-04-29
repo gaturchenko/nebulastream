@@ -15,7 +15,7 @@
 #include <OpenVINORuntimeWrapper.hpp>
 
 #include <algorithm>
-#include <cstring>
+#include <mutex>
 #include <sstream>
 #include <type_traits>
 #include <vector>
@@ -154,34 +154,70 @@ std::string formatTensor(const ov::Tensor& tensor)
 }
 #endif
 
+namespace
+{
+struct InferRequestContext
+{
+    ov::InferRequest inferRequest;
+    ov::element::Type outputElementType;
+    ov::Shape outputShape;
+    size_t outputTensorSize = 0;
+};
+
+InferRequestContext createInferRequest(const std::string& modelXml, std::span<const std::byte> modelBin, const ov::Shape& shape)
+{
+    static ov::Core sharedCore;
+    static std::mutex coreMutex;
+
+    std::vector<std::uint8_t> modelBinBuffer(modelBin.size());
+    std::ranges::transform(modelBin, modelBinBuffer.begin(), [](const std::byte value) { return static_cast<std::uint8_t>(value); });
+    std::scoped_lock lock(coreMutex);
+
+    ov::Tensor weights(ov::element::u8, {modelBinBuffer.size()}, modelBinBuffer.data());
+    auto model = sharedCore.read_model(modelXml, weights);
+    model->reshape(shape);
+    auto compiledModel = sharedCore.compile_model(model, "CPU",
+        ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY), // to avoid implicit demotion to bfloat16
+        ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY),
+        ov::hint::enable_cpu_pinning(false),
+        ov::inference_num_threads(1),
+        ov::num_streams(1));
+
+    auto outputElementType = compiledModel.output(0).get_element_type();
+    auto outputShape = compiledModel.output(0).get_shape();
+    const auto outputTensorSize = ov::Tensor(outputElementType, outputShape).get_byte_size();
+
+    return InferRequestContext{
+        .inferRequest = compiledModel.create_infer_request(),
+        .outputElementType = std::move(outputElementType),
+        .outputShape = std::move(outputShape),
+        .outputTensorSize = outputTensorSize};
+}
+}
+
 void OpenVINORuntimeWrapper::setup(
     const std::string& modelXml,
     const std::span<const std::byte> modelBin,
     const ov::element::Type& inputElementType,
     const std::vector<size_t>& inputShape)
 {
-    weightsBuffer.resize(modelBin.size());
-    std::ranges::transform(modelBin, weightsBuffer.begin(), [](const std::byte value) { return static_cast<std::uint8_t>(value); });
-
-    ov::Tensor weights(ov::element::u8, {weightsBuffer.size()}, weightsBuffer.data());
-    auto model = core.read_model(modelXml, weights);
-    compiledModel = core.compile_model(model, "CPU");
-        // ov::hint::performance_mode(ov::hint::PerformanceMode::CUMULATIVE_THROUGHPUT),
-        // ov::inference_num_threads(1),
-        // ov::num_streams(1));
-    inferRequest = compiledModel.create_infer_request();
+    auto shape = ov::Shape(inputShape.begin(), inputShape.end());
+    auto inferRequestContext = createInferRequest(modelXml, modelBin, shape);
+    inferRequest = std::move(inferRequestContext.inferRequest);
     this->inputElementType = inputElementType;
-    this->inputShape = ov::Shape(inputShape.begin(), inputShape.end());
+    this->inputShape = shape;
+    this->outputElementType = std::move(inferRequestContext.outputElementType);
+    this->outputShape = std::move(inferRequestContext.outputShape);
+    this->outputTensorSize = inferRequestContext.outputTensorSize;
 }
 
-void OpenVINORuntimeWrapper::execute(const void* inputData, size_t inputDataSize, void* outputData, const size_t outputDataSize)
+void OpenVINORuntimeWrapper::execute(const void* inputData, void* outputData)
 {
-    PRECONDITION(inputData != nullptr, "Input data pointer must not be null");
-    PRECONDITION(outputData != nullptr, "Output data pointer must not be null");
-
-    (void)inputDataSize;
     auto inputTensor = ov::Tensor(inputElementType, inputShape, const_cast<void*>(inputData));
     inferRequest.set_input_tensor(inputTensor);
+
+    auto outputTensor = ov::Tensor(outputElementType, outputShape, outputData);
+    inferRequest.set_output_tensor(0, outputTensor);
 
 #ifndef NO_ASSERT
     NES_DEBUG("Model input: {}", formatTensor(inputTensor))
@@ -189,13 +225,9 @@ void OpenVINORuntimeWrapper::execute(const void* inputData, size_t inputDataSize
 
     inferRequest.infer();
 
-    const auto outputTensor = inferRequest.get_output_tensor(0);
 #ifndef NO_ASSERT
     NES_DEBUG("Model output: {}", formatTensor(outputTensor))
 #endif
-
-    const auto tensorOutputSize = outputTensor.get_byte_size();
-    std::memcpy(outputData, outputTensor.data(), std::min(outputDataSize, tensorOutputSize));
 }
 
 }

@@ -34,15 +34,15 @@ public:
         const ov::element::Type& inputElementType,
         const std::vector<size_t>& inputShape);
 
-    void execute(const void* inputData, size_t inputDataSize, void* outputData, size_t outputDataSize);
+    void execute(const void* inputData, void* outputData);
 
 private:
-    ov::Core core;
-    std::vector<std::uint8_t> weightsBuffer;
-    ov::CompiledModel compiledModel;
     ov::InferRequest inferRequest;
     ov::element::Type inputElementType;
     ov::Shape inputShape;
+    ov::element::Type outputElementType;
+    ov::Shape outputShape;
+    size_t outputTensorSize = 0;
 };
 
 }

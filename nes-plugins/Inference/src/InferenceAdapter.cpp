@@ -189,7 +189,7 @@ void InferenceAdapter::infer()
     }
     else
     {
-        openVinoRuntimeWrapper.execute(modelInputData, inputSize, outputData.get(), outputSize);
+        openVinoRuntimeWrapper.execute(modelInputData, outputData.get());
     }
 }
 
@@ -227,7 +227,7 @@ void InferenceAdapter::inferWithReduction()
             modelInputSize = inputSize;
         }
 
-        openVinoRuntimeWrapper.execute(modelInputData, modelInputSize, outputData.get(), outputSize);
+        openVinoRuntimeWrapper.execute(modelInputData, outputData.get());
         currentReductionLevel = NONE;
         bytesProcessed = 0;
         return;
@@ -292,7 +292,7 @@ size_t InferenceAdapter::inferCombine(size_t outputSize, size_t outputFields, bo
             modelInputSize = inputSize;
         }
 
-        openVinoRuntimeWrapper.execute(modelInputData, modelInputSize, reducedInferenceOutputData.get(), this->outputSize);
+        openVinoRuntimeWrapper.execute(modelInputData, reducedInferenceOutputData.get());
         size_t reducedOutputTupleIndex = 0;
         for (const auto outputRowIndex : batchCachingHelper.getMissIndices())
         {
