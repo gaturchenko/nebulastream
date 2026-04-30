@@ -38,24 +38,32 @@ BatchInferenceOperatorHandler::BatchInferenceOperatorHandler(
     const std::vector<OriginId>& inputOrigins,
     OriginId outputOriginId,
     Nebuli::Inference::Model model,
-    uint64_t batchSize)
+    uint64_t batchSize,
+    InferenceRuntimeConfiguration runtimeConfiguration)
     : WindowBasedOperatorHandler(inputOrigins, outputOriginId, true)
     , model(std::move(model))
     , batchSize(batchSize)
+    , runtimeConfiguration(std::move(runtimeConfiguration))
 {
 }
 
 void BatchInferenceOperatorHandler::start(PipelineExecutionContext& pipelineExecutionContext, uint32_t)
 {
     numberOfWorkerThreads = pipelineExecutionContext.getNumberOfWorkerThreads();
+
     watermarkProcessorBuild = std::make_unique<MultiOriginWatermarkProcessor>(inputOrigins);
     watermarkProcessorProbe = std::make_unique<MultiOriginWatermarkProcessor>(std::vector{outputOriginId});
 
     threadLocalAdapters.reserve(numberOfWorkerThreads);
     for (size_t threadId = 0; threadId < numberOfWorkerThreads; ++threadId)
     {
+        OpenVINOExecutionConfig openVinoExecutionConfig{
+            .inferenceNumThreads = runtimeConfiguration.openVinoInferenceNumThreads,
+            .numStreams = runtimeConfiguration.openVinoNumStreams,
+            .enableCpuPinning = runtimeConfiguration.openVinoEnableCpuPinning};
+
         threadLocalAdapters.emplace_back(InferenceAdapter::create());
-        threadLocalAdapters.back()->initializeModel(model, batchSize);
+        threadLocalAdapters.back()->initializeModel(model, batchSize, threadId, openVinoExecutionConfig);
     }
 }
 

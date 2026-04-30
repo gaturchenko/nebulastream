@@ -15,6 +15,7 @@
 #pragma once
 
 #include <Identifiers/Identifiers.hpp>
+#include <InferenceAdapter.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVector.hpp>
 #include <Nautilus/Interface/HashMap/HashMap.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
@@ -37,7 +38,8 @@ public:
         const std::vector<OriginId>& inputOrigins,
         OriginId outputOriginId,
         Nebuli::Inference::Model model,
-        uint64_t batchSize);
+        uint64_t batchSize,
+        InferenceRuntimeConfiguration runtimeConfiguration = {});
 
     void start(PipelineExecutionContext& pipelineExecutionContext, uint32_t localStateVariableId) override;
     void stop(QueryTerminationType terminationType, PipelineExecutionContext& pipelineExecutionContext) override;
@@ -104,6 +106,7 @@ public:
 private:
     Nebuli::Inference::Model model;
     uint64_t batchSize;
+    InferenceRuntimeConfiguration runtimeConfiguration;
     std::vector<std::shared_ptr<InferenceAdapter>> threadLocalAdapters;
     std::vector<std::unique_ptr<HashMap>> threadLocalHashMaps;
 };

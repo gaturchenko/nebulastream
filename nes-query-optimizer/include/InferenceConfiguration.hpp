@@ -59,11 +59,23 @@ public:
            fmt::format("Type of prediction cache {}", fmt::join(magic_enum::enum_names<PredictionCacheType>(), ", "))};
     UIntOption numberOfEntriesPredictionCache
         = {"number_of_entries_prediction_cache", "1", "Size of the prediction cache", {std::make_shared<NonZeroValidation>()}};
+    UIntOption openvinoInferenceNumThreads
+        = {"openvino_inference_num_threads", "1", "OpenVINO ov::inference_num_threads", {std::make_shared<NonZeroValidation>()}};
+    UIntOption openvinoNumStreams
+        = {"openvino_num_streams", "0", "OpenVINO ov::num_streams"};
+    BoolOption openvinoEnableCpuPinning
+        = {"openvino_enable_cpu_pinning", "false", "OpenVINO ov::hint::enable_cpu_pinning", {std::make_shared<BooleanValidation>()}};
 
 private:
     std::vector<BaseOption*> getOptions() override
     {
-        return {&batchSize, &useBatchDeduplication, &predictionCacheType, &numberOfEntriesPredictionCache};
+        return {&batchSize,
+            &useBatchDeduplication,
+            &predictionCacheType,
+            &numberOfEntriesPredictionCache,
+            &openvinoInferenceNumThreads,
+            &openvinoNumStreams,
+            &openvinoEnableCpuPinning};
     }
 };
 

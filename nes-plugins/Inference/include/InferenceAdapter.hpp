@@ -88,6 +88,13 @@ private:
     std::set<int> missIndices;
 };
 
+struct InferenceRuntimeConfiguration
+{
+    uint64_t openVinoInferenceNumThreads = 1;
+    uint64_t openVinoNumStreams = 1;
+    bool openVinoEnableCpuPinning = false;
+};
+
 class InferenceAdapter
 {
 public:
@@ -103,7 +110,11 @@ public:
 
     InferenceAdapter() = default;
 
-    void initializeModel(Nebuli::Inference::Model& model, uint64_t batchSize);
+    void initializeModel(
+        Nebuli::Inference::Model& model,
+        uint64_t batchSize,
+        size_t workerThreadIndex,
+        const OpenVINOExecutionConfig& openVinoExecutionConfig);
 
     template <class T>
     void addModelInput(size_t index, T value);

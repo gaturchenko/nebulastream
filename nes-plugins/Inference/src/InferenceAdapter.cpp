@@ -32,7 +32,11 @@ iree_const_byte_span_t asIREESpan(std::span<const std::byte> span)
 namespace NES
 {
 
-void InferenceAdapter::initializeModel(Nebuli::Inference::Model& model, uint64_t batch_size)
+void InferenceAdapter::initializeModel(
+    Nebuli::Inference::Model& model,
+    const uint64_t batch_size,
+    [[maybe_unused]] const size_t workerThreadIndex,
+    const OpenVINOExecutionConfig& openVinoExecutionConfig)
 {
     backend = model.getBackend();
 
@@ -64,7 +68,8 @@ void InferenceAdapter::initializeModel(Nebuli::Inference::Model& model, uint64_t
         std::ranges::transform(xmlBuffer, xmlContent.begin(), [](const auto value) { return static_cast<char>(value); });
 
         PRECONDITION(openVinoDtypeMap.contains(model.getInputDtype()), "Unsupported OpenVINO input dtype");
-        openVinoRuntimeWrapper.setup(xmlContent, model.getOpenVinoBin(), openVinoDtypeMap.at(model.getInputDtype()), inputShape);
+        openVinoRuntimeWrapper.setup(
+            xmlContent, model.getOpenVinoBin(), openVinoDtypeMap.at(model.getInputDtype()), inputShape, openVinoExecutionConfig);
     }
     else
     {

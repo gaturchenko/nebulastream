@@ -32,7 +32,11 @@ uint64_t getPredictionCacheLookupIndexPageSize(const uint64_t keySize)
 }
 }
 
-InferenceOperatorHandler::InferenceOperatorHandler(Nebuli::Inference::Model model) : model(std::move(model))
+InferenceOperatorHandler::InferenceOperatorHandler(
+    Nebuli::Inference::Model model,
+    InferenceRuntimeConfiguration runtimeConfiguration)
+    : model(std::move(model))
+    , runtimeConfiguration(std::move(runtimeConfiguration))
 {
 }
 
@@ -41,8 +45,13 @@ void InferenceOperatorHandler::start(PipelineExecutionContext& pipelineExecution
     threadLocalAdapters.reserve(pipelineExecutionContext.getNumberOfWorkerThreads());
     for (size_t threadId = 0; threadId < pipelineExecutionContext.getNumberOfWorkerThreads(); ++threadId)
     {
+        OpenVINOExecutionConfig openVinoExecutionConfig{
+            .inferenceNumThreads = runtimeConfiguration.openVinoInferenceNumThreads,
+            .numStreams = runtimeConfiguration.openVinoNumStreams,
+            .enableCpuPinning = runtimeConfiguration.openVinoEnableCpuPinning};
+
         threadLocalAdapters.emplace_back(InferenceAdapter::create());
-        threadLocalAdapters.back()->initializeModel(model, 1);
+        threadLocalAdapters.back()->initializeModel(model, 1, threadId, openVinoExecutionConfig);
     }
 }
 void InferenceOperatorHandler::stop(QueryTerminationType, PipelineExecutionContext& pipelineExecutionContext)

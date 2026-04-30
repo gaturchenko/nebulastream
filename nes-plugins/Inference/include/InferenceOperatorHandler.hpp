@@ -15,6 +15,7 @@
 #pragma once
 
 #include <Identifiers/Identifiers.hpp>
+#include <InferenceAdapter.hpp>
 #include <PredictionCacheOperatorHandler.hpp>
 #include <Runtime/AbstractBufferProvider.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
@@ -26,7 +27,7 @@ class InferenceAdapter;
 class InferenceOperatorHandler : public OperatorHandler, public PredictionCacheOperatorHandler
 {
 public:
-    explicit InferenceOperatorHandler(Nebuli::Inference::Model model);
+    explicit InferenceOperatorHandler(Nebuli::Inference::Model model, InferenceRuntimeConfiguration runtimeConfiguration = {});
 
     void start(PipelineExecutionContext& pipelineExecutionContext, uint32_t localStateVariableId) override;
     void stop(QueryTerminationType terminationType, PipelineExecutionContext& pipelineExecutionContext) override;
@@ -67,6 +68,7 @@ public:
 
 private:
     Nebuli::Inference::Model model;
+    InferenceRuntimeConfiguration runtimeConfiguration;
     std::vector<std::shared_ptr<InferenceAdapter>> threadLocalAdapters;
 };
 

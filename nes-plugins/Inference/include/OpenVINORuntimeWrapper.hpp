@@ -24,6 +24,12 @@
 
 namespace NES
 {
+struct OpenVINOExecutionConfig
+{
+    uint64_t inferenceNumThreads = 1;
+    uint64_t numStreams = 1;
+    bool enableCpuPinning = false;
+};
 
 class OpenVINORuntimeWrapper
 {
@@ -32,7 +38,8 @@ public:
         const std::string& modelXml,
         std::span<const std::byte> modelBin,
         const ov::element::Type& inputElementType,
-        const std::vector<size_t>& inputShape);
+        const std::vector<size_t>& inputShape,
+        OpenVINOExecutionConfig executionConfig);
 
     void execute(const void* inputData, void* outputData);
 
@@ -43,6 +50,7 @@ private:
     ov::element::Type outputElementType;
     ov::Shape outputShape;
     size_t outputTensorSize = 0;
+    OpenVINOExecutionConfig executionConfig;
 };
 
 }

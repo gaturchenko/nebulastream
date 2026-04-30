@@ -164,7 +164,11 @@ struct InferRequestContext
     size_t outputTensorSize = 0;
 };
 
-InferRequestContext createInferRequest(const std::string& modelXml, std::span<const std::byte> modelBin, const ov::Shape& shape)
+InferRequestContext createInferRequest(
+    const std::string& modelXml,
+    std::span<const std::byte> modelBin,
+    const ov::Shape& shape,
+    const OpenVINOExecutionConfig& executionConfig)
 {
     static ov::Core sharedCore;
     static std::mutex coreMutex;
@@ -179,9 +183,9 @@ InferRequestContext createInferRequest(const std::string& modelXml, std::span<co
     auto compiledModel = sharedCore.compile_model(model, "CPU",
         ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY), // to avoid implicit demotion to bfloat16
         ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY),
-        ov::hint::enable_cpu_pinning(false),
-        ov::inference_num_threads(1),
-        ov::num_streams(1));
+        ov::hint::enable_cpu_pinning(executionConfig.enableCpuPinning),
+        ov::inference_num_threads(static_cast<int32_t>(executionConfig.inferenceNumThreads)),
+        ov::num_streams(static_cast<int32_t>(executionConfig.numStreams)));
 
     auto outputElementType = compiledModel.output(0).get_element_type();
     auto outputShape = compiledModel.output(0).get_shape();
@@ -199,16 +203,18 @@ void OpenVINORuntimeWrapper::setup(
     const std::string& modelXml,
     const std::span<const std::byte> modelBin,
     const ov::element::Type& inputElementType,
-    const std::vector<size_t>& inputShape)
+    const std::vector<size_t>& inputShape,
+    OpenVINOExecutionConfig executionConfig)
 {
     auto shape = ov::Shape(inputShape.begin(), inputShape.end());
-    auto inferRequestContext = createInferRequest(modelXml, modelBin, shape);
+    auto inferRequestContext = createInferRequest(modelXml, modelBin, shape, executionConfig);
     inferRequest = std::move(inferRequestContext.inferRequest);
     this->inputElementType = inputElementType;
     this->inputShape = shape;
     this->outputElementType = std::move(inferRequestContext.outputElementType);
     this->outputShape = std::move(inferRequestContext.outputShape);
     this->outputTensorSize = inferRequestContext.outputTensorSize;
+    this->executionConfig = std::move(executionConfig);
 }
 
 void OpenVINORuntimeWrapper::execute(const void* inputData, void* outputData)

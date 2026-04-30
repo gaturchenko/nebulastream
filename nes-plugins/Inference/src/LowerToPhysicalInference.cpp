@@ -108,6 +108,9 @@ struct LowerToPhysicalInferenceOperator : NES::AbstractRewriteRule
         const auto useBatchDeduplication = conf.inferenceConfiguration.useBatchDeduplication;
         const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType;
         const auto predictionCacheSize = conf.inferenceConfiguration.numberOfEntriesPredictionCache;
+        const auto openVinoInferenceNumThreads = conf.inferenceConfiguration.openvinoInferenceNumThreads.getValue();
+        const auto openVinoNumStreams = conf.inferenceConfiguration.openvinoNumStreams.getValue();
+        const auto openVinoEnableCpuPinning = conf.inferenceConfiguration.openvinoEnableCpuPinning.getValue();
 
         const auto inputDtype = model.getInputDtype();
         const auto outputDtype = model.getOutputDtype();
@@ -118,10 +121,14 @@ struct LowerToPhysicalInferenceOperator : NES::AbstractRewriteRule
         /// if the batch size is 1, then we simply use the inference operator with PipelineLocation::INTERMEDIATE
         /// else, add the batching operator (custom emit) and batch inference operator (custom scan)
         std::shared_ptr<NES::PhysicalOperatorWrapper> wrapper = nullptr;
+        auto runtimeConfiguration = NES::InferenceRuntimeConfiguration{
+            .openVinoInferenceNumThreads = openVinoInferenceNumThreads,
+            .openVinoNumStreams = openVinoNumStreams,
+            .openVinoEnableCpuPinning = openVinoEnableCpuPinning};
 
         if (batchSize.getValue() == 1)
         {
-            auto handler = std::make_shared<NES::InferenceOperatorHandler>(model);
+            auto handler = std::make_shared<NES::InferenceOperatorHandler>(model, runtimeConfiguration);
 
             switch (predictionCacheType.getValue())
             {
@@ -185,7 +192,7 @@ struct LowerToPhysicalInferenceOperator : NES::AbstractRewriteRule
 
             auto memoryProvider = NES::TupleBufferRef::create(pageSize, inputSchema);
             auto handler = std::make_shared<NES::BatchInferenceOperatorHandler>(
-                inputOriginIds | std::ranges::to<std::vector>(), outputOriginId, model, batchSize.getValue());
+                inputOriginIds | std::ranges::to<std::vector>(), outputOriginId, model, batchSize.getValue(), runtimeConfiguration);
 
             std::shared_ptr<NES::PhysicalOperatorWrapper> batchingWrapper = nullptr;
 
