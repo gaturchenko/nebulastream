@@ -37,10 +37,12 @@ public:
 
     UIntOption numberOfWorkerThreads
         = {"number_of_worker_threads", "4", "Number of worker threads used within the QueryEngine", {numberOfThreadsValidator()}};
+    StringOption workerThreadCpuSet
+        = {"worker_thread_cpu_set", "", "CPU set used to pin QueryEngine worker threads, e.g. \"0-3,8-11\""};
     UIntOption admissionQueueSize
         = {"admission_queue_size", "1000", "Size of the bounded admission queue used within the QueryEngine", {queueSizeValidator()}};
 
 protected:
-    std::vector<BaseOption*> getOptions() override { return {&numberOfWorkerThreads, &admissionQueueSize}; }
+    std::vector<BaseOption*> getOptions() override { return {&numberOfWorkerThreads, &workerThreadCpuSet, &admissionQueueSize}; }
 };
 }

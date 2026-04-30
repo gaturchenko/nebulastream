@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <stop_token>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -53,6 +54,7 @@
 #include <Task.hpp>
 #include <TaskQueue.hpp>
 #include <Thread.hpp>
+#include <Util/CpuAffinity.hpp>
 
 namespace NES
 {
@@ -399,12 +401,14 @@ public:
         std::shared_ptr<AbstractQueryStatusListener> listener,
         std::shared_ptr<QueryEngineStatisticListener> stats,
         std::shared_ptr<AbstractBufferProvider> bufferProvider,
-        const size_t admissionQueueSize)
+        const size_t admissionQueueSize,
+        std::vector<size_t> pinnedWorkerCpus)
         : listener(std::move(listener))
         , statistic(std::move(stats))
         , bufferProvider(std::move(bufferProvider))
         , taskQueue(admissionQueueSize)
         , delayedTaskSubmitter([this](Task&& task) noexcept { taskQueue.addInternalTaskNonBlocking(std::move(task)); })
+        , pinnedWorkerCpus(std::move(pinnedWorkerCpus))
     {
     }
 
@@ -458,6 +462,7 @@ private:
     /// The number of threads is only available via the atomic.
     std::vector<Thread> pool;
     std::atomic<int32_t> numberOfThreads_;
+    std::vector<size_t> pinnedWorkerCpus;
 
     friend class QueryEngine;
 };
@@ -737,6 +742,15 @@ void ThreadPool::addThread(WorkerId workerId)
         [this, id = numberOfThreads_++](const std::stop_token& stopToken)
         {
             WorkerThread::id = WorkerThreadId(WorkerThreadId::INITIAL + id);
+            if (!pinnedWorkerCpus.empty())
+            {
+                const auto core = pinnedWorkerCpus.at(static_cast<size_t>(id) % pinnedWorkerCpus.size());
+                std::string errorMessage;
+                if (!pinCurrentThreadToCpu(core, &errorMessage))
+                {
+                    ENGINE_LOG_WARNING("Failed to pin WorkerThread {} to core {}: {}", id, core, errorMessage);
+                }
+            }
             const WorkerThread worker{*this, false};
             while (!stopToken.stop_requested())
             {
@@ -766,9 +780,29 @@ QueryEngine::QueryEngine(
     , statusListener(std::move(listener))
     , statisticListener(std::move(statListener))
     , queryCatalog(std::make_shared<QueryCatalog>())
-    , threadPool(std::make_unique<ThreadPool>(statusListener, statisticListener, bufferManager, config.admissionQueueSize.getValue()))
+    , threadPool(nullptr)
     , workerId(workerId)
 {
+    std::vector<size_t> pinnedWorkerCpus;
+    const auto workerCpuSetRaw = config.workerThreadCpuSet.getValue();
+    if (!workerCpuSetRaw.empty())
+    {
+        auto parsedCpuSet = parseCpuSet(workerCpuSetRaw, getHardwareConcurrencyOrOne());
+        PRECONDITION(
+            parsedCpuSet.has_value(),
+            "Invalid worker_thread_cpu_set '{}'. Expected formats like '0', '0,1,2' or '0-3,8-11'",
+            workerCpuSetRaw);
+        pinnedWorkerCpus = std::move(*parsedCpuSet);
+        PRECONDITION(
+            pinnedWorkerCpus.size() >= config.numberOfWorkerThreads.getValue(),
+            "worker_thread_cpu_set provides {} cores, but {} worker threads were configured",
+            pinnedWorkerCpus.size(),
+            config.numberOfWorkerThreads.getValue());
+    }
+
+    threadPool = std::make_unique<ThreadPool>(
+        statusListener, statisticListener, bufferManager, config.admissionQueueSize.getValue(), std::move(pinnedWorkerCpus));
+
     for (size_t i = 0; i < config.numberOfWorkerThreads.getValue(); ++i)
     {
         threadPool->addThread(workerId);

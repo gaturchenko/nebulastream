@@ -12,6 +12,7 @@
 
 add_source_files(nes-common
         Common.cpp
+        CpuAffinity.cpp
         DumpHelper.cpp
         Strings.cpp
         Files.cpp
