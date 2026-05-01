@@ -20,6 +20,18 @@ DEFAULT_INFERENCE_PARAMS = {
     "use_batch_deduplication": "false",
 }
 SOURCE_NAME_PATTERN = re.compile(r"LogicalSource\(name:\s*([^,\s)]+)")
+TASK_METRIC_COLUMNS = [
+    "pipeline_task_count",
+    "pipeline_task_duration_us",
+    "pipeline_avg_task_duration_us",
+    "pipeline_task_span_us",
+    "pipeline_incoming_emit_count",
+    "pipeline_incoming_tuples",
+    "pipeline_matched_input_latency_count",
+    "pipeline_p50_input_latency_us",
+    "pipeline_p95_input_latency_us",
+    "pipeline_p99_input_latency_us",
+]
 
 
 def repo_root() -> Path:
@@ -31,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     default_results = root / "scripts" / "benchmarking" / "e2e" / "results"
 
     parser = argparse.ArgumentParser(
-        description="Compute throughput stats from systest result JSON files.",
+        description="Compute throughput and latency stats from systest result JSON files.",
     )
     parser.add_argument(
         "--results-dir",
@@ -54,15 +66,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_event_throughput(event: Dict[str, object]) -> Optional[float]:
-    dur = event.get("dur")
-    tuples = event.get("tuples")
-    if dur is None or tuples is None:
+def parse_float(value: object) -> Optional[float]:
+    if value is None:
         return None
     try:
-        dur_val = float(dur)
-        tuples_val = float(tuples)
+        return float(value)
     except (TypeError, ValueError):
+        return None
+
+
+def parse_event_throughput(event: Dict[str, object]) -> Optional[float]:
+    dur_val = parse_float(event.get("dur"))
+    tuples_val = parse_float(event.get("tuples"))
+    if dur_val is None or tuples_val is None:
         return None
     if dur_val <= 0:
         return None
@@ -81,9 +97,8 @@ def parse_pipeline_latency_us(events: List[object]) -> Optional[float]:
         timestamp = event.get("ts")
         if timestamp is None:
             continue
-        try:
-            timestamp_val = float(timestamp)
-        except (TypeError, ValueError):
+        timestamp_val = parse_float(timestamp)
+        if timestamp_val is None:
             continue
 
         if event.get("ph") == "B":
@@ -98,6 +113,204 @@ def parse_pipeline_latency_us(events: List[object]) -> Optional[float]:
     if latency < 0:
         return None
     return latency
+
+
+def nearest_rank_percentile(values: List[float], percentile: int) -> Optional[float]:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    rank = (len(sorted_values) * percentile + 99) // 100
+    return sorted_values[rank - 1]
+
+
+def compute_matched_input_latencies_us(
+    emits: List[Dict[str, object]], completions: List[Dict[str, object]]
+) -> List[float]:
+    sorted_emits = sorted(
+        (emit for emit in emits if parse_float(emit.get("emit_ts")) is not None),
+        key=lambda emit: parse_float(emit.get("emit_ts")) or 0.0,
+    )
+    sorted_completions = sorted(
+        (
+            completion
+            for completion in completions
+            if parse_float(completion.get("end_ts")) is not None
+        ),
+        key=lambda completion: (
+            parse_float(completion.get("start_ts"))
+            if parse_float(completion.get("start_ts")) is not None
+            else parse_float(completion.get("end_ts")) or 0.0
+        ),
+    )
+
+    latencies: List[float] = []
+    completion_index = 0
+    for emit in sorted_emits:
+        emit_ts = parse_float(emit.get("emit_ts"))
+        if emit_ts is None:
+            continue
+
+        while completion_index < len(sorted_completions):
+            end_ts = parse_float(sorted_completions[completion_index].get("end_ts"))
+            if end_ts is None or end_ts < emit_ts:
+                completion_index += 1
+                continue
+            break
+
+        if completion_index >= len(sorted_completions):
+            break
+
+        end_ts = parse_float(sorted_completions[completion_index].get("end_ts"))
+        if end_ts is not None:
+            latencies.append(end_ts - emit_ts)
+        completion_index += 1
+
+    return latencies
+
+
+def parse_pipeline_task_event_metric_rows(events: List[object]) -> List[Dict[str, object]]:
+    task_starts: Dict[Tuple[object, object], float] = {}
+    completions_by_pipeline: Dict[object, List[Dict[str, object]]] = {}
+    emits_by_target_pipeline: Dict[object, List[Dict[str, object]]] = {}
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("cat") != "task":
+            continue
+        args = event.get("args")
+        if not isinstance(args, dict):
+            continue
+        timestamp = parse_float(event.get("ts"))
+        if timestamp is None:
+            continue
+
+        phase = event.get("ph")
+        pipeline_id = args.get("pipeline_id")
+        task_id = args.get("task_id")
+        if phase == "B" and pipeline_id is not None and task_id is not None:
+            task_starts[(pipeline_id, task_id)] = timestamp
+            continue
+
+        if phase == "E" and pipeline_id is not None and task_id is not None:
+            duration = parse_float(event.get("dur"))
+            start_ts = task_starts.get((pipeline_id, task_id))
+            if start_ts is None and duration is not None:
+                start_ts = timestamp - duration
+            completion = {
+                "task_id": task_id,
+                "start_ts": start_ts,
+                "end_ts": timestamp,
+                "duration_us": duration,
+            }
+            completions_by_pipeline.setdefault(pipeline_id, []).append(completion)
+            continue
+
+        from_pipeline = args.get("from_pipeline")
+        to_pipeline = args.get("to_pipeline")
+        if phase == "i" and from_pipeline is not None and to_pipeline is not None:
+            emit = {
+                "from_pipeline": from_pipeline,
+                "to_pipeline": to_pipeline,
+                "task_id": task_id,
+                "tuples": parse_float(args.get("tuples")),
+                "emit_ts": timestamp,
+            }
+            emits_by_target_pipeline.setdefault(to_pipeline, []).append(emit)
+
+    rows: List[Dict[str, object]] = []
+    pipeline_ids = set(completions_by_pipeline) | set(emits_by_target_pipeline)
+    for pipeline_id in sorted(pipeline_ids, key=str):
+        completions = completions_by_pipeline.get(pipeline_id, [])
+        emits = emits_by_target_pipeline.get(pipeline_id, [])
+        durations = [
+            duration
+            for duration in (parse_float(completion.get("duration_us")) for completion in completions)
+            if duration is not None
+        ]
+        starts = [
+            start
+            for start in (parse_float(completion.get("start_ts")) for completion in completions)
+            if start is not None
+        ]
+        ends = [
+            end
+            for end in (parse_float(completion.get("end_ts")) for completion in completions)
+            if end is not None
+        ]
+        incoming_tuples = [
+            tuples
+            for tuples in (parse_float(emit.get("tuples")) for emit in emits)
+            if tuples is not None
+        ]
+        latencies = compute_matched_input_latencies_us(emits, completions)
+
+        row: Dict[str, object] = {
+            "pipeline_id": pipeline_id,
+            "pipeline_task_count": len(completions),
+            "pipeline_incoming_emit_count": len(emits),
+            "pipeline_incoming_tuples": sum(incoming_tuples) if incoming_tuples else 0.0,
+            "pipeline_matched_input_latency_count": len(latencies),
+        }
+        if durations:
+            row["pipeline_task_duration_us"] = sum(durations)
+            row["pipeline_avg_task_duration_us"] = sum(durations) / len(durations)
+        if starts and ends:
+            row["pipeline_task_span_us"] = max(ends) - min(starts)
+        if latencies:
+            row["pipeline_p50_input_latency_us"] = nearest_rank_percentile(latencies, 50)
+            row["pipeline_p95_input_latency_us"] = nearest_rank_percentile(latencies, 95)
+            row["pipeline_p99_input_latency_us"] = nearest_rank_percentile(latencies, 99)
+        rows.append(row)
+
+    return rows
+
+
+def parse_pipeline_aggregate_metric_rows(events: List[object]) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    field_map = {
+        "dur": "pipeline_task_duration_us",
+        "task_count": "pipeline_task_count",
+        "task_span_us": "pipeline_task_span_us",
+        "incoming_emit_count": "pipeline_incoming_emit_count",
+        "incoming_tuples": "pipeline_incoming_tuples",
+        "matched_input_latency_count": "pipeline_matched_input_latency_count",
+        "p50_input_latency_us": "pipeline_p50_input_latency_us",
+        "p95_input_latency_us": "pipeline_p95_input_latency_us",
+        "p99_input_latency_us": "pipeline_p99_input_latency_us",
+    }
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("cat") != "pipeline" or event.get("ph") != "E":
+            continue
+        args = event.get("args")
+        if not isinstance(args, dict):
+            continue
+        pipeline_id = args.get("pipeline_id")
+        if pipeline_id is None or "task_count" not in event:
+            continue
+
+        row: Dict[str, object] = {"pipeline_id": pipeline_id}
+        for event_field, row_field in field_map.items():
+            value = parse_float(event.get(event_field))
+            if value is not None:
+                row[row_field] = value
+        task_count = parse_float(row.get("pipeline_task_count"))
+        duration = parse_float(row.get("pipeline_task_duration_us"))
+        if task_count is not None and task_count > 0 and duration is not None:
+            row["pipeline_avg_task_duration_us"] = duration / task_count
+        rows.append(row)
+
+    return rows
+
+
+def parse_pipeline_metric_rows(events: List[object]) -> List[Dict[str, object]]:
+    task_event_rows = parse_pipeline_task_event_metric_rows(events)
+    if task_event_rows:
+        return task_event_rows
+    return parse_pipeline_aggregate_metric_rows(events)
 
 
 def parse_source_name(events: List[object]) -> Optional[str]:
@@ -228,6 +441,36 @@ def iter_latency_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
             "repetition": context["repetition"],
             "latency_us": latency_us,
         }
+
+
+def iter_task_metric_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
+    for json_path in results_dir.rglob("*.json"):
+        context = infer_context(results_dir, json_path)
+        if context is None:
+            print(f"Skipping unexpected JSON path: {json_path}", file=sys.stderr)
+            continue
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print(f"Skipping invalid JSON: {json_path}", file=sys.stderr)
+            continue
+
+        events = payload.get("traceEvents")
+        if not isinstance(events, list):
+            continue
+
+        inference_parts = parse_inference_config(context["inference_config"])
+        source_name = parse_source_name(events)
+        for metric_row in parse_pipeline_metric_rows(events):
+            row = {
+                "query_name": context["query_name"],
+                "source_name": source_name,
+                "inference_config_param_name": inference_parts["param_name"],
+                "inference_config_param_value": inference_parts["param_value"],
+                "repetition": context["repetition"],
+            }
+            row.update(metric_row)
+            yield row
 
 
 def parse_log_payload(log_path: Path) -> Optional[Dict[str, object]]:
@@ -401,6 +644,57 @@ def compute_latency_rows(results_dir: Path) -> "pd.DataFrame":
     return pd.DataFrame(rows)
 
 
+def compute_task_metric_stats(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_task_metric_rows(results_dir))
+    columns = [
+        "query_name",
+        "source_name",
+        "inference_config_param_name",
+        "inference_config_param_value",
+        "pipeline_id",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    df = pd.DataFrame(rows)
+    if "repetition" in df.columns:
+        df = df.drop(columns=["repetition"])
+    for col in TASK_METRIC_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    aggregations = {}
+    for col in TASK_METRIC_COLUMNS:
+        if col in df.columns:
+            aggregations[f"avg_{col}"] = (col, "mean")
+            aggregations[f"std_{col}"] = (col, "std")
+
+    if not aggregations:
+        return pd.DataFrame(columns=columns)
+
+    return (
+        df.groupby(columns, dropna=False)
+        .agg(**aggregations)
+        .reset_index()
+    )
+
+
+def compute_task_metric_rows(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_task_metric_rows(results_dir))
+    columns = [
+        "query_name",
+        "source_name",
+        "inference_config_param_name",
+        "inference_config_param_value",
+        "pipeline_id",
+        "repetition",
+        *TASK_METRIC_COLUMNS,
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)
+
+
 def compute_log_stats(results_dir: Path) -> "pd.DataFrame":
     rows: List[Dict[str, object]] = list(iter_log_rows(results_dir))
     if not rows:
@@ -449,14 +743,37 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
     if aggregate:
         throughput_stats = compute_throughput_stats(results_dir)
         latency_stats = compute_latency_stats(results_dir)
+        task_metric_stats = compute_task_metric_stats(results_dir)
         log_stats = compute_log_stats(results_dir)
     else:
         throughput_stats = compute_throughput_rows(results_dir)
         latency_stats = compute_latency_rows(results_dir)
+        task_metric_stats = compute_task_metric_rows(results_dir)
         log_stats = compute_log_rows(results_dir)
 
     if throughput_stats.empty:
-        expanded = expand_inference_columns(latency_stats)
+        merged = task_metric_stats if not task_metric_stats.empty else latency_stats
+        if (
+            not merged.empty
+            and not latency_stats.empty
+            and not task_metric_stats.empty
+        ):
+            latency_merge_key_candidates = [
+                "query_name",
+                "source_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+            ]
+            if not aggregate:
+                latency_merge_key_candidates.append("repetition")
+            latency_merge_keys = [
+                col
+                for col in latency_merge_key_candidates
+                if col in merged.columns and col in latency_stats.columns
+            ]
+            if latency_merge_keys:
+                merged = merged.merge(latency_stats, on=latency_merge_keys, how="left")
+        expanded = expand_inference_columns(merged)
         return drop_combined_inference_columns(expanded)
 
     merged = throughput_stats
@@ -477,6 +794,24 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
         ]
         if latency_merge_keys:
             merged = merged.merge(latency_stats, on=latency_merge_keys, how="left")
+
+    if not task_metric_stats.empty:
+        task_metric_merge_key_candidates = [
+            "query_name",
+            "source_name",
+            "inference_config_param_name",
+            "inference_config_param_value",
+            "pipeline_id",
+        ]
+        if not aggregate:
+            task_metric_merge_key_candidates.append("repetition")
+        task_metric_merge_keys = [
+            col
+            for col in task_metric_merge_key_candidates
+            if col in merged.columns and col in task_metric_stats.columns
+        ]
+        if task_metric_merge_keys:
+            merged = merged.merge(task_metric_stats, on=task_metric_merge_keys, how="left")
 
     if log_stats.empty:
         expanded = expand_inference_columns(merged)

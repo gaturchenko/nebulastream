@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stop_token>
 #include <string>
 #include <thread>
@@ -27,6 +28,7 @@
 #include <unordered_map>
 #include <utility>
 #include <variant>
+#include <vector>
 #include <Identifiers/Identifiers.hpp>
 #include <Listeners/StatisticListener.hpp>
 #include <folly/MPMCQueue.h>
@@ -77,6 +79,19 @@ private:
         Instant
     };
 
+    struct PipelineTaskStats
+    {
+        uint64_t taskCount = 0;
+        uint64_t firstTaskStartUs = std::numeric_limits<uint64_t>::max();
+        uint64_t lastTaskEndUs = 0;
+    };
+
+    struct PipelineInputStats
+    {
+        uint64_t incomingEmitCount = 0;
+        uint64_t incomingTuples = 0;
+    };
+
     static uint64_t timestampToMicroseconds(const std::chrono::system_clock::time_point& timestamp);
 
     /// Thread routine that processes events and writes to the trace file
@@ -94,6 +109,10 @@ private:
 
     std::unordered_map<PipelineId, uint64_t> pipelineDurations;
     std::unordered_map<PipelineId, size_t> pipelineTuplesProcessed;
+    std::unordered_map<PipelineId, PipelineTaskStats> pipelineTaskStats;
+    std::unordered_map<PipelineId, PipelineInputStats> pipelineInputStats;
+    std::unordered_map<PipelineId, std::vector<uint64_t>> pipelineInputEmitTimestamps;
+    std::unordered_map<PipelineId, std::vector<uint64_t>> pipelineTaskCompletionTimestamps;
 
     /// Must be declared last so it's destroyed first, ensuring the thread stops before maps are destroyed
     Thread traceThread;
