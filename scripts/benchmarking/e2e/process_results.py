@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Process systest results and compute throughput statistics."""
+"""Process systest results and compute throughput and latency statistics."""
 
 from __future__ import annotations
 
@@ -67,6 +67,37 @@ def parse_event_throughput(event: Dict[str, object]) -> Optional[float]:
     if dur_val <= 0:
         return None
     return tuples_val * 1_000_000.0 / dur_val
+
+
+def parse_pipeline_latency_us(events: List[object]) -> Optional[float]:
+    pipeline_starts: List[float] = []
+    pipeline_ends: List[float] = []
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("cat") != "pipeline":
+            continue
+        timestamp = event.get("ts")
+        if timestamp is None:
+            continue
+        try:
+            timestamp_val = float(timestamp)
+        except (TypeError, ValueError):
+            continue
+
+        if event.get("ph") == "B":
+            pipeline_starts.append(timestamp_val)
+        elif event.get("ph") == "E":
+            pipeline_ends.append(timestamp_val)
+
+    if not pipeline_starts or not pipeline_ends:
+        return None
+
+    latency = max(pipeline_ends) - min(pipeline_starts)
+    if latency < 0:
+        return None
+    return latency
 
 
 def parse_source_name(events: List[object]) -> Optional[str]:
@@ -166,6 +197,37 @@ def iter_pipeline_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
                 "source_name": source_name,
                 "throughput": throughput,
             }
+
+
+def iter_latency_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
+    for json_path in results_dir.rglob("*.json"):
+        context = infer_context(results_dir, json_path)
+        if context is None:
+            print(f"Skipping unexpected JSON path: {json_path}", file=sys.stderr)
+            continue
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print(f"Skipping invalid JSON: {json_path}", file=sys.stderr)
+            continue
+
+        events = payload.get("traceEvents")
+        if not isinstance(events, list):
+            continue
+
+        latency_us = parse_pipeline_latency_us(events)
+        if latency_us is None:
+            continue
+
+        inference_parts = parse_inference_config(context["inference_config"])
+        yield {
+            "query_name": context["query_name"],
+            "source_name": parse_source_name(events),
+            "inference_config_param_name": inference_parts["param_name"],
+            "inference_config_param_value": inference_parts["param_value"],
+            "repetition": context["repetition"],
+            "latency_us": latency_us,
+        }
 
 
 def parse_log_payload(log_path: Path) -> Optional[Dict[str, object]]:
@@ -288,6 +350,57 @@ def compute_throughput_rows(results_dir: Path) -> "pd.DataFrame":
     return pd.DataFrame(rows)
 
 
+def compute_latency_stats(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_latency_rows(results_dir))
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "query_name",
+                "source_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+                "avg_latency_us",
+                "std_latency_us",
+            ]
+        )
+
+    df = pd.DataFrame(rows)
+    if "repetition" in df.columns:
+        df = df.drop(columns=["repetition"])
+    return (
+        df.groupby(
+            [
+                "query_name",
+                "source_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+            ],
+            dropna=False,
+        )
+        .agg(
+            avg_latency_us=("latency_us", "mean"),
+            std_latency_us=("latency_us", "std"),
+        )
+        .reset_index()
+    )
+
+
+def compute_latency_rows(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_latency_rows(results_dir))
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "query_name",
+                "source_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+                "repetition",
+                "latency_us",
+            ]
+        )
+    return pd.DataFrame(rows)
+
+
 def compute_log_stats(results_dir: Path) -> "pd.DataFrame":
     rows: List[Dict[str, object]] = list(iter_log_rows(results_dir))
     if not rows:
@@ -335,17 +448,38 @@ def compute_log_rows(results_dir: Path) -> "pd.DataFrame":
 def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
     if aggregate:
         throughput_stats = compute_throughput_stats(results_dir)
+        latency_stats = compute_latency_stats(results_dir)
         log_stats = compute_log_stats(results_dir)
     else:
         throughput_stats = compute_throughput_rows(results_dir)
+        latency_stats = compute_latency_rows(results_dir)
         log_stats = compute_log_rows(results_dir)
 
     if throughput_stats.empty:
-        expanded = expand_inference_columns(throughput_stats)
+        expanded = expand_inference_columns(latency_stats)
         return drop_combined_inference_columns(expanded)
 
+    merged = throughput_stats
+
+    if not latency_stats.empty:
+        latency_merge_key_candidates = [
+            "query_name",
+            "source_name",
+            "inference_config_param_name",
+            "inference_config_param_value",
+        ]
+        if not aggregate:
+            latency_merge_key_candidates.append("repetition")
+        latency_merge_keys = [
+            col
+            for col in latency_merge_key_candidates
+            if col in merged.columns and col in latency_stats.columns
+        ]
+        if latency_merge_keys:
+            merged = merged.merge(latency_stats, on=latency_merge_keys, how="left")
+
     if log_stats.empty:
-        expanded = expand_inference_columns(throughput_stats)
+        expanded = expand_inference_columns(merged)
         return drop_combined_inference_columns(expanded)
 
     merge_key_candidates = [
@@ -359,13 +493,13 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
     merge_keys = [
         col
         for col in merge_key_candidates
-        if col in throughput_stats.columns and col in log_stats.columns
+        if col in merged.columns and col in log_stats.columns
     ]
     if not merge_keys:
-        expanded = expand_inference_columns(throughput_stats)
+        expanded = expand_inference_columns(merged)
         return drop_combined_inference_columns(expanded)
 
-    merged = throughput_stats.merge(log_stats, on=merge_keys, how="inner")
+    merged = merged.merge(log_stats, on=merge_keys, how="inner")
     merged = expand_inference_columns(merged)
     return drop_combined_inference_columns(merged)
 
