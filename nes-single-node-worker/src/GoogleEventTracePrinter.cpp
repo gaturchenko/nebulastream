@@ -48,14 +48,6 @@ constexpr uint64_t DROP_LOG_INTERVAL = 100;
 
 namespace
 {
-struct InputLatencySummary
-{
-    uint64_t count = 0;
-    uint64_t p50Us = 0;
-    uint64_t p95Us = 0;
-    uint64_t p99Us = 0;
-};
-
 /// Escape a string for JSON output (handles quotes in addition to special chars)
 std::string escapeForJson(std::string_view str)
 {
@@ -75,49 +67,6 @@ std::string escapeForJson(std::string_view str)
         }
     }
     return final;
-}
-
-uint64_t nearestRankPercentile(const std::vector<uint64_t>& sortedValues, size_t percentile)
-{
-    if (sortedValues.empty())
-    {
-        return 0;
-    }
-    const auto rank = ((sortedValues.size() * percentile) + 99) / 100;
-    return sortedValues[rank - 1];
-}
-
-InputLatencySummary computeInputLatencySummary(std::vector<uint64_t> emitTimestamps, std::vector<uint64_t> completionTimestamps)
-{
-    std::ranges::sort(emitTimestamps);
-    std::ranges::sort(completionTimestamps);
-
-    std::vector<uint64_t> latencies;
-    latencies.reserve(std::min(emitTimestamps.size(), completionTimestamps.size()));
-    size_t completionIndex = 0;
-    for (const auto emitTimestamp : emitTimestamps)
-    {
-        while (completionIndex < completionTimestamps.size() && completionTimestamps[completionIndex] < emitTimestamp)
-        {
-            ++completionIndex;
-        }
-        if (completionIndex >= completionTimestamps.size())
-        {
-            break;
-        }
-
-        const auto latency = completionTimestamps[completionIndex] - emitTimestamp;
-        latencies.push_back(latency);
-        ++completionIndex;
-    }
-
-    std::ranges::sort(latencies);
-    InputLatencySummary summary;
-    summary.count = latencies.size();
-    summary.p50Us = nearestRankPercentile(latencies, 50);
-    summary.p95Us = nearestRankPercentile(latencies, 95);
-    summary.p99Us = nearestRankPercentile(latencies, 99);
-    return summary;
 }
 
 std::string optionalUnsigned(uint64_t value, bool hasValue)
@@ -303,16 +252,13 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                     const auto pipelineDuration = pipelineDurations[pipelineId];
                     const auto pipelineTuples = pipelineTuplesProcessed[pipelineId];
                     const auto taskStats = pipelineTaskStats[pipelineId];
-                    const auto inputStats = pipelineInputStats[pipelineId];
-                    const auto inputLatencySummary = computeInputLatencySummary(
-                        pipelineInputEmitTimestamps[pipelineId], pipelineTaskCompletionTimestamps[pipelineId]);
                     const auto hasTaskSpan = taskStats.taskCount > 0;
                     const auto taskSpan = hasTaskSpan ? taskStats.lastTaskEndUs - taskStats.firstTaskStartUs : 0;
 
                     printComma();
                     fmt::print(
                         file,
-                        R"x(    {{"args":{{"pipeline_id":{}}},"cat":"pipeline","name":"Pipeline {} (Query {})","ph":"E","pid":{},"tid":{},"ts":{},"dur":{},"tuples":{},"task_count":{},"task_span_us":{},"incoming_emit_count":{},"incoming_tuples":{},"matched_input_latency_count":{},"p50_input_latency_us":{},"p95_input_latency_us":{},"p99_input_latency_us":{}}})x",
+                        R"x(    {{"args":{{"pipeline_id":{}}},"cat":"pipeline","name":"Pipeline {} (Query {})","ph":"E","pid":{},"tid":{},"ts":{},"dur":{},"tuples":{},"task_count":{},"task_span_us":{}}})x",
                         pipelineStop.pipelineId.getRawValue(),
                         pipelineStop.pipelineId,
                         pipelineStop.queryId,
@@ -322,22 +268,13 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                         pipelineDuration,
                         pipelineTuples,
                         taskStats.taskCount,
-                        optionalUnsigned(taskSpan, hasTaskSpan),
-                        inputStats.incomingEmitCount,
-                        inputStats.incomingTuples,
-                        inputLatencySummary.count,
-                        optionalUnsigned(inputLatencySummary.p50Us, inputLatencySummary.count > 0),
-                        optionalUnsigned(inputLatencySummary.p95Us, inputLatencySummary.count > 0),
-                        optionalUnsigned(inputLatencySummary.p99Us, inputLatencySummary.count > 0));
+                        optionalUnsigned(taskSpan, hasTaskSpan));
 
                     /// Remove from active pipelines
                     activePipelines.erase(pipelineStop.pipelineId);
                     pipelineDurations.erase(pipelineId);
                     pipelineTuplesProcessed.erase(pipelineId);
                     pipelineTaskStats.erase(pipelineId);
-                    pipelineInputStats.erase(pipelineId);
-                    pipelineInputEmitTimestamps.erase(pipelineId);
-                    pipelineTaskCompletionTimestamps.erase(pipelineId);
                 },
                 [&](const TaskExecutionStart& taskStart)
                 {
@@ -378,7 +315,6 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                     ++stats.taskCount;
                     stats.firstTaskStartUs = std::min(stats.firstTaskStartUs, taskStartUs);
                     stats.lastTaskEndUs = std::max(stats.lastTaskEndUs, taskCompleteUs);
-                    pipelineTaskCompletionTimestamps[taskComplete.pipelineId].push_back(taskCompleteUs);
 
                     // printComma();
                     // fmt::print(
@@ -397,10 +333,6 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                 [&](const TaskEmit& taskEmit)
                 {
                     pipelineTuplesProcessed[taskEmit.fromPipeline] += taskEmit.numberOfTuples;
-                    auto& inputStats = pipelineInputStats[taskEmit.toPipeline];
-                    ++inputStats.incomingEmitCount;
-                    inputStats.incomingTuples += taskEmit.numberOfTuples;
-                    pipelineInputEmitTimestamps[taskEmit.toPipeline].push_back(timestampToMicroseconds(taskEmit.timestamp));
                     // printComma();
                     // fmt::print(
                     //     file,
