@@ -21,8 +21,8 @@
 #include <utility>
 #include <vector>
 #include <ErrorHandling.hpp>
-#include <Model.hpp>
 #include <IreeRuntimeBackend.hpp>
+#include <Model.hpp>
 #include <OpenVinoRuntimeBackend.hpp>
 
 namespace NES

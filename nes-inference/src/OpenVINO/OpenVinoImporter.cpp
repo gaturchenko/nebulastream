@@ -38,11 +38,11 @@
 #include <openvino/openvino.hpp>
 #include <scope_guard.hpp>
 
-#include <BackendTool.hpp>
-#include <ModelAccess.hpp>
 #include <Util/Logger/Logger.hpp>
+#include <BackendTool.hpp>
 #include <Inference.hpp>
 #include <Model.hpp>
+#include <ModelAccess.hpp>
 
 namespace NES
 {
@@ -83,7 +83,8 @@ std::expected<std::vector<std::byte>, ImportError> readBinaryFile(const std::fil
 std::string lowerExtension(const std::filesystem::path& path)
 {
     auto extension = path.extension().string();
-    std::ranges::transform(extension, extension.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    std::ranges::transform(
+        extension, extension.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return extension;
 }
 
@@ -160,8 +161,7 @@ OpenVinoImporter::OpenVinoImporter()
     }
     if (const auto& version = discovery.version.value(); version != expectedOpenVinoVersion)
     {
-        NES_WARNING(
-            "{}: version mismatch (got {}, expected {})", discovery.name, format_as(version), format_as(expectedOpenVinoVersion));
+        NES_WARNING("{}: version mismatch (got {}, expected {})", discovery.name, format_as(version), format_as(expectedOpenVinoVersion));
         return;
     }
     NES_INFO("{}", detail::format_as(discovery));

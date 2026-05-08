@@ -18,13 +18,13 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <BackendTool.hpp>
-#include <ModelAccess.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <BackendTool.hpp>
 #include <Inference.hpp>
 #include <Model.hpp>
+#include <ModelAccess.hpp>
 
 namespace NES
 {

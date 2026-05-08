@@ -23,11 +23,11 @@
 #include <utility>
 #include <vector>
 #include <unistd.h>
-#include <gtest/gtest.h>
 #include <IREE/IreeCompiler.hpp>
 #include <IREE/IreeImporter.hpp>
-#include <Model.hpp>
 #include <OpenVINO/OpenVinoImporter.hpp>
+#include <gtest/gtest.h>
+#include <Model.hpp>
 
 namespace NES
 {

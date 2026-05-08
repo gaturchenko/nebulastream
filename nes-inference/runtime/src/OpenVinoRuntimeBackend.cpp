@@ -95,57 +95,56 @@ std::string formatTensor(const ov::Tensor& tensor)
 
 namespace NES
 {
-    RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model)
+RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model)
+{
+    /// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) byte-to-text for OpenVINO XML payload
+    const std::string modelXml(reinterpret_cast<const char*>(model.getData().data()), model.getData().size());
+    std::vector<std::uint8_t> modelBin(model.getAuxiliaryData().size());
+    std::ranges::transform(model.getAuxiliaryData(), modelBin.begin(), [](std::byte value) { return static_cast<std::uint8_t>(value); });
+
+    static ov::Core sharedCore;
+    static std::mutex coreMutex;
+    const ov::Shape modelInputShape(model.getInputShape().begin(), model.getInputShape().end());
+    ov::Tensor weights(ov::element::u8, {modelBin.size()});
+    if (!modelBin.empty())
     {
-        /// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) byte-to-text for OpenVINO XML payload
-        const std::string modelXml(reinterpret_cast<const char*>(model.getData().data()), model.getData().size());
-        std::vector<std::uint8_t> modelBin(model.getAuxiliaryData().size());
-        std::ranges::transform(
-            model.getAuxiliaryData(), modelBin.begin(), [](std::byte value) { return static_cast<std::uint8_t>(value); });
-
-        static ov::Core sharedCore;
-        static std::mutex coreMutex;
-        const ov::Shape modelInputShape(model.getInputShape().begin(), model.getInputShape().end());
-        ov::Tensor weights(ov::element::u8, {modelBin.size()});
-        if (!modelBin.empty())
-        {
-            std::memcpy(weights.data<std::uint8_t>(), modelBin.data(), modelBin.size());
-        }
-
-        std::scoped_lock lock(coreMutex);
-        auto openVinoModel = sharedCore.read_model(modelXml, weights);
-        openVinoModel->reshape(modelInputShape);
-        auto compiledModel = sharedCore.compile_model(
-            openVinoModel,
-            "CPU",
-            ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY),
-            ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
-
-        inferRequest = compiledModel.create_infer_request();
-        inputElementType = compiledModel.input(0).get_element_type();
-        inputShape = compiledModel.input(0).get_shape();
-        outputElementType = compiledModel.output(0).get_element_type();
-        outputShape = compiledModel.output(0).get_shape();
-
-        return RuntimeMetadata{
-            .inputShape = model.getInputShape(),
-            .nDim = model.getNDim(),
-            .functionName = model.getFunctionName(),
-            .inputSize = model.inputSize(),
-            .outputSize = model.outputSize()};
+        std::memcpy(weights.data<std::uint8_t>(), modelBin.data(), modelBin.size());
     }
 
-    void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t  /*outputBufferSize*/)
-    {
-        ov::Tensor inputTensor(inputElementType, inputShape, inputBuffer);
-        inferRequest.set_input_tensor(inputTensor);
+    std::scoped_lock lock(coreMutex);
+    auto openVinoModel = sharedCore.read_model(modelXml, weights);
+    openVinoModel->reshape(modelInputShape);
+    auto compiledModel = sharedCore.compile_model(
+        openVinoModel,
+        "CPU",
+        ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY),
+        ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
 
-        NES_DEBUG("Model input: {}", formatTensor(inferRequest.get_input_tensor()))
+    inferRequest = compiledModel.create_infer_request();
+    inputElementType = compiledModel.input(0).get_element_type();
+    inputShape = compiledModel.input(0).get_shape();
+    outputElementType = compiledModel.output(0).get_element_type();
+    outputShape = compiledModel.output(0).get_shape();
 
-        ov::Tensor outputTensor(outputElementType, outputShape, outputBuffer);
-        inferRequest.set_output_tensor(0, outputTensor);
+    return RuntimeMetadata{
+        .inputShape = model.getInputShape(),
+        .nDim = model.getNDim(),
+        .functionName = model.getFunctionName(),
+        .inputSize = model.inputSize(),
+        .outputSize = model.outputSize()};
+}
 
-        inferRequest.infer();
-        NES_DEBUG("Model output: {}", formatTensor(inferRequest.get_output_tensor(0)))
-    }
+void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t /*outputBufferSize*/)
+{
+    ov::Tensor inputTensor(inputElementType, inputShape, inputBuffer);
+    inferRequest.set_input_tensor(inputTensor);
+
+    NES_DEBUG("Model input: {}", formatTensor(inferRequest.get_input_tensor()))
+
+    ov::Tensor outputTensor(outputElementType, outputShape, outputBuffer);
+    inferRequest.set_output_tensor(0, outputTensor);
+
+    inferRequest.infer();
+    NES_DEBUG("Model output: {}", formatTensor(inferRequest.get_output_tensor(0)))
+}
 }

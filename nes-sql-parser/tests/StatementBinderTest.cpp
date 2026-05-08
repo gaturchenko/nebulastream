@@ -597,8 +597,7 @@ TEST_F(StatementBinderTest, BindCreateModel)
 {
     const std::string modelPath = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
     /// tiny_identity.onnx has a 100-element f32 tensor on each side; VARSIZED mirrors it as a single bulk-byte field.
-    const std::string createModelStatement = "CREATE MODEL identity ('" + modelPath
-        + "' BACKEND IREE"
+    const std::string createModelStatement = "CREATE MODEL identity ('" + modelPath + "' BACKEND IREE"
         + ") "
           "INPUT (f1 VARSIZED) "
           "OUTPUT (o1 VARSIZED)";
@@ -659,8 +658,8 @@ TEST_F(StatementBinderTest, BindCreateModel)
 TEST_F(StatementBinderTest, BindCreateModelBackend)
 {
     const std::string modelPath = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
-    const auto defaultBackend = binder->parseAndBindSingle(
-        "CREATE MODEL defaultBackend ('" + modelPath + "') INPUT (f1 VARSIZED) OUTPUT (o1 VARSIZED)");
+    const auto defaultBackend
+        = binder->parseAndBindSingle("CREATE MODEL defaultBackend ('" + modelPath + "') INPUT (f1 VARSIZED) OUTPUT (o1 VARSIZED)");
     ASSERT_TRUE(defaultBackend.has_value());
     const auto& defaultModel = std::get<CreateModelStatement>(*defaultBackend);
     ASSERT_EQ(defaultModel.backend, "OPENVINO");
@@ -685,8 +684,8 @@ TEST_F(StatementBinderTest, BindCreateModelBackend)
 TEST_F(StatementBinderTest, BindCreateModelRegistersOpenVinoAndDefaultBackend)
 {
     const std::string modelPath = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
-    const auto defaultBackend = binder->parseAndBindSingle(
-        "CREATE MODEL defaultBackend ('" + modelPath + "') INPUT (f1 VARSIZED) OUTPUT (o1 VARSIZED)");
+    const auto defaultBackend
+        = binder->parseAndBindSingle("CREATE MODEL defaultBackend ('" + modelPath + "') INPUT (f1 VARSIZED) OUTPUT (o1 VARSIZED)");
     ASSERT_TRUE(defaultBackend.has_value());
     const auto& defaultModel = std::get<CreateModelStatement>(*defaultBackend);
     ASSERT_EQ(defaultModel.backend, "OPENVINO");

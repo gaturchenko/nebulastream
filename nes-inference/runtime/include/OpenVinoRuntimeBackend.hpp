@@ -14,8 +14,8 @@
 
 #pragma once
 
-#include <RuntimeBackend.hpp>
 #include <openvino/openvino.hpp>
+#include <RuntimeBackend.hpp>
 
 namespace NES
 {

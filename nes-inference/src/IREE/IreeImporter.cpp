@@ -24,12 +24,12 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
-#include <BackendTool.hpp>
-#include <MlirAnalyzer.hpp>
-#include <ModelAccess.hpp>
 #include <Util/Logger/Logger.hpp>
+#include <BackendTool.hpp>
 #include <Inference.hpp>
+#include <MlirAnalyzer.hpp>
 #include <Model.hpp>
+#include <ModelAccess.hpp>
 
 namespace NES
 {

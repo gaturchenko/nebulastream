@@ -14,10 +14,10 @@
 
 #pragma once
 
-#include <Model.hpp>
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <Model.hpp>
 
 namespace NES
 {
