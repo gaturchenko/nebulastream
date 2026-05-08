@@ -16,10 +16,13 @@
 
 #include <expected>
 #include <filesystem>
+#include <utility>
 
-#include <IreeCompiler.hpp>
-#include <IreeImporter.hpp>
+#include <IREE/IreeCompiler.hpp>
+#include <IREE/IreeImporter.hpp>
+#include <OpenVINO/OpenVinoImporter.hpp>
 #include <Model.hpp>
+#include <ModelAccess.hpp>
 
 namespace NES
 {
@@ -41,16 +44,41 @@ const IreeCompiler& sharedCompiler()
     return Instance;
 }
 
+const OpenVinoImporter& sharedOpenVinoImporter()
+{
+    static const OpenVinoImporter Instance;
+    return Instance;
+}
+
 }
 
 std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath)
 {
-    return sharedImporter().importOnnx(modelPath);
+    return importModel(modelPath, ModelBackend::OPENVINO);
+}
+
+std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath, ModelBackend backend)
+{
+    switch (backend)
+    {
+        case ModelBackend::IREE:
+            return sharedImporter().importOnnx(modelPath);
+        case ModelBackend::OPENVINO:
+            return sharedOpenVinoImporter().importModel(modelPath);
+    }
+    std::unreachable();
 }
 
 std::expected<CompiledModel, CompileError> compileModel(const ImportedModel& imported)
 {
-    return sharedCompiler().compile(imported);
+    switch (imported.getBackend())
+    {
+        case ModelBackend::IREE:
+            return sharedCompiler().compile(imported);
+        case ModelBackend::OPENVINO:
+            return detail::ModelAccess::compileFrom(imported, detail::RefCountedByteBuffer::fromBytes(imported.getData()));
+    }
+    std::unreachable();
 }
 
 }

@@ -16,28 +16,29 @@
 
 #include <expected>
 #include <filesystem>
-#include <string>
 
+#include <BackendTool.hpp>
+#include <Inference.hpp>
 #include <Model.hpp>
 
 namespace NES
 {
 
-struct ImportError
+/// Wraps the `iree-import-onnx` tool. Internal — exposed to consumers through
+/// the free function `importOnnxModel` in `Inference.hpp`.
+class IreeImporter
 {
-    std::string message;
+public:
+    IreeImporter();
+
+    [[nodiscard]] bool available() const { return !discovery.path.empty(); }
+
+    [[nodiscard]] const std::filesystem::path& path() const { return discovery.path; }
+
+    [[nodiscard]] std::expected<ImportedModel, ImportError> importOnnx(const std::filesystem::path& onnxPath) const;
+
+private:
+    detail::ToolDiscovery discovery;
 };
-
-struct CompileError
-{
-    std::string message;
-};
-
-/// Import a model from a file. Only ONNX is supported.
-std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath);
-std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath, ModelBackend backend);
-
-/// Compile a previously imported model so it can be executed by the runtime.
-std::expected<CompiledModel, CompileError> compileModel(const ImportedModel& imported);
 
 }

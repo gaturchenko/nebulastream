@@ -24,9 +24,10 @@
 #include <vector>
 #include <unistd.h>
 #include <gtest/gtest.h>
-#include <IreeCompiler.hpp>
-#include <IreeImporter.hpp>
+#include <IREE/IreeCompiler.hpp>
+#include <IREE/IreeImporter.hpp>
 #include <Model.hpp>
+#include <OpenVINO/OpenVinoImporter.hpp>
 
 namespace NES
 {
@@ -39,6 +40,12 @@ bool inferenceEnabled()
     static const IreeCompiler Compiler;
     return Importer.available() && Compiler.available();
 }
+
+bool openVinoEnabled()
+{
+    static const OpenVinoImporter Importer;
+    return Importer.available();
+}
 }
 
 TEST(ModelLoaderTest, checkToolAvailability)
@@ -49,9 +56,29 @@ TEST(ModelLoaderTest, checkToolAvailability)
 namespace
 {
 
-/// End-to-end helper: import + compile. The importer also runs the MLIR
+/// End-to-end helper: import + compile. The IREE importer also runs the MLIR
 /// analyzer internally so the returned `ImportedModel` is fully populated.
+std::expected<CompiledModel, std::string> importAndCompile(const std::filesystem::path& path, ModelBackend backend)
+{
+    auto imported = importModel(path, backend);
+    if (!imported)
+    {
+        return std::unexpected(imported.error().message);
+    }
+    auto compiled = compileModel(*imported);
+    if (!compiled)
+    {
+        return std::unexpected(compiled.error().message);
+    }
+    return std::move(*compiled);
+}
+
 std::expected<CompiledModel, std::string> importAndCompile(const std::filesystem::path& path)
+{
+    return importAndCompile(path, ModelBackend::IREE);
+}
+
+std::expected<CompiledModel, std::string> importAndCompileDefault(const std::filesystem::path& path)
 {
     auto imported = importModel(path);
     if (!imported)
@@ -81,6 +108,46 @@ TEST(ModelLoaderTest, LoadsIdentityModel)
     EXPECT_FALSE(result->empty());
 }
 
+TEST(ModelLoaderTest, LoadsIdentityModelWithOpenVinoBackend)
+{
+    if (!openVinoEnabled())
+    {
+        GTEST_SKIP() << "OpenVINO import unavailable in this environment";
+    }
+
+    const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
+    auto imported = importModel(path, ModelBackend::OPENVINO);
+    ASSERT_TRUE(imported.has_value()) << "Failed to import OpenVINO model: " << imported.error().message;
+
+    EXPECT_EQ(imported->getBackend(), ModelBackend::OPENVINO);
+    EXPECT_EQ(imported->getInputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_EQ(imported->getOutputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_FALSE(imported->empty());
+
+    auto compiled = compileModel(*imported);
+    ASSERT_TRUE(compiled.has_value()) << "Failed to compile OpenVINO model: " << (compiled ? "" : compiled.error().message);
+    EXPECT_EQ(compiled->getBackend(), ModelBackend::OPENVINO);
+    EXPECT_EQ(compiled->getInputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_EQ(compiled->getOutputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_FALSE(compiled->empty());
+}
+
+TEST(ModelLoaderTest, LoadsIdentityModelWithDefaultOpenVinoBackend)
+{
+    if (!openVinoEnabled())
+    {
+        GTEST_SKIP() << "OpenVINO import unavailable in this environment";
+    }
+
+    const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
+    auto result = importAndCompileDefault(path);
+    ASSERT_TRUE(result.has_value()) << "Failed to load identity model with default backend: " << (result ? "" : result.error());
+    EXPECT_EQ(result->getBackend(), ModelBackend::OPENVINO);
+    EXPECT_EQ(result->getInputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_EQ(result->getOutputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_FALSE(result->empty());
+}
+
 TEST(ModelLoaderTest, LoadsReductionModel)
 {
     const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_reduction.onnx";
@@ -91,6 +158,24 @@ TEST(ModelLoaderTest, LoadsReductionModel)
     EXPECT_EQ(result->inputSize(), 400U);
     EXPECT_EQ(result->outputSize(), 40U);
     EXPECT_FALSE(result->getFunctionName().empty());
+    EXPECT_FALSE(result->empty());
+}
+
+TEST(ModelLoaderTest, LoadsReductionModelWithOpenVinoBackend)
+{
+    if (!openVinoEnabled())
+    {
+        GTEST_SKIP() << "OpenVINO import unavailable in this environment";
+    }
+
+    const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_reduction.onnx";
+    auto result = importAndCompile(path, ModelBackend::OPENVINO);
+    ASSERT_TRUE(result.has_value()) << "Failed to load OpenVINO reduction model: " << (result ? "" : result.error());
+    EXPECT_EQ(result->getBackend(), ModelBackend::OPENVINO);
+    EXPECT_EQ(result->getInputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_EQ(result->getOutputShape(), (std::vector<size_t>{1, 10}));
+    EXPECT_EQ(result->inputSize(), 400U);
+    EXPECT_EQ(result->outputSize(), 40U);
     EXPECT_FALSE(result->empty());
 }
 
@@ -107,17 +192,47 @@ TEST(ModelLoaderTest, LoadsExpansionModel)
     EXPECT_FALSE(result->empty());
 }
 
+TEST(ModelLoaderTest, LoadsExpansionModelWithOpenVinoBackend)
+{
+    if (!openVinoEnabled())
+    {
+        GTEST_SKIP() << "OpenVINO import unavailable in this environment";
+    }
+
+    const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_expansion.onnx";
+    auto result = importAndCompile(path, ModelBackend::OPENVINO);
+    ASSERT_TRUE(result.has_value()) << "Failed to load OpenVINO expansion model: " << (result ? "" : result.error());
+    EXPECT_EQ(result->getBackend(), ModelBackend::OPENVINO);
+    EXPECT_EQ(result->getInputShape(), (std::vector<size_t>{1, 10}));
+    EXPECT_EQ(result->getOutputShape(), (std::vector<size_t>{1, 100}));
+    EXPECT_EQ(result->inputSize(), 40U);
+    EXPECT_EQ(result->outputSize(), 400U);
+    EXPECT_FALSE(result->empty());
+}
+
 TEST(ModelLoaderTest, LoadInvalidPath)
 {
-    auto imported = importModel("nonexistent.onnx");
+    auto imported = importModel("nonexistent.onnx", ModelBackend::IREE);
     EXPECT_FALSE(imported.has_value());
 }
 
 TEST(ModelLoaderTest, LoadNonOnnxExtensionIsRejected)
 {
-    auto imported = importModel("model.pt");
+    auto imported = importModel("model.pt", ModelBackend::IREE);
     EXPECT_FALSE(imported.has_value());
     EXPECT_NE(imported.error().message.find(".onnx"), std::string::npos);
+}
+
+TEST(ModelLoaderTest, LoadUnsupportedOpenVinoExtensionIsRejected)
+{
+    if (!openVinoEnabled())
+    {
+        GTEST_SKIP() << "OpenVINO import unavailable in this environment";
+    }
+
+    auto imported = importModel("model.pt", ModelBackend::OPENVINO);
+    EXPECT_FALSE(imported.has_value());
+    EXPECT_NE(imported.error().message.find(".pt2"), std::string::npos);
 }
 
 TEST(ModelLoaderTest, LoadCorruptOnnxFile)
@@ -128,7 +243,7 @@ TEST(ModelLoaderTest, LoadCorruptOnnxFile)
         out << "this is not a valid onnx model";
     }
 
-    auto imported = importModel(corruptFile);
+    auto imported = importModel(corruptFile, ModelBackend::IREE);
     EXPECT_FALSE(imported.has_value());
     std::filesystem::remove(corruptFile);
 }
@@ -140,7 +255,7 @@ TEST(ModelLoaderTest, LoadEmptyOnnxFile)
         const std::ofstream out(emptyFile, std::ios::binary);
     }
 
-    auto imported = importModel(emptyFile);
+    auto imported = importModel(emptyFile, ModelBackend::IREE);
     EXPECT_FALSE(imported.has_value());
     std::filesystem::remove(emptyFile);
 }
@@ -148,7 +263,7 @@ TEST(ModelLoaderTest, LoadEmptyOnnxFile)
 TEST(ModelLoaderTest, TempDirectoryIsCleanedUpOnSuccess)
 {
     const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
-    auto imported = importModel(path);
+    auto imported = importModel(path, ModelBackend::IREE);
     ASSERT_TRUE(imported.has_value());
 
     /// Verify no nes-graph-<our-pid>-* directories remain
@@ -168,7 +283,7 @@ TEST(ModelLoaderTest, TempDirectoryIsCleanedUpOnFailure)
         out << "not valid onnx data";
     }
 
-    auto imported = importModel(corruptFile);
+    auto imported = importModel(corruptFile, ModelBackend::IREE);
     EXPECT_FALSE(imported.has_value());
 
     auto pid = std::to_string(getpid());

@@ -14,14 +14,19 @@ add_library(nes-inference
         src/Inference.cpp
         src/Model.cpp
         src/ModelCatalog.cpp
-        src/IreeTool.cpp
-        src/IreeImporter.cpp
-        src/IreeCompiler.cpp
-        src/MlirAnalyzer.cpp)
+        src/BackendTool.cpp
+        src/IREE/IreeImporter.cpp
+        src/IREE/IreeCompiler.cpp
+        src/OpenVINO/OpenVinoImporter.cpp
+        src/IREE/MlirAnalyzer.cpp)
+find_package(OpenVINO CONFIG REQUIRED COMPONENTS Runtime)
+find_package(OpenSSL REQUIRED)
 target_include_directories(nes-inference PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(nes-inference PUBLIC nes-data-types PRIVATE nes-common)
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/IREE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/OpenVINO)
+target_link_libraries(nes-inference PUBLIC nes-data-types PRIVATE nes-common openvino::runtime OpenSSL::Crypto)
 
 add_subdirectory(runtime)
 

@@ -31,7 +31,7 @@
 namespace NES
 {
 
-void ModelCatalog::registerModel(std::string name, std::filesystem::path path, ModelSchema schema)
+void ModelCatalog::registerModel(std::string name, std::filesystem::path path, ModelSchema schema, ModelBackend backend)
 {
     if (!std::filesystem::exists(path))
     {
@@ -40,7 +40,7 @@ void ModelCatalog::registerModel(std::string name, std::filesystem::path path, M
 
     /// Coordinator-side: only import the model — signature is scraped during
     /// import. The compile step runs later on the worker, during lowering.
-    auto imported = importModel(path);
+    auto imported = importModel(path, backend);
     if (!imported)
     {
         throw NES::CannotLoadModel("Failed to import model '{}': {}", name, imported.error().message);

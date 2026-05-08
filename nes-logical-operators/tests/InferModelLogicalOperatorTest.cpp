@@ -24,6 +24,8 @@
 #include <vector>
 
 #include <fmt/format.h>
+#include <rfl/json/read.hpp>
+#include <rfl/json/write.hpp>
 
 #include <DataTypes/DataType.hpp>
 #include <DataTypes/Schema.hpp>
@@ -174,6 +176,12 @@ TEST_F(InferModelLogicalOperatorTest, ReflectionRoundTrip)
     EXPECT_EQ(restored.getInputFieldNames(), op.getInputFieldNames());
     EXPECT_EQ(restored.getModel(), op.getModel());
     EXPECT_EQ(restored.getName(), op.getName());
+
+    const auto json = rfl::json::write(reflected);
+    auto jsonReflected = rfl::json::read<Reflected>(json);
+    ASSERT_TRUE(jsonReflected.has_value()) << jsonReflected.error().what();
+    auto jsonRestored = unreflector(jsonReflected.value());
+    EXPECT_EQ(jsonRestored.getModel(), op.getModel());
 }
 
 /// Schema inference: input schema propagates, output fields appended with correct types and ordering
