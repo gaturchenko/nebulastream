@@ -40,6 +40,7 @@
 #include <fmt/ranges.h>
 #include <DistributedQuery.hpp>
 #include <ErrorHandling.hpp>
+#include <Model.hpp>
 #include <ModelCatalog.hpp>
 #include <QueryOptimizer.hpp>
 #include <SingleNodeWorkerConfiguration.hpp>

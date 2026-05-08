@@ -14,7 +14,11 @@
 
 #pragma once
 
-#include <openvino/openvino.hpp>
+#include <cstddef>
+#include <openvino/core/shape.hpp>
+#include <openvino/core/type/element_type.hpp>
+#include <openvino/runtime/infer_request.hpp>
+#include <Model.hpp>
 #include <RuntimeBackend.hpp>
 
 namespace NES

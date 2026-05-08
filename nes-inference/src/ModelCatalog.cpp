@@ -27,9 +27,15 @@
 #include <DataTypes/Schema.hpp>
 #include <ErrorHandling.hpp>
 #include <Inference.hpp>
+#include <Model.hpp>
 
 namespace NES
 {
+
+void ModelCatalog::registerModel(std::string name, std::filesystem::path path, ModelSchema schema)
+{
+    registerModel(std::move(name), std::move(path), std::move(schema), ModelBackend::OPENVINO);
+}
 
 void ModelCatalog::registerModel(std::string name, std::filesystem::path path, ModelSchema schema, ModelBackend backend)
 {

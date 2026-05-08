@@ -96,7 +96,8 @@ class ModelCatalog
     std::unordered_map<std::string, RegisteredModel> entries;
 
 public:
-    void registerModel(std::string name, std::filesystem::path path, ModelSchema schema, ModelBackend backend = ModelBackend::OPENVINO);
+    void registerModel(std::string name, std::filesystem::path path, ModelSchema schema);
+    void registerModel(std::string name, std::filesystem::path path, ModelSchema schema, ModelBackend backend);
     void removeModel(const std::string& modelName);
     [[nodiscard]] bool hasModel(const std::string& modelName) const;
     [[nodiscard]] std::vector<std::string> getModelNames() const;

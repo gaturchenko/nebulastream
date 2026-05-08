@@ -21,24 +21,28 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <expected>
 #include <filesystem>
 #include <fstream>
 #include <ios>
-#include <iterator>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
-#include <openvino/openvino.hpp>
+#include <openvino/core/node_output.hpp>
+#include <openvino/core/partial_shape.hpp>
+#include <openvino/core/type/element_type.hpp>
 #include <scope_guard.hpp>
 
 #include <Util/Logger/Logger.hpp>
+#include <openvino/runtime/core.hpp>
+#include <openvino/runtime/tensor.hpp>
 #include <BackendTool.hpp>
 #include <Inference.hpp>
 #include <Model.hpp>
@@ -52,9 +56,9 @@ namespace
 
 std::filesystem::path makeTemporaryDirectory()
 {
-    static std::atomic_uint64_t Counter = 0;
+    static std::atomic_uint64_t counter = 0;
     const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-    auto path = std::filesystem::temp_directory_path() / fmt::format("nes-openvino-import-{}-{}", ticks, Counter.fetch_add(1));
+    auto path = std::filesystem::temp_directory_path() / fmt::format("nes-openvino-import-{}-{}", ticks, counter.fetch_add(1));
     std::filesystem::create_directories(path);
     return path;
 }
@@ -90,7 +94,7 @@ std::string lowerExtension(const std::filesystem::path& path)
 
 std::string outputStemFor(const std::filesystem::path& modelPath)
 {
-    const auto stem = modelPath.stem().string();
+    auto stem = modelPath.stem().string();
     if (!stem.empty())
     {
         return stem;
@@ -217,8 +221,7 @@ std::expected<ImportedModel, ImportError> OpenVinoImporter::importModel(const st
         return std::unexpected(ImportError{"OpenVINO model conversion was not successful: Non Zero Exit Code."});
     }
 
-    const auto outputBinPath = outputXmlPath;
-    auto binPath = outputBinPath;
+    auto binPath = outputXmlPath;
     binPath.replace_extension(".bin");
     if (!std::filesystem::exists(outputXmlPath) || !std::filesystem::exists(binPath))
     {
@@ -244,7 +247,7 @@ std::expected<ImportedModel, ImportError> OpenVinoImporter::importModel(const st
         std::vector<std::uint8_t> weights(binBytes->size());
         std::ranges::transform(*binBytes, weights.begin(), [](std::byte value) { return static_cast<std::uint8_t>(value); });
 
-        ov::Core core;
+        const ov::Core core;
         ov::Tensor weightsTensor(ov::element::u8, {weights.size()});
         if (!weights.empty())
         {

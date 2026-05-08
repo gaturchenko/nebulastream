@@ -14,6 +14,11 @@
 
 #pragma once
 
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <vector>
+#include <Model.hpp>
 #include <RuntimeBackend.hpp>
 
 #include <iree/runtime/api.h>

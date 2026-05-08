@@ -14,7 +14,6 @@
 
 #include <InferenceRuntime.hpp>
 
-#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -24,6 +23,7 @@
 #include <IreeRuntimeBackend.hpp>
 #include <Model.hpp>
 #include <OpenVinoRuntimeBackend.hpp>
+#include <RuntimeBackend.hpp>
 
 namespace NES
 {

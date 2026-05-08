@@ -14,9 +14,25 @@
 
 #include <OpenVinoRuntimeBackend.hpp>
 
+#include <Util/Logger/Logger.hpp>
+#include <Model.hpp>
+#include <RuntimeBackend.hpp>
+
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <openvino/openvino.hpp>
+#include <ios>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <openvino/core/shape.hpp>
+#include <openvino/core/type/element_type.hpp>
+#include <openvino/core/type/float16.hpp>
+#include <openvino/runtime/core.hpp>
+#include <openvino/runtime/properties.hpp>
+#include <openvino/runtime/tensor.hpp>
 
 namespace
 {
@@ -39,7 +55,7 @@ std::string shapeToString(const ov::Shape& shape)
 template <typename T>
 void appendTensorValues(std::ostringstream& stream, const ov::Tensor& tensor)
 {
-    constexpr auto DEBUG_MARGIN = std::streamoff{64};
+    constexpr auto debugMargin = std::streamoff{64};
     const auto* data = tensor.data<const T>();
     const auto numberOfValues = tensor.get_size();
     for (size_t i = 0; i < numberOfValues; ++i)
@@ -66,7 +82,7 @@ void appendTensorValues(std::ostringstream& stream, const ov::Tensor& tensor)
             stream << data[i];
         }
 
-        if (stream.tellp() >= static_cast<std::streamoff>(4096) - DEBUG_MARGIN)
+        if (stream.tellp() >= static_cast<std::streamoff>(4096) - debugMargin)
         {
             stream << ", ...";
             return;
@@ -111,7 +127,7 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model)
         std::memcpy(weights.data<std::uint8_t>(), modelBin.data(), modelBin.size());
     }
 
-    std::scoped_lock lock(coreMutex);
+    const std::scoped_lock lock(coreMutex);
     auto openVinoModel = sharedCore.read_model(modelXml, weights);
     openVinoModel->reshape(modelInputShape);
     auto compiledModel = sharedCore.compile_model(
@@ -136,12 +152,12 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model)
 
 void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t /*outputBufferSize*/)
 {
-    ov::Tensor inputTensor(inputElementType, inputShape, inputBuffer);
+    const ov::Tensor inputTensor(inputElementType, inputShape, inputBuffer);
     inferRequest.set_input_tensor(inputTensor);
 
     NES_DEBUG("Model input: {}", formatTensor(inferRequest.get_input_tensor()))
 
-    ov::Tensor outputTensor(outputElementType, outputShape, outputBuffer);
+    const ov::Tensor outputTensor(outputElementType, outputShape, outputBuffer);
     inferRequest.set_output_tensor(0, outputTensor);
 
     inferRequest.infer();

@@ -15,7 +15,6 @@
 #include <Model.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <limits>
 #include <optional>

@@ -36,7 +36,7 @@ public:
         return !discovery.path.empty() && discovery.version.has_value() && *discovery.version == expectedOpenVinoVersion;
     }
 
-    std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath) const;
+    [[nodiscard]] std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath) const;
 
 private:
     static constexpr std::array<std::string_view, 7> SupportedExtensions{".onnx", ".pb", ".pbtxt", ".meta", ".tflite", ".pdmodel", ".pt2"};

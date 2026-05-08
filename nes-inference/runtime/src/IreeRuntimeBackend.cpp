@@ -15,9 +15,16 @@
 #include <IreeRuntimeBackend.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <Util/Logger/Logger.hpp>
 #include <fmt/format.h>
 #include <iree/runtime/api.h>
 #include <ErrorHandling.hpp>
+#include <Model.hpp>
+#include <RuntimeBackend.hpp>
 #include <scope_guard.hpp>
 
 namespace

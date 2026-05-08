@@ -35,6 +35,7 @@
 #include <Operators/LogicalOperator.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/PlanRenderer.hpp>
+#include <Util/Reflection.hpp>
 #include <ErrorHandling.hpp>
 #include <ModelCatalog.hpp>
 
