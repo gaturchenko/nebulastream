@@ -20,9 +20,13 @@
 #include <utility>
 #include <vector>
 #include <ErrorHandling.hpp>
-#include <IreeRuntimeBackend.hpp>
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
+    #include <IreeRuntimeBackend.hpp>
+#endif
 #include <Model.hpp>
-#include <OpenVinoRuntimeBackend.hpp>
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
+    #include <OpenVinoRuntimeBackend.hpp>
+#endif
 #include <RuntimeBackend.hpp>
 
 namespace NES
@@ -36,9 +40,17 @@ std::unique_ptr<RuntimeBackend> createRuntimeBackend(ModelBackend backend)
     switch (backend)
     {
         case ModelBackend::IREE:
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
             return std::make_unique<IreeRuntimeBackend>();
+#else
+            throw NES::InferenceRuntimeFailure("IREE inference backend was not built");
+#endif
         case ModelBackend::OPENVINO:
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
             return std::make_unique<OpenVinoRuntimeBackend>();
+#else
+            throw NES::InferenceRuntimeFailure("OpenVINO inference backend was not built");
+#endif
     }
     std::unreachable();
 }

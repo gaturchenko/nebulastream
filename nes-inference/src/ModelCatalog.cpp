@@ -34,7 +34,7 @@ namespace NES
 
 void ModelCatalog::registerModel(std::string name, std::filesystem::path path, ModelSchema schema)
 {
-    registerModel(std::move(name), std::move(path), std::move(schema), ModelBackend::OPENVINO);
+    registerModel(std::move(name), std::move(path), std::move(schema), defaultModelBackend());
 }
 
 void ModelCatalog::registerModel(std::string name, std::filesystem::path path, ModelSchema schema, ModelBackend backend)

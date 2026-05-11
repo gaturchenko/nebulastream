@@ -18,9 +18,13 @@
 #include <filesystem>
 #include <utility>
 
-#include <IREE/IreeCompiler.hpp>
-#include <IREE/IreeImporter.hpp>
-#include <OpenVINO/OpenVinoImporter.hpp>
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
+    #include <IREE/IreeCompiler.hpp>
+    #include <IREE/IreeImporter.hpp>
+#endif
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
+    #include <OpenVINO/OpenVinoImporter.hpp>
+#endif
 #include <Model.hpp>
 #include <ModelAccess.hpp>
 
@@ -32,6 +36,7 @@ namespace
 
 /// Each class's ctor forks a `--version` subprocess for tool discovery, so
 /// amortize across calls by keeping one instance per process.
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
 const IreeImporter& sharedImporter()
 {
     static const IreeImporter Instance;
@@ -43,18 +48,32 @@ const IreeCompiler& sharedCompiler()
     static const IreeCompiler Instance;
     return Instance;
 }
+#endif
 
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
 const OpenVinoImporter& sharedOpenVinoImporter()
 {
     static const OpenVinoImporter Instance;
     return Instance;
 }
+#endif
 
+}
+
+ModelBackend defaultModelBackend()
+{
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
+    return ModelBackend::OPENVINO;
+#elifdef NES_ENABLE_INFERENCE_BACKEND_IREE
+    return ModelBackend::IREE;
+#else
+    #error "At least one inference backend must be enabled"
+#endif
 }
 
 std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath)
 {
-    return importModel(modelPath, ModelBackend::OPENVINO);
+    return importModel(modelPath, defaultModelBackend());
 }
 
 std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath, ModelBackend backend)
@@ -62,9 +81,17 @@ std::expected<ImportedModel, ImportError> importModel(const std::filesystem::pat
     switch (backend)
     {
         case ModelBackend::IREE:
+#if defined(NES_ENABLE_INFERENCE_BACKEND_IREE)
             return sharedImporter().importOnnx(modelPath);
+#else
+            return std::unexpected(ImportError{"IREE inference backend was not built"});
+#endif
         case ModelBackend::OPENVINO:
+#if defined(NES_ENABLE_INFERENCE_BACKEND_OPENVINO)
             return sharedOpenVinoImporter().importModel(modelPath);
+#else
+            return std::unexpected(ImportError{"OpenVINO inference backend was not built"});
+#endif
     }
     std::unreachable();
 }
@@ -74,9 +101,17 @@ std::expected<CompiledModel, CompileError> compileModel(const ImportedModel& imp
     switch (imported.getBackend())
     {
         case ModelBackend::IREE:
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
             return sharedCompiler().compile(imported);
+#else
+            return std::unexpected(CompileError{"IREE inference backend was not built"});
+#endif
         case ModelBackend::OPENVINO:
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
             return detail::ModelAccess::compileFrom(imported, detail::RefCountedByteBuffer::fromBytes(imported.getData()));
+#else
+            return std::unexpected(CompileError{"OpenVINO inference backend was not built"});
+#endif
     }
     std::unreachable();
 }

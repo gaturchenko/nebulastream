@@ -23,9 +23,13 @@
 #include <utility>
 #include <vector>
 #include <unistd.h>
-#include <IREE/IreeCompiler.hpp>
-#include <IREE/IreeImporter.hpp>
-#include <OpenVINO/OpenVinoImporter.hpp>
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
+    #include <IREE/IreeCompiler.hpp>
+    #include <IREE/IreeImporter.hpp>
+#endif
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
+    #include <OpenVINO/OpenVinoImporter.hpp>
+#endif
 #include <gtest/gtest.h>
 #include <Model.hpp>
 
@@ -34,22 +38,43 @@ namespace NES
 
 namespace
 {
+bool ireeBackendBuilt()
+{
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool inferenceEnabled()
 {
+#ifdef NES_ENABLE_INFERENCE_BACKEND_IREE
     static const IreeImporter Importer;
     static const IreeCompiler Compiler;
     return Importer.available() && Compiler.available();
+#else
+    return false;
+#endif
 }
 
 bool openVinoEnabled()
 {
+#ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
     static const OpenVinoImporter Importer;
     return Importer.available();
+#else
+    return false;
+#endif
 }
 }
 
 TEST(ModelLoaderTest, checkToolAvailability)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     ASSERT_TRUE(inferenceEnabled()) << "IREE inference tools not available — test binary should not be built without them";
 }
 
@@ -97,6 +122,10 @@ std::expected<CompiledModel, std::string> importAndCompileDefault(const std::fil
 
 TEST(ModelLoaderTest, LoadsIdentityModel)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
     auto result = importAndCompile(path);
     ASSERT_TRUE(result.has_value()) << "Failed to load identity model: " << (result ? "" : result.error());
@@ -150,6 +179,10 @@ TEST(ModelLoaderTest, LoadsIdentityModelWithDefaultOpenVinoBackend)
 
 TEST(ModelLoaderTest, LoadsReductionModel)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_reduction.onnx";
     auto result = importAndCompile(path);
     ASSERT_TRUE(result.has_value()) << "Failed to load reduction model: " << (result ? "" : result.error());
@@ -181,6 +214,10 @@ TEST(ModelLoaderTest, LoadsReductionModelWithOpenVinoBackend)
 
 TEST(ModelLoaderTest, LoadsExpansionModel)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_expansion.onnx";
     auto result = importAndCompile(path);
     ASSERT_TRUE(result.has_value()) << "Failed to load expansion model: " << (result ? "" : result.error());
@@ -212,12 +249,20 @@ TEST(ModelLoaderTest, LoadsExpansionModelWithOpenVinoBackend)
 
 TEST(ModelLoaderTest, LoadInvalidPath)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     auto imported = importModel("nonexistent.onnx", ModelBackend::IREE);
     EXPECT_FALSE(imported.has_value());
 }
 
 TEST(ModelLoaderTest, LoadNonOnnxExtensionIsRejected)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     auto imported = importModel("model.pt", ModelBackend::IREE);
     EXPECT_FALSE(imported.has_value());
     EXPECT_NE(imported.error().message.find(".onnx"), std::string::npos);
@@ -237,6 +282,10 @@ TEST(ModelLoaderTest, LoadUnsupportedOpenVinoExtensionIsRejected)
 
 TEST(ModelLoaderTest, LoadCorruptOnnxFile)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     auto corruptFile = std::filesystem::temp_directory_path() / "corrupt_model.onnx";
     {
         std::ofstream out(corruptFile, std::ios::binary);
@@ -250,6 +299,10 @@ TEST(ModelLoaderTest, LoadCorruptOnnxFile)
 
 TEST(ModelLoaderTest, LoadEmptyOnnxFile)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     auto emptyFile = std::filesystem::temp_directory_path() / "empty_model.onnx";
     {
         const std::ofstream out(emptyFile, std::ios::binary);
@@ -262,6 +315,10 @@ TEST(ModelLoaderTest, LoadEmptyOnnxFile)
 
 TEST(ModelLoaderTest, TempDirectoryIsCleanedUpOnSuccess)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     const std::string path = std::string(INFERENCE_TEST_DATA) + "/tiny_identity.onnx";
     auto imported = importModel(path, ModelBackend::IREE);
     ASSERT_TRUE(imported.has_value());
@@ -277,6 +334,10 @@ TEST(ModelLoaderTest, TempDirectoryIsCleanedUpOnSuccess)
 
 TEST(ModelLoaderTest, TempDirectoryIsCleanedUpOnFailure)
 {
+    if (!ireeBackendBuilt())
+    {
+        GTEST_SKIP() << "IREE backend was not built";
+    }
     auto corruptFile = std::filesystem::temp_directory_path() / "corrupt_for_cleanup.onnx";
     {
         std::ofstream out(corruptFile, std::ios::binary);
