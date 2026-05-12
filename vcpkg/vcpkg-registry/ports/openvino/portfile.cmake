@@ -20,6 +20,8 @@ vcpkg_from_github(
         onednn_gpu_includes.patch
         protobuf-6.patch
         fix-clang19-stringify.patch
+        fix-libcxx.patch
+        fix-types-libcxx.patch
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
@@ -137,6 +139,9 @@ if(CMAKE_HOST_WIN32)
 endif()
 
 vcpkg_find_acquire_program(PKGCONFIG)
+
+string(APPEND VCPKG_C_FLAGS " -Wno-deprecated-declarations")
+string(APPEND VCPKG_CXX_FLAGS " -Wno-deprecated-declarations")
 
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
