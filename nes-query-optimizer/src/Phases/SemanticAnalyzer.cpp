@@ -20,6 +20,7 @@
 #include <Plans/LogicalPlan.hpp>
 #include <Rules/RuleManager.hpp>
 #include <Rules/Semantic/InferModelResolutionRule.hpp>
+#include <Rules/Semantic/InsertSequenceForBatchInferenceRule.hpp>
 #include <Rules/Semantic/InlineSinkBindingRule.hpp>
 #include <Rules/Semantic/InlineSourceBindingRule.hpp>
 #include <Rules/Semantic/LogicalSourceExpansionRule.hpp>
@@ -32,10 +33,14 @@ namespace NES
 {
 
 SemanticAnalyzer::SemanticAnalyzer(
+    QueryOptimizerConfiguration defaultQueryOptimization,
     std::shared_ptr<const SourceCatalog> sourceCatalog,
     std::shared_ptr<const SinkCatalog> sinkCatalog,
     std::shared_ptr<const ModelCatalog> modelCatalog)
-    : sourceCatalog(std::move(sourceCatalog)), sinkCatalog(std::move(sinkCatalog)), modelCatalog(std::move(modelCatalog))
+    : defaultQueryOptimization(std::move(defaultQueryOptimization))
+    , sourceCatalog(std::move(sourceCatalog))
+    , sinkCatalog(std::move(sinkCatalog))
+    , modelCatalog(std::move(modelCatalog))
 {
     RuleManager<LogicalPlan> ruleManager;
     ruleManager.addRule(InlineSinkBindingRule{this->sinkCatalog});
@@ -44,6 +49,7 @@ SemanticAnalyzer::SemanticAnalyzer(
     ruleManager.addRule(SourceInferenceRule{this->sourceCatalog});
     ruleManager.addRule(LogicalSourceExpansionRule{this->sourceCatalog});
     ruleManager.addRule(InferModelResolutionRule{this->modelCatalog});
+    ruleManager.addRule(InsertSequenceForBatchInferenceRule{this->defaultQueryOptimization.inferenceBatchSize.getValue()});
     ruleManager.addRule(TypeInferenceRule{});
     ruleManager.addRule(OriginIdInferenceRule{});
 

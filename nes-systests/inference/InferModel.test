@@ -2,6 +2,8 @@
 # description: ML model inference with MODEL_INFERENCE TVF using the Iris model
 # groups: [Inference]
 
+# To enable batching, pass this flag to systest: --optimizer inference_batch_size=<batch_size>
+
 CREATE LOGICAL SOURCE stream(p1 FLOAT32 NOT NULL, p2 FLOAT32 NOT NULL, p3 FLOAT32 NOT NULL, p4 FLOAT32 NOT NULL);
 CREATE PHYSICAL SOURCE FOR stream TYPE File;
 ATTACH INLINE

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include <Plans/LogicalPlan.hpp>
+#include <QueryOptimizerConfiguration.hpp>
 #include <Rules/Rule.hpp>
 
 namespace NES
@@ -38,11 +39,13 @@ public:
     [[nodiscard]] LogicalPlan analyse(LogicalPlan plan) const;
 
     explicit SemanticAnalyzer(
+        QueryOptimizerConfiguration defaultQueryOptimization,
         std::shared_ptr<const SourceCatalog> sourceCatalog,
         std::shared_ptr<const SinkCatalog> sinkCatalog,
         std::shared_ptr<const ModelCatalog> modelCatalog);
 
 private:
+    QueryOptimizerConfiguration defaultQueryOptimization;
     std::shared_ptr<const SourceCatalog> sourceCatalog;
     std::shared_ptr<const SinkCatalog> sinkCatalog;
     std::shared_ptr<const ModelCatalog> modelCatalog;

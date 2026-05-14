@@ -16,7 +16,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <utility>
 #include <Util/Logger/Logger.hpp>
@@ -29,6 +31,11 @@
 
 namespace
 {
+size_t tensorSizeBytes(std::vector<size_t> shape)
+{
+    return sizeof(float) * std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>());
+}
+
 std::string ireeStatusString(iree_status_t status)
 {
     char* output = nullptr;
@@ -51,7 +58,7 @@ void ireeCheckStatus(iree_status_t status, const char* msg)
 
 namespace NES
 {
-RuntimeMetadata IreeRuntimeBackend::setup(const CompiledModel& model)
+RuntimeMetadata IreeRuntimeBackend::setup(const CompiledModel& model, size_t batchSize)
 {
     iree_runtime_instance_options_t instanceOptions;
     iree_runtime_instance_options_initialize(&instanceOptions);
@@ -92,15 +99,25 @@ RuntimeMetadata IreeRuntimeBackend::setup(const CompiledModel& model)
     instance = std::move(instPtr);
     session = std::move(sessPtr);
     inputShape = model.getInputShape();
-    nDim = model.getNDim();
+    auto outputShape = model.getOutputShape();
+    if (!inputShape.empty())
+    {
+        inputShape.front() = batchSize;
+    }
+    if (!outputShape.empty())
+    {
+        outputShape.front() = batchSize;
+    }
+    nDim = inputShape.size();
     functionName = model.getFunctionName();
 
     return RuntimeMetadata{
         .inputShape = inputShape,
+        .outputShape = outputShape,
         .nDim = nDim,
         .functionName = functionName,
-        .inputSize = model.inputSize(),
-        .outputSize = model.outputSize()};
+        .inputSize = tensorSizeBytes(inputShape),
+        .outputSize = tensorSizeBytes(outputShape)};
 }
 
 void IreeRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSize, std::byte* outputBuffer, size_t outputBufferSize)

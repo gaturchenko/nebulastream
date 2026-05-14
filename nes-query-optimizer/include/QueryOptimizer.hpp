@@ -42,7 +42,7 @@ public:
         const std::shared_ptr<const SinkCatalog>& sinkCatalog,
         const std::shared_ptr<const WorkerCatalog>& workerCatalog,
         const std::shared_ptr<const ModelCatalog>& modelCatalog)
-        : semanticAnalyzer(sourceCatalog, sinkCatalog, modelCatalog)
+        : semanticAnalyzer(defaultQueryOptimization, sourceCatalog, sinkCatalog, modelCatalog)
         , ruleBasedOptimization(defaultQueryOptimization)
         , operatorPlacement(defaultQueryOptimization, sourceCatalog, sinkCatalog, workerCatalog) { };
 

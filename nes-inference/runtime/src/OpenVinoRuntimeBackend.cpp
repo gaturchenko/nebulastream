@@ -22,8 +22,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <ios>
 #include <mutex>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -111,7 +113,7 @@ std::string formatTensor(const ov::Tensor& tensor)
 
 namespace NES
 {
-RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model)
+RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t batchSize)
 {
     /// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) byte-to-text for OpenVINO XML payload
     const std::string modelXml(reinterpret_cast<const char*>(model.getData().data()), model.getData().size());
@@ -120,7 +122,12 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model)
 
     static ov::Core sharedCore;
     static std::mutex coreMutex;
-    const ov::Shape modelInputShape(model.getInputShape().begin(), model.getInputShape().end());
+    auto runtimeInputShape = model.getInputShape();
+    if (!runtimeInputShape.empty())
+    {
+        runtimeInputShape.front() = batchSize;
+    }
+    const ov::Shape modelInputShape(runtimeInputShape.begin(), runtimeInputShape.end());
     ov::Tensor weights(ov::element::u8, {modelBin.size()});
     if (!modelBin.empty())
     {
@@ -143,11 +150,12 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model)
     outputShape = compiledModel.output(0).get_shape();
 
     return RuntimeMetadata{
-        .inputShape = model.getInputShape(),
-        .nDim = model.getNDim(),
+        .inputShape = runtimeInputShape,
+        .outputShape = std::vector<size_t>(outputShape.begin(), outputShape.end()),
+        .nDim = runtimeInputShape.size(),
         .functionName = model.getFunctionName(),
-        .inputSize = model.inputSize(),
-        .outputSize = model.outputSize()};
+        .inputSize = sizeof(float) * std::accumulate(runtimeInputShape.begin(), runtimeInputShape.end(), size_t{1}, std::multiplies<>()),
+        .outputSize = ov::Tensor(outputElementType, outputShape).get_byte_size()};
 }
 
 void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t /*outputBufferSize*/)

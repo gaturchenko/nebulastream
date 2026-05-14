@@ -15,11 +15,14 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <Configurations/BaseConfiguration.hpp>
 #include <Configurations/BaseOption.hpp>
 #include <Configurations/Enums/EnumOption.hpp>
+#include <Configurations/ScalarOption.hpp>
+#include <Configurations/Validation/NonZeroValidation.hpp>
 #include <QueryOptimizerNetworkConfiguration.hpp>
 
 namespace NES
@@ -46,8 +49,14 @@ public:
 
     QueryOptimizerNetworkConfiguration network = {"network", "Network configuration overrides for query decomposition"};
 
+    UIntOption inferenceBatchSize = {
+        "inference_batch_size",
+        "1",
+        "Inference Batch Size",
+        {std::make_shared<NonZeroValidation>()}};
+
 private:
-    std::vector<BaseOption*> getOptions() override { return {&joinStrategy, &network}; }
+    std::vector<BaseOption*> getOptions() override { return {&joinStrategy, &network, &inferenceBatchSize}; }
 };
 
 }

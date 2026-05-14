@@ -14,6 +14,9 @@
 
 #include <EmitOperatorHandler.hpp>
 #include <EmitPhysicalOperator.hpp>
+#include <BatchInferenceOperatorHandler.hpp>
+#include <BatchInferModelPhysicalOperator.hpp>
+#include <BatchingPhysicalOperator.hpp>
 #include <InferModelPhysicalOperator.hpp>
 #include <Inference.hpp>
 #include <Model.hpp>
@@ -261,6 +264,55 @@ public:
         handlers[OperatorHandlerId(1)] = std::make_shared<EmitOperatorHandler>();
 
         return {.pipeline = std::move(pipeline), .handlers = std::move(handlers)};
+    }
+
+    struct LoweredBatchInferencePipelines
+    {
+        std::shared_ptr<Pipeline> batchingPipeline;
+        std::shared_ptr<Pipeline> inferencePipeline;
+        std::unordered_map<OperatorHandlerId, std::shared_ptr<OperatorHandler>> handlers;
+    };
+
+    static LoweredBatchInferencePipelines createLoweredBatchInferencePipelines(
+        const NES::CompiledModel& model,
+        const Schema& inputSchema,
+        const Schema& outputSchema,
+        const std::vector<std::string>& inputFieldNames,
+        const std::vector<std::string>& outputFieldNames,
+        size_t batchSize)
+    {
+        auto inputBufRef = LowerSchemaProvider::lowerSchema(bufferSize, inputSchema, MemoryLayoutType::ROW_LAYOUT);
+        auto outputBufRef = LowerSchemaProvider::lowerSchema(bufferSize, outputSchema, MemoryLayoutType::ROW_LAYOUT);
+        const OperatorHandlerId batchHandlerId(1);
+        const OperatorHandlerId emitHandlerId(2);
+
+        ScanPhysicalOperator scan(inputBufRef, inputSchema.getFieldNames());
+        BatchingPhysicalOperator batching(batchHandlerId, inputBufRef);
+        scan.setChild(PhysicalOperator(batching));
+        auto batchingPipeline = std::make_shared<Pipeline>(PhysicalOperator(scan));
+
+        BatchInferModelPhysicalOperator batchInferModel(
+            model,
+            inputBufRef,
+            inputSchema.getFieldNames(),
+            inputFieldNames,
+            outputFieldNames,
+            batchSize,
+            true,
+            false,
+            batchHandlerId);
+        const EmitPhysicalOperator emit(emitHandlerId, outputBufRef);
+        batchInferModel.setChild(PhysicalOperator(emit));
+        auto inferencePipeline = std::make_shared<Pipeline>(PhysicalOperator(batchInferModel));
+
+        std::unordered_map<OperatorHandlerId, std::shared_ptr<OperatorHandler>> handlers;
+        handlers[batchHandlerId] = std::make_shared<BatchInferenceOperatorHandler>(batchSize, INITIAL<OriginId>);
+        handlers[emitHandlerId] = std::make_shared<EmitOperatorHandler>();
+
+        return {
+            .batchingPipeline = std::move(batchingPipeline),
+            .inferencePipeline = std::move(inferencePipeline),
+            .handlers = std::move(handlers)};
     }
 
     /// Creates an input TupleBuffer with VARSIZED records, each containing packed floats.
@@ -565,6 +617,234 @@ TEST_F(InferModelPhysicalOperatorTest, MultiRecordIdentity)
                     const auto expected = static_cast<float>((totalRecords * numFloats) + i + 1);
                     EXPECT_NEAR(view[row]["out_" + std::to_string(i)].as<float>(), expected, 1e-5F)
                         << "Record " << totalRecords << " field out_" << i << " (compiled=" << compiled << ")";
+                }
+                ++totalRecords;
+            }
+        }
+        EXPECT_EQ(totalRecords, numRecords) << "(compiled=" << compiled << ")";
+    }
+}
+
+/// Batched identity model with a partial tail batch. Per-record correctness. Interpreted + compiled.
+TEST_F(InferModelPhysicalOperatorTest, BatchIdentity)
+{
+    if (!identityModel.has_value())
+    {
+        GTEST_SKIP() << "IREE identity model unavailable in this environment";
+    }
+    constexpr size_t numFloats = 100;
+    constexpr size_t numRecords = 5;
+    constexpr size_t batchSize = 3;
+    const auto outputFieldNames = makeOutputFieldNames(numFloats);
+    const auto [inputSchema, outputSchema] = makeSchemas(outputFieldNames);
+
+    std::vector<std::vector<float>> inputs;
+    inputs.reserve(numRecords);
+    for (size_t row = 0; row < numRecords; ++row)
+    {
+        inputs.push_back(makeFloats(numFloats, static_cast<float>((row * numFloats) + 1)));
+    }
+    auto inputBuffer = createInputBuffer(inputSchema, inputs);
+
+    for (bool compiled : {false, true})
+    {
+        auto [batchingPipeline, inferencePipeline, handlers]
+            = createLoweredBatchInferencePipelines(*identityModel, inputSchema, outputSchema, {"input_blob"}, outputFieldNames, batchSize);
+
+        auto options = [&]
+        {
+            nautilus::engine::Options opt;
+            opt.setOption("engine.Compilation", compiled);
+            return opt;
+        }();
+        CompiledExecutablePipelineStage batchingStage(batchingPipeline, handlers, options);
+        CompiledExecutablePipelineStage inferenceStage(inferencePipeline, handlers, options);
+
+        folly::Synchronized<std::vector<TupleBuffer>> emittedBatchBuffers;
+        folly::Synchronized<std::vector<TupleBuffer>> outputBuffers;
+        auto bufMgr = BufferManager::create(bufferSize, 200);
+        MockedPipelineContext batchingPec{emittedBatchBuffers, bufMgr};
+        MockedPipelineContext inferencePec{outputBuffers, bufMgr};
+
+        batchingStage.start(batchingPec);
+        inferenceStage.start(inferencePec);
+        batchingStage.execute(inputBuffer, batchingPec);
+
+        auto batchBuffers = *emittedBatchBuffers.rlock();
+        for (auto& batchBuffer : batchBuffers)
+        {
+            inferenceStage.execute(batchBuffer, inferencePec);
+        }
+
+        inferenceStage.stop(inferencePec);
+        batchingStage.stop(batchingPec);
+
+        size_t totalRecords = 0;
+        auto lockedBuffers = *outputBuffers.rlock();
+        for (auto& outBuf : lockedBuffers)
+        {
+            Testing::TestTupleBuffer ttb(outputSchema);
+            auto view = ttb.open(outBuf);
+            for (size_t row = 0; row < view.getNumberOfTuples(); ++row)
+            {
+                for (size_t i = 0; i < numFloats; ++i)
+                {
+                    const auto expected = static_cast<float>((totalRecords * numFloats) + i + 1);
+                    EXPECT_NEAR(view[row]["out_" + std::to_string(i)].as<float>(), expected, 1e-5F)
+                        << "Record " << totalRecords << " field out_" << i << " (compiled=" << compiled << ")";
+                }
+                ++totalRecords;
+            }
+        }
+        EXPECT_EQ(totalRecords, numRecords) << "(compiled=" << compiled << ")";
+    }
+}
+
+/// Lowering-style batched identity model: Scan -> BatchingPhysicalOperator,
+/// then handler-backed BatchInferModelPhysicalOperator -> Emit.
+TEST_F(InferModelPhysicalOperatorTest, LoweredBatchIdentity)
+{
+    if (!identityModel.has_value())
+    {
+        GTEST_SKIP() << "IREE identity model unavailable in this environment";
+    }
+    constexpr size_t numFloats = 100;
+    constexpr size_t numRecords = 5;
+    constexpr size_t batchSize = 3;
+    const auto outputFieldNames = makeOutputFieldNames(numFloats);
+    const auto [inputSchema, outputSchema] = makeSchemas(outputFieldNames);
+
+    std::vector<std::vector<float>> inputs;
+    inputs.reserve(numRecords);
+    for (size_t row = 0; row < numRecords; ++row)
+    {
+        inputs.push_back(makeFloats(numFloats, static_cast<float>((row * numFloats) + 1)));
+    }
+    auto inputBuffer = createInputBuffer(inputSchema, inputs);
+
+    for (bool compiled : {false, true})
+    {
+        auto [batchingPipeline, inferencePipeline, handlers]
+            = createLoweredBatchInferencePipelines(*identityModel, inputSchema, outputSchema, {"input_blob"}, outputFieldNames, batchSize);
+
+        auto options = [&]
+        {
+            nautilus::engine::Options opt;
+            opt.setOption("engine.Compilation", compiled);
+            return opt;
+        }();
+        CompiledExecutablePipelineStage batchingStage(batchingPipeline, handlers, options);
+        CompiledExecutablePipelineStage inferenceStage(inferencePipeline, handlers, options);
+
+        folly::Synchronized<std::vector<TupleBuffer>> emittedBatchBuffers;
+        folly::Synchronized<std::vector<TupleBuffer>> outputBuffers;
+        auto bufMgr = BufferManager::create(bufferSize, 200);
+        MockedPipelineContext batchingPec{emittedBatchBuffers, bufMgr};
+        MockedPipelineContext inferencePec{outputBuffers, bufMgr};
+
+        batchingStage.start(batchingPec);
+        inferenceStage.start(inferencePec);
+        batchingStage.execute(inputBuffer, batchingPec);
+
+        auto batchBuffers = *emittedBatchBuffers.rlock();
+        EXPECT_EQ(batchBuffers.size(), 2U) << "(compiled=" << compiled << ")";
+        for (auto& batchBuffer : batchBuffers)
+        {
+            inferenceStage.execute(batchBuffer, inferencePec);
+        }
+
+        inferenceStage.stop(inferencePec);
+        batchingStage.stop(batchingPec);
+
+        size_t totalRecords = 0;
+        auto lockedBuffers = *outputBuffers.rlock();
+        for (auto& outBuf : lockedBuffers)
+        {
+            Testing::TestTupleBuffer ttb(outputSchema);
+            auto view = ttb.open(outBuf);
+            for (size_t row = 0; row < view.getNumberOfTuples(); ++row)
+            {
+                for (size_t i = 0; i < numFloats; ++i)
+                {
+                    const auto expected = static_cast<float>((totalRecords * numFloats) + i + 1);
+                    EXPECT_NEAR(view[row]["out_" + std::to_string(i)].as<float>(), expected, 1e-5F)
+                        << "Record " << totalRecords << " field out_" << i << " (compiled=" << compiled << ")";
+                }
+                ++totalRecords;
+            }
+        }
+        EXPECT_EQ(totalRecords, numRecords) << "(compiled=" << compiled << ")";
+    }
+}
+
+/// Batched OpenVINO identity model with a partial tail batch. Interpreted + compiled.
+TEST_F(InferModelPhysicalOperatorTest, OpenVinoBatchIdentity)
+{
+    if (!openVinoIdentityModel.has_value())
+    {
+        GTEST_SKIP() << "OpenVINO model import/compile unavailable in this environment";
+    }
+
+    constexpr size_t numFloats = 100;
+    constexpr size_t numRecords = 5;
+    constexpr size_t batchSize = 3;
+    const auto outputFieldNames = makeOutputFieldNames(numFloats);
+    const auto [inputSchema, outputSchema] = makeSchemas(outputFieldNames);
+
+    std::vector<std::vector<float>> inputs;
+    inputs.reserve(numRecords);
+    for (size_t row = 0; row < numRecords; ++row)
+    {
+        inputs.push_back(makeFloats(numFloats, static_cast<float>((row * numFloats) + 1)));
+    }
+    auto inputBuffer = createInputBuffer(inputSchema, inputs);
+
+    for (bool compiled : {false, true})
+    {
+        auto [batchingPipeline, inferencePipeline, handlers]
+            = createLoweredBatchInferencePipelines(*openVinoIdentityModel, inputSchema, outputSchema, {"input_blob"}, outputFieldNames, batchSize);
+
+        auto options = [&]
+        {
+            nautilus::engine::Options opt;
+            opt.setOption("engine.Compilation", compiled);
+            return opt;
+        }();
+        CompiledExecutablePipelineStage batchingStage(batchingPipeline, handlers, options);
+        CompiledExecutablePipelineStage inferenceStage(inferencePipeline, handlers, options);
+
+        folly::Synchronized<std::vector<TupleBuffer>> emittedBatchBuffers;
+        folly::Synchronized<std::vector<TupleBuffer>> outputBuffers;
+        auto bufMgr = BufferManager::create(bufferSize, 200);
+        MockedPipelineContext batchingPec{emittedBatchBuffers, bufMgr};
+        MockedPipelineContext inferencePec{outputBuffers, bufMgr};
+
+        batchingStage.start(batchingPec);
+        inferenceStage.start(inferencePec);
+        batchingStage.execute(inputBuffer, batchingPec);
+
+        auto batchBuffers = *emittedBatchBuffers.rlock();
+        for (auto& batchBuffer : batchBuffers)
+        {
+            inferenceStage.execute(batchBuffer, inferencePec);
+        }
+
+        inferenceStage.stop(inferencePec);
+        batchingStage.stop(batchingPec);
+
+        size_t totalRecords = 0;
+        auto lockedBuffers = *outputBuffers.rlock();
+        for (auto& outBuf : lockedBuffers)
+        {
+            Testing::TestTupleBuffer ttb(outputSchema);
+            auto view = ttb.open(outBuf);
+            for (size_t row = 0; row < view.getNumberOfTuples(); ++row)
+            {
+                for (size_t i = 0; i < numFloats; ++i)
+                {
+                    const auto expected = static_cast<float>((totalRecords * numFloats) + i + 1);
+                    EXPECT_NEAR(view[row]["out_" + std::to_string(i)].as<float>(), expected, 1e-5F)
+                        << "OpenVINO record " << totalRecords << " field out_" << i << " (compiled=" << compiled << ")";
                 }
                 ++totalRecords;
             }

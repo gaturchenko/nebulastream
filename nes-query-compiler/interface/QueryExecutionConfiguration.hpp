@@ -25,6 +25,7 @@
 #include <Configurations/Validation/FloatValidation.hpp>
 #include <Configurations/Validation/NumberValidation.hpp>
 #include <Util/ExecutionMode.hpp>
+#include <InferenceConfiguration.hpp>
 #include <SliceCacheConfiguration.hpp>
 
 namespace NES
@@ -74,6 +75,7 @@ public:
            {std::make_shared<NumberValidation>()}};
 
     SliceCacheConfiguration sliceCacheConfiguration = {"slice_cache", "Configuration for the slice cache"};
+    InferenceConfiguration inferenceConfiguration = {"inference", "Configuration for inference operators"};
 
 private:
     std::vector<BaseOption*> getOptions() override
@@ -85,7 +87,8 @@ private:
             &numberOfRecordsPerKey,
             &maxNumberOfBuckets,
             &operatorBufferSize,
-            &sliceCacheConfiguration};
+            &sliceCacheConfiguration,
+            &inferenceConfiguration};
     }
 };
 

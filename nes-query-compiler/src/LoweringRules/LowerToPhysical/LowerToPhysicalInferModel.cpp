@@ -14,24 +14,70 @@
 
 #include <LoweringRules/LowerToPhysical/LowerToPhysicalInferModel.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
+#include <ranges>
 #include <utility>
 #include <vector>
 
+#include <BatchInferenceOperatorHandler.hpp>
+#include <BatchingPhysicalOperator.hpp>
 #include <LoweringRules/AbstractLoweringRule.hpp>
 #include <Operators/InferModelLogicalOperator.hpp>
 #include <Operators/LogicalOperator.hpp>
+#include <Operators/SequenceLogicalOperator.hpp>
+#include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
 #include <Traits/MemoryLayoutTypeTrait.hpp>
+#include <Traits/OutputOriginIdsTrait.hpp>
+#include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <ErrorHandling.hpp>
+#include <BatchInferModelPhysicalOperator.hpp>
 #include <InferModelPhysicalOperator.hpp>
 #include <Inference.hpp>
+#include <InterBufferBatchingPhysicalOperator.hpp>
+#include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
+#include <Runtime/Execution/OperatorHandler.hpp>
 #include <LoweringRuleRegistry.hpp>
 #include <Model.hpp>
 #include <PhysicalOperator.hpp>
 
 namespace NES
 {
+
+namespace
+{
+
+bool containsWindowedAggregation(const LogicalOperator& logicalOperator)
+{
+    if (logicalOperator.tryGetAs<WindowedAggregationLogicalOperator>().has_value())
+    {
+        return true;
+    }
+    return std::ranges::any_of(
+        logicalOperator.getChildren(), [](const auto& child) { return containsWindowedAggregation(child); });
+}
+
+uint64_t getInferenceBatchSize(const LogicalOperator& inferModelOperator)
+{
+    const auto children = inferModelOperator.getChildren();
+    if (children.size() != 1)
+    {
+        return 1;
+    }
+
+    const auto sequenceOperator = children.front().tryGetAs<SequenceLogicalOperator>();
+    if (!sequenceOperator.has_value()
+        || sequenceOperator.value().get().getSequenceSource() != SequenceLogicalOperator::SequenceSource::INFERENCE)
+    {
+        return 1;
+    }
+
+    return sequenceOperator.value().get().getBatchSize();
+}
+
+}
 
 LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logicalOperator)
 {
@@ -50,12 +96,76 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     }
     auto model = std::move(*compiled);
 
+    const auto memoryLayoutTypeTrait = logicalOperator.getTraitSet().tryGet<MemoryLayoutTypeTrait>();
+    PRECONDITION(memoryLayoutTypeTrait.has_value(), "Expected a memory layout type trait");
+    const auto memoryLayoutType = memoryLayoutTypeTrait.value()->memoryLayout;
+    const auto batchSize = getInferenceBatchSize(logicalOperator);
+
+    if (batchSize > 1)
+    {
+        const auto inputSchema = logicalOperator.getInputSchemas().at(0);
+        auto bufferRef = LowerSchemaProvider::lowerSchema(conf.operatorBufferSize.getValue(), inputSchema, memoryLayoutType);
+        const auto handlerId = getNextOperatorHandlerId();
+
+        const auto outputOriginIdsOpt = getTrait<OutputOriginIdsTrait>(logicalOperator.getTraitSet());
+        PRECONDITION(outputOriginIdsOpt.has_value(), "Expected the outputOriginIds trait to be set");
+        const auto& outputOriginIds = outputOriginIdsOpt.value().get();
+        PRECONDITION(outputOriginIds.size() == 1, "Expected one output origin id");
+        auto handler = std::make_shared<BatchInferenceOperatorHandler>(batchSize, outputOriginIds[0]);
+
+        PhysicalOperator batchingOperator;
+        if (!logicalOperator.getChildren().empty() && containsWindowedAggregation(logicalOperator.getChildren().at(0)))
+        {
+            batchingOperator = InterBufferBatchingPhysicalOperator(handlerId, bufferRef);
+        }
+        else
+        {
+            batchingOperator = BatchingPhysicalOperator(handlerId, bufferRef);
+        }
+
+        auto batchingWrapper = std::make_shared<PhysicalOperatorWrapper>(
+            batchingOperator,
+            inputSchema,
+            inputSchema,
+            memoryLayoutType,
+            memoryLayoutType,
+            handlerId,
+            handler,
+            PhysicalOperatorWrapper::PipelineLocation::EMIT);
+
+        auto physicalOperator = BatchInferModelPhysicalOperator(
+            std::move(model),
+            bufferRef,
+            inputSchema.getFieldNames(),
+            inferModelOp.get().getInputFieldNames(),
+            inferModelOp.get().getOutputFieldNames(),
+            batchSize,
+            inferModelOp.get().hasVarsizedInput(),
+            inferModelOp.get().hasVarsizedOutput(),
+            handlerId);
+
+        NES_DEBUG("Lowering InferModel operator to physical BatchInferModelPhysicalOperator operator with batch size {}", batchSize)
+
+        const auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
+            physicalOperator,
+            logicalOperator.getInputSchemas().at(0),
+            logicalOperator.getOutputSchema(),
+            memoryLayoutType,
+            memoryLayoutType,
+            handlerId,
+            handler,
+            PhysicalOperatorWrapper::PipelineLocation::SCAN,
+            std::vector{batchingWrapper});
+
+        std::vector leafes(logicalOperator.getChildren().size(), batchingWrapper);
+        return {.root = wrapper, .leafs = {leafes}};
+    }
+
     /// Create the physical operator. Input names come from the logical operator: they
     /// were resolved by `withInferredSchema` to the upstream schema's qualified names
     /// (`source$field`), which is what the runtime `record.read` lookup requires.
     /// Output names come from the model — they are the user-declared output field names
     /// that will be written back onto the record.
-    /// The operator owns its own thread-local IREE session pool; no OperatorHandler needed.
     auto physicalOperator = InferModelPhysicalOperator(
         std::move(model),
         inferModelOp.get().getInputFieldNames(),
@@ -63,14 +173,7 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
         inferModelOp.get().hasVarsizedInput(),
         inferModelOp.get().hasVarsizedOutput());
 
-    /// Other physical inference operators will be added later,
-    /// so we should log the actual physical implementation we are lowering to.
-    /// The backend is not too relevant and function name only applies to IREE.
     NES_DEBUG("Lowering InferModel operator to physical InferModelPhysicalOperator operator")
-
-    const auto memoryLayoutTypeTrait = logicalOperator.getTraitSet().tryGet<MemoryLayoutTypeTrait>();
-    PRECONDITION(memoryLayoutTypeTrait.has_value(), "Expected a memory layout type trait");
-    const auto memoryLayoutType = memoryLayoutTypeTrait.value()->memoryLayout;
 
     const auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
         physicalOperator,

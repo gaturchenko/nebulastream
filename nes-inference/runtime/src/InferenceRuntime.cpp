@@ -70,21 +70,24 @@ InferenceRuntime::~InferenceRuntime() = default;
 InferenceRuntime::InferenceRuntime(InferenceRuntime&&) noexcept = default;
 InferenceRuntime& InferenceRuntime::operator=(InferenceRuntime&&) noexcept = default;
 
-void InferenceRuntime::setup(const CompiledModel& model)
+void InferenceRuntime::setup(const CompiledModel& model, size_t batchSize)
 {
     impl->backend = createRuntimeBackend(model.getBackend());
-    auto metadata = impl->backend->setup(model);
+    auto metadata = impl->backend->setup(model, batchSize);
 
     this->inputShape = std::move(metadata.inputShape);
+    this->outputShape = std::move(metadata.outputShape);
     this->nDim = metadata.nDim;
     this->functionName = std::move(metadata.functionName);
 
     /// NOLINTNEXTLINE(modernize-avoid-c-arrays) dynamic byte buffer requires array form
     this->inputData = std::make_unique<std::byte[]>(metadata.inputSize);
     this->inputSize = metadata.inputSize;
+    this->inputTupleSize = inputShape.empty() ? inputSize : inputSize / inputShape.front();
     /// NOLINTNEXTLINE(modernize-avoid-c-arrays) dynamic byte buffer requires array form
     this->outputData = std::make_unique<std::byte[]>(metadata.outputSize);
     this->outputSize = metadata.outputSize;
+    this->outputTupleSize = outputShape.empty() ? outputSize : outputSize / outputShape.front();
 }
 
 void InferenceRuntime::infer()

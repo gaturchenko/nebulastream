@@ -41,7 +41,7 @@ public:
 
     /// Create the runtime session from the compiled model and allocate the input
     /// and output byte buffers. Must be called exactly once.
-    void setup(const CompiledModel& model);
+    void setup(const CompiledModel& model, size_t batchSize = 1);
 
     /// Run inference: read from the owned input buffer, write into the owned output buffer.
     void infer();
@@ -56,20 +56,27 @@ public:
 
     [[nodiscard]] size_t getOutputSize() const { return outputSize; }
 
+    [[nodiscard]] size_t getInputTupleSize() const { return inputTupleSize; }
+
+    [[nodiscard]] size_t getOutputTupleSize() const { return outputTupleSize; }
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;
 
     std::vector<size_t> inputShape;
+    std::vector<size_t> outputShape;
     size_t nDim = 0;
     std::string functionName;
 
     /// NOLINTNEXTLINE(modernize-avoid-c-arrays) dynamic byte buffer requires array form
     std::unique_ptr<std::byte[]> inputData;
     size_t inputSize = 0;
+    size_t inputTupleSize = 0;
     /// NOLINTNEXTLINE(modernize-avoid-c-arrays) dynamic byte buffer requires array form
     std::unique_ptr<std::byte[]> outputData;
     size_t outputSize = 0;
+    size_t outputTupleSize = 0;
 };
 
 }

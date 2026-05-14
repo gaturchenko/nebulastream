@@ -13,6 +13,7 @@
 */
 
 #include <InferModelPhysicalOperator.hpp>
+#include "ThreadLocalRuntimeWrapper.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -40,35 +41,6 @@
 #include <PipelineExecutionContext.hpp>
 #include <static.hpp>
 #include <val_arith.hpp>
-
-namespace NES::detail
-{
-
-/// Per-operator pool of IREE sessions, one per worker thread. Owns the
-/// compiled model (for deferred init at setup) and the thread-local session
-/// vector.
-struct ThreadLocalRuntimeWrapper
-{
-    explicit ThreadLocalRuntimeWrapper(CompiledModel model) : model(std::move(model)) { }
-
-    void setup(size_t numThreads)
-    {
-        wrappers.clear();
-        wrappers.reserve(numThreads);
-        for (size_t i = 0; i < numThreads; ++i)
-        {
-            wrappers.emplace_back();
-            wrappers.back().setup(model);
-        }
-    }
-
-    [[nodiscard]] InferenceRuntime& getHandle(WorkerThreadId thread) { return wrappers[thread.getRawValue() % wrappers.size()]; }
-
-    CompiledModel model;
-    std::vector<InferenceRuntime> wrappers;
-};
-
-}
 
 namespace NES
 {

@@ -33,6 +33,7 @@
 #include <Operators/InferModelLogicalOperator.hpp>
 #include <Operators/InferModelNameLogicalOperator.hpp>
 #include <Operators/LogicalOperator.hpp>
+#include <Operators/SequenceLogicalOperator.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/PlanRenderer.hpp>
 #include <Util/Reflection.hpp>
@@ -183,6 +184,24 @@ TEST_F(InferModelLogicalOperatorTest, ReflectionRoundTrip)
     ASSERT_TRUE(jsonReflected.has_value()) << jsonReflected.error().what();
     auto jsonRestored = unreflector(jsonReflected.value());
     EXPECT_EQ(jsonRestored.getModel(), op.getModel());
+}
+
+TEST_F(InferModelLogicalOperatorTest, SequenceReflectionPreservesBatchSize)
+{
+    const SequenceLogicalOperator op{SequenceLogicalOperator::SequenceSource::INFERENCE, 7};
+
+    const Reflector<SequenceLogicalOperator> reflector;
+    const Unreflector<SequenceLogicalOperator> unreflector;
+    const auto restored = unreflector(reflector(op));
+
+    EXPECT_EQ(restored.getSequenceSource(), SequenceLogicalOperator::SequenceSource::INFERENCE);
+    EXPECT_EQ(restored.getBatchSize(), 7U);
+
+    const auto json = rfl::json::write(reflector(op));
+    auto jsonReflected = rfl::json::read<Reflected>(json);
+    ASSERT_TRUE(jsonReflected.has_value()) << jsonReflected.error().what();
+    const auto jsonRestored = unreflector(jsonReflected.value());
+    EXPECT_EQ(jsonRestored.getBatchSize(), 7U);
 }
 
 /// Schema inference: input schema propagates, output fields appended with correct types and ordering

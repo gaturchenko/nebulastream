@@ -25,3 +25,4 @@ add_plugin(IngestionTimeWatermarkAssigner LogicalOperator nes-logical-operators 
 add_plugin(EventTimeWatermarkAssigner LogicalOperator nes-logical-operators EventTimeWatermarkAssignerLogicalOperator.cpp)
 add_plugin(InferModel LogicalOperator nes-logical-operators InferModelLogicalOperator.cpp)
 add_plugin(InferModelName LogicalOperator nes-logical-operators InferModelNameLogicalOperator.cpp)
+add_plugin(Sequence LogicalOperator nes-logical-operators SequenceLogicalOperator.cpp)

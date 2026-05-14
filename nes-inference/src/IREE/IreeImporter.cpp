@@ -14,8 +14,11 @@
 
 #include <IreeImporter.hpp>
 
+#include <algorithm>
 #include <expected>
 #include <filesystem>
+#include <regex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -33,6 +36,23 @@
 
 namespace NES
 {
+
+namespace
+{
+
+std::vector<std::byte> makeLeadingTensorDimensionsDynamic(std::span<const std::byte> mlirBytes)
+{
+    /// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) byte-to-char for MLIR text
+    const std::string mlirText(reinterpret_cast<const char*>(mlirBytes.data()), mlirBytes.size());
+    static const std::regex LeadingSingletonTensorDimRegex{R"((!torch\.vtensor<\[)1([,\]]))"};
+    const auto patchedMlir = std::regex_replace(mlirText, LeadingSingletonTensorDimRegex, "$1?$2");
+
+    std::vector<std::byte> patchedBytes(patchedMlir.size());
+    std::ranges::transform(patchedMlir, patchedBytes.begin(), [](const char character) { return static_cast<std::byte>(character); });
+    return patchedBytes;
+}
+
+}
 
 IreeImporter::IreeImporter()
 {
@@ -71,8 +91,9 @@ std::expected<ImportedModel, ImportError> IreeImporter::importOnnx(const std::fi
         return std::unexpected(ImportError{"Model import was not successful: Non Zero Exit Code."});
     }
 
+    auto importedMlir = makeLeadingTensorDimensionsDynamic(result.stdoutData);
     /// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) byte-to-char for MLIR text
-    const std::string_view mlir{reinterpret_cast<const char*>(result.stdoutData.data()), result.stdoutData.size()};
+    const std::string_view mlir{reinterpret_cast<const char*>(importedMlir.data()), importedMlir.size()};
 
     /// Scrape the signature (function name, shapes) out of the MLIR text so
     /// downstream consumers — including the runtime session — have everything
@@ -84,7 +105,7 @@ std::expected<ImportedModel, ImportError> IreeImporter::importOnnx(const std::fi
     }
 
     return detail::ModelAccess::makeImported(
-        detail::RefCountedByteBuffer::fromBytes(result.stdoutData),
+        detail::RefCountedByteBuffer::fromBytes(importedMlir),
         std::move(signature->functionName),
         std::move(signature->inputShape),
         std::move(signature->outputShape));
