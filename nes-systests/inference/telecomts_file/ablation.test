@@ -1,0 +1,28 @@
+GlobalConfiguration enable_event_trace: [true]
+
+CREATE LOGICAL SOURCE telecomTSFileSource(timestamp UINT64, value FLOAT32);
+CREATE PHYSICAL SOURCE FOR telecomTSFileSource TYPE File;
+ATTACH FILE large/telecomts_file/telecomts_file_dl_mcs.csv
+
+CREATE SINK telecomTSFileVarsizedDiscard2ms(DLMCSNext2Ms VARSIZED) TYPE Discard;
+
+CREATE MODEL tcn2ms(
+    PATH "TESTDATA/model/telecomts_file/pretrained/tcn/tcn_telecomts_file_size_5_stride_1.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (DLMCSNext2Ms VARSIZED)
+);
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [500000]
+Configuration worker.default_query_execution.operator_buffer_size: [131072]
+Configuration worker.default_query_execution.page_size: [16384]
+Configuration worker.default_query_execution.inference.batch_size: [1024]
+Configuration worker.default_query_execution.inference.use_batch_deduplication: [true]
+SELECT DLMCSNext2Ms FROM (
+    SELECT INFER_MODEL(tcn2ms, (value_5_ms))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_5_ms
+        FROM telecomTSFileSource
+        WINDOW SLIDING(timestamp, SIZE 500 ms, ADVANCE BY 100 ms)
+    )
+) INTO telecomTSFileVarsizedDiscard2ms;
+----
