@@ -301,12 +301,20 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                 [&](const TaskExecutionComplete& taskComplete)
                 {
                     uint64_t duration = 0;
+                    const auto taskCompleteUs = timestampToMicroseconds(taskComplete.timestamp);
+                    auto taskStartUs = taskCompleteUs;
                     auto it = activeTasks.find(taskComplete.taskId);
                     if (it != activeTasks.end())
                     {
-                        duration = timestampToMicroseconds(taskComplete.timestamp) - timestampToMicroseconds(it->second);
+                        taskStartUs = timestampToMicroseconds(it->second);
+                        duration = taskCompleteUs - taskStartUs;
                         activeTasks.erase(it);
                     }
+                    pipelineDurations[taskComplete.pipelineId] += duration;
+                    auto& stats = pipelineTaskStats[taskComplete.pipelineId];
+                    ++stats.taskCount;
+                    stats.firstTaskStartUs = std::min(stats.firstTaskStartUs, taskStartUs);
+                    stats.lastTaskEndUs = std::max(stats.lastTaskEndUs, taskCompleteUs);
 
                     // printComma();
                     // fmt::print(
@@ -324,7 +332,7 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                 },
                 [&](const TaskEmit& taskEmit)
                 {
-                    (void)taskEmit;
+                    pipelineTuplesProcessed[taskEmit.fromPipeline] += taskEmit.numberOfTuples;
                     // printComma();
                     // fmt::print(
                     //     file,
