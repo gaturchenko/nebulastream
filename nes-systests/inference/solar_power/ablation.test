@@ -1,0 +1,106 @@
+GlobalConfiguration enable_event_trace: [true]
+
+CREATE LOGICAL SOURCE solarPowerSource(timestamp UINT64, value FLOAT64);
+CREATE PHYSICAL SOURCE FOR solarPowerSource TYPE File;
+ATTACH FILE large/solar_power/solar-power.csv
+
+CREATE SINK solarPowerVarsizedDiscard2min(powerProdNext2Min VARSIZED) TYPE Discard;
+CREATE SINK solarPowerVarsizedDiscard1min(powerProdNext1Min VARSIZED) TYPE Discard;
+CREATE SINK solarPowerVarsizedDiscard24sec(powerProdNext24Sec VARSIZED) TYPE Discard;
+
+CREATE MODEL dLinear10min(
+    PATH "TESTDATA/model/solar_power/pretrained/dlinear/dlinear_solar_size_600_stride_60.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext2Min VARSIZED)
+);
+
+CREATE MODEL nBeats10min(
+    PATH "TESTDATA/model/solar_power/pretrained/nbeats/nbeats_solar_size_600_stride_60.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext2Min VARSIZED)
+);
+
+CREATE MODEL nBeats5min(
+    PATH "TESTDATA/model/solar_power/pretrained/nbeats/nbeats_solar_size_600_stride_60.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext1Min VARSIZED)
+);
+
+CREATE MODEL dLinear2min(
+    PATH "TESTDATA/model/solar_power/pretrained/dlinear/dlinear_solar_size_120_stride_12.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext24Sec VARSIZED)
+);
+
+CREATE MODEL nBeats2min(
+    PATH "TESTDATA/model/solar_power/pretrained/nbeats/nbeats_solar_size_120_stride_12.onnx"
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext24Sec VARSIZED)
+);
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [500000]
+Configuration worker.default_query_execution.operator_buffer_size: [131072]
+Configuration worker.default_query_execution.page_size: [16384]
+Configuration worker.query_engine.number_of_worker_threads: [6]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [16]
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(nBeats10min, (value_10_min))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_10_min
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+) INTO solarPowerVarsizedDiscard2min;
+----
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [5000000]
+Configuration worker.default_query_execution.operator_buffer_size: [16384]
+Configuration worker.default_query_execution.page_size: [4096]
+SELECT powerProdNext1Min FROM (
+    SELECT INFER_MODEL(nBeats5min, (value_5_min))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_5_min
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 300000 ms, ADVANCE BY 30000 ms)
+    )
+) INTO solarPowerVarsizedDiscard1min;
+----
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [5000000]
+Configuration worker.default_query_execution.operator_buffer_size: [16384]
+Configuration worker.default_query_execution.page_size: [4096]
+SELECT powerProdNext24Sec FROM (
+    SELECT INFER_MODEL(nBeats2min, (value_120_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_120_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 120000 ms, ADVANCE BY 12000 ms)
+    )
+) INTO solarPowerVarsizedDiscard24sec;
+----
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [500000]
+Configuration worker.default_query_execution.operator_buffer_size: [131072]
+Configuration worker.default_query_execution.page_size: [16384]
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(dLinear10min, (value_10_min))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_10_min
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+) INTO solarPowerVarsizedDiscard2min;
+----
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [5000000]
+Configuration worker.default_query_execution.operator_buffer_size: [16384]
+Configuration worker.default_query_execution.page_size: [4096]
+SELECT powerProdNext24Sec FROM (
+    SELECT INFER_MODEL(dLinear2min, (value_120_sec))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_120_sec
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 120000 ms, ADVANCE BY 12000 ms)
+    )
+) INTO solarPowerVarsizedDiscard24sec;
+----

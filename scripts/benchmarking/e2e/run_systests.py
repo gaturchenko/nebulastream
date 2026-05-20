@@ -154,7 +154,7 @@ def build_command(
         query: str,
         params: Dict[str, object],
 ) -> List[str]:
-    cmd = [str(systest_path), "-t", query, "--"]
+    cmd = [str(systest_path), "-t", query, "-n", "1", "--"]
     for key, value in params.items():
         cmd.append(f"--{key}={format_value(value)}")
     return cmd

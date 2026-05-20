@@ -1,0 +1,49 @@
+GlobalConfiguration enable_event_trace: [true]
+
+CREATE LOGICAL SOURCE solarPowerSource(timestamp UINT64, value FLOAT64);
+CREATE PHYSICAL SOURCE FOR solarPowerSource TYPE File;
+ATTACH FILE large/solar_power/solar-power-100k.csv
+
+CREATE SINK solarPowerVarsizedDiscard2min(powerProdNext2Min VARSIZED) TYPE Discard;
+CREATE SINK solarPowerVarsizedDiscard1min(powerProdNext1Min VARSIZED) TYPE Discard;
+CREATE SINK solarPowerVarsizedDiscard24sec(powerProdNext24Sec VARSIZED) TYPE Discard;
+
+CREATE MODEL nBeats10minOV(
+    PATH "TESTDATA/model/solar_power/pretrained/nbeats/nbeats_solar_size_600_stride_60.onnx"
+    BACKEND OPENVINO
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext2Min VARSIZED)
+);
+
+CREATE MODEL nBeats10minIREE(
+    PATH "TESTDATA/model/solar_power/pretrained/nbeats/nbeats_solar_size_600_stride_60.onnx"
+    BACKEND IREE
+    INPUTS (VARSIZED)
+    OUTPUTS (powerProdNext2Min VARSIZED)
+);
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [500000]
+Configuration worker.default_query_execution.operator_buffer_size: [131072]
+Configuration worker.default_query_execution.page_size: [16384]
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(nBeats10minOV, (value_10_min))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_10_min
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+) INTO solarPowerVarsizedDiscard2min;
+----
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [500000]
+Configuration worker.default_query_execution.operator_buffer_size: [131072]
+Configuration worker.default_query_execution.page_size: [16384]
+SELECT powerProdNext2Min FROM (
+    SELECT INFER_MODEL(nBeats10minIREE, (value_10_min))
+    FROM (
+        SELECT ARRAY_AGG(value) AS value_10_min
+        FROM solarPowerSource
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+) INTO solarPowerVarsizedDiscard2min;
+----
