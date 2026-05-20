@@ -60,7 +60,7 @@ struct GoogleEventTracePrinter final : StatisticListener
     void start();
 
 private:
-    static constexpr size_t QUEUE_LENGTH = 1000;
+    static constexpr size_t QUEUE_LENGTH = 1'000'000;
 
     enum class Category : int8_t
     {
@@ -77,6 +77,13 @@ private:
         Instant
     };
 
+    struct PipelineTaskStats
+    {
+        uint64_t taskCount = 0;
+        uint64_t firstTaskStartUs = std::numeric_limits<uint64_t>::max();
+        uint64_t lastTaskEndUs = 0;
+    };
+
     static uint64_t timestampToMicroseconds(const std::chrono::system_clock::time_point& timestamp);
 
     /// Thread routine that processes events and writes to the trace file
@@ -91,6 +98,10 @@ private:
     /// Track active queries and pipelines for cleanup
     std::unordered_map<QueryId, std::pair<std::chrono::system_clock::time_point, WorkerThreadId>> activeQueries;
     std::unordered_map<PipelineId, std::tuple<QueryId, std::chrono::system_clock::time_point, WorkerThreadId>> activePipelines;
+
+    std::unordered_map<PipelineId, uint64_t> pipelineDurations;
+    std::unordered_map<PipelineId, size_t> pipelineTuplesProcessed;
+    std::unordered_map<PipelineId, PipelineTaskStats> pipelineTaskStats;
 
     /// Must be declared last so it's destroyed first, ensuring the thread stops before maps are destroyed
     Thread traceThread;

@@ -67,6 +67,16 @@ std::string escapeForJson(std::string_view str)
     }
     return final;
 }
+
+std::string optionalUnsigned(uint64_t value, bool hasValue)
+{
+    if (!hasValue)
+    {
+        return "null";
+    }
+    return fmt::format("{}", value);
+}
+
 }
 
 uint64_t GoogleEventTracePrinter::timestampToMicroseconds(const std::chrono::system_clock::time_point& timestamp)
@@ -238,38 +248,55 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                     uint64_t originalTid = (it != activePipelines.end()) ? std::get<2>(it->second).getRawValue()
                                                                          : pipelineStop.threadId.getRawValue(); /// fallback
 
+                    const auto pipelineId = pipelineStop.pipelineId;
+                    const auto pipelineDuration = pipelineDurations[pipelineId];
+                    const auto pipelineTuples = pipelineTuplesProcessed[pipelineId];
+                    const auto taskStats = pipelineTaskStats[pipelineId];
+                    const auto hasTaskSpan = taskStats.taskCount > 0;
+                    const auto taskSpan = hasTaskSpan ? taskStats.lastTaskEndUs - taskStats.firstTaskStartUs : 0;
+
                     printComma();
                     fmt::print(
                         file,
-                        R"x(    {{"args":{{"pipeline_id":{}}},"cat":"pipeline","name":"Pipeline {} (Query {})","ph":"E","pid":{},"tid":{},"ts":{}}})x",
+                        R"x(    {{"args":{{"pipeline_id":{}}},"cat":"pipeline","name":"Pipeline {} (Query {})","ph":"E","pid":{},"tid":{},"ts":{},"dur":{},"tuples":{},"task_count":{},"task_span_us":{}}})x",
                         pipelineStop.pipelineId.getRawValue(),
                         pipelineStop.pipelineId,
                         pipelineStop.queryId,
                         pid,
                         originalTid,
-                        timestampToMicroseconds(pipelineStop.timestamp));
+                        timestampToMicroseconds(pipelineStop.timestamp),
+                        pipelineDuration,
+                        pipelineTuples,
+                        taskStats.taskCount,
+                        optionalUnsigned(taskSpan, hasTaskSpan));
 
                     /// Remove from active pipelines
                     activePipelines.erase(pipelineStop.pipelineId);
+                    pipelineDurations.erase(pipelineId);
+                    pipelineTuplesProcessed.erase(pipelineId);
+                    pipelineTaskStats.erase(pipelineId);
                 },
                 [&](const TaskExecutionStart& taskStart)
                 {
-                    printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"pipeline_id":{},"task_id":{},"tuples":{}}},"cat":"task","name":"Task {} (Pipeline {}, Query {})","ph":"B","pid":{},"tid":{},"ts":{}}})x",
-                        taskStart.pipelineId.getRawValue(),
-                        taskStart.taskId.getRawValue(),
-                        taskStart.numberOfTuples,
-                        taskStart.taskId,
-                        taskStart.pipelineId,
-                        taskStart.queryId,
-                        pid,
-                        taskStart.threadId.getRawValue(),
-                        timestampToMicroseconds(taskStart.timestamp));
+                    // printComma();
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"pipeline_id":{},"task_id":{},"tuples":{}}},"cat":"task","name":"Task {} (Pipeline {}, Query {})","ph":"B","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskStart.pipelineId.getRawValue(),
+                    //     taskStart.taskId.getRawValue(),
+                    //     taskStart.numberOfTuples,
+                    //     taskStart.taskId,
+                    //     taskStart.pipelineId,
+                    //     taskStart.queryId,
+                    //     pid,
+                    //     taskStart.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskStart.timestamp));
 
                     /// Track this task for duration calculation
                     activeTasks.emplace(taskStart.taskId, taskStart.timestamp);
+                    auto& stats = pipelineTaskStats[taskStart.pipelineId];
+                    const auto taskStartUs = timestampToMicroseconds(taskStart.timestamp);
+                    stats.firstTaskStartUs = std::min(stats.firstTaskStartUs, taskStartUs);
                 },
                 [&](const TaskExecutionComplete& taskComplete)
                 {
@@ -281,52 +308,52 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                         activeTasks.erase(it);
                     }
 
-                    printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","dur":{},"name":"Task {} (Pipeline {}, Query {})","ph":"E","pid":{},"tid":{},"ts":{}}})x",
-                        taskComplete.pipelineId.getRawValue(),
-                        taskComplete.taskId.getRawValue(),
-                        duration,
-                        taskComplete.taskId,
-                        taskComplete.pipelineId,
-                        taskComplete.queryId,
-                        pid,
-                        taskComplete.threadId.getRawValue(),
-                        timestampToMicroseconds(taskComplete.timestamp));
+                    // printComma();
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","dur":{},"name":"Task {} (Pipeline {}, Query {})","ph":"E","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskComplete.pipelineId.getRawValue(),
+                    //     taskComplete.taskId.getRawValue(),
+                    //     duration,
+                    //     taskComplete.taskId,
+                    //     taskComplete.pipelineId,
+                    //     taskComplete.queryId,
+                    //     pid,
+                    //     taskComplete.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskComplete.timestamp));
                 },
                 [&](const TaskEmit& taskEmit)
                 {
                     printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"from_pipeline":{},"task_id":{},"to_pipeline":{},"tuples":{}}},"cat":"task","name":"Emit {}->{} (Task {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
-                        taskEmit.fromPipeline.getRawValue(),
-                        taskEmit.taskId.getRawValue(),
-                        taskEmit.toPipeline.getRawValue(),
-                        taskEmit.numberOfTuples,
-                        taskEmit.fromPipeline,
-                        taskEmit.toPipeline,
-                        taskEmit.taskId,
-                        taskEmit.queryId,
-                        pid,
-                        taskEmit.threadId.getRawValue(),
-                        timestampToMicroseconds(taskEmit.timestamp));
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"from_pipeline":{},"task_id":{},"to_pipeline":{},"tuples":{}}},"cat":"task","name":"Emit {}->{} (Task {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskEmit.fromPipeline.getRawValue(),
+                    //     taskEmit.taskId.getRawValue(),
+                    //     taskEmit.toPipeline.getRawValue(),
+                    //     taskEmit.numberOfTuples,
+                    //     taskEmit.fromPipeline,
+                    //     taskEmit.toPipeline,
+                    //     taskEmit.taskId,
+                    //     taskEmit.queryId,
+                    //     pid,
+                    //     taskEmit.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskEmit.timestamp));
                 },
                 [&](const TaskExpired& taskExpired)
                 {
-                    printComma();
-                    fmt::print(
-                        file,
-                        R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","name":"Task Expired {} (Pipeline {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
-                        taskExpired.pipelineId.getRawValue(),
-                        taskExpired.taskId.getRawValue(),
-                        taskExpired.taskId,
-                        taskExpired.pipelineId,
-                        taskExpired.queryId,
-                        pid,
-                        taskExpired.threadId.getRawValue(),
-                        timestampToMicroseconds(taskExpired.timestamp));
+                    // printComma();
+                    // fmt::print(
+                    //     file,
+                    //     R"x(    {{"args":{{"pipeline_id":{},"task_id":{}}},"cat":"task","name":"Task Expired {} (Pipeline {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
+                    //     taskExpired.pipelineId.getRawValue(),
+                    //     taskExpired.taskId.getRawValue(),
+                    //     taskExpired.taskId,
+                    //     taskExpired.pipelineId,
+                    //     taskExpired.queryId,
+                    //     pid,
+                    //     taskExpired.threadId.getRawValue(),
+                    //     timestampToMicroseconds(taskExpired.timestamp));
 
                     /// Remove from active tasks if present
                     activeTasks.erase(taskExpired.taskId);
