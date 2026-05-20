@@ -29,7 +29,7 @@ namespace NES::detail
 /// compiled model and creates thread-local runtime sessions at setup.
 struct ThreadLocalRuntimeWrapper
 {
-    explicit ThreadLocalRuntimeWrapper(CompiledModel model) : model(std::move(model)) { }
+    explicit ThreadLocalRuntimeWrapper(CompiledModel model, InferenceRuntimeOptions options) : model(std::move(model)), options(options) { }
 
     void setup(size_t numThreads, size_t batchSize = 1)
     {
@@ -38,13 +38,14 @@ struct ThreadLocalRuntimeWrapper
         for (size_t i = 0; i < numThreads; ++i)
         {
             wrappers.emplace_back();
-            wrappers.back().setup(model, batchSize);
+            wrappers.back().setup(model, batchSize, options);
         }
     }
 
     [[nodiscard]] InferenceRuntime& getHandle(WorkerThreadId thread) { return wrappers[thread.getRawValue() % wrappers.size()]; }
 
     CompiledModel model;
+    InferenceRuntimeOptions options;
     std::vector<InferenceRuntime> wrappers;
 };
 

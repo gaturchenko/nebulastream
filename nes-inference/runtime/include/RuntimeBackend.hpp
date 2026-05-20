@@ -21,6 +21,8 @@
 
 namespace NES
 {
+struct InferenceRuntimeOptions;
+
 struct RuntimeMetadata
 {
     std::vector<size_t> inputShape;
@@ -36,7 +38,7 @@ class RuntimeBackend
 public:
     virtual ~RuntimeBackend() = default;
 
-    virtual RuntimeMetadata setup(const CompiledModel& model, size_t batchSize) = 0;
+    virtual RuntimeMetadata setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options) = 0;
     virtual void infer(std::byte* inputBuffer, size_t inputBufferSize, std::byte* outputBuffer, size_t outputBufferSize) = 0;
 };
 }

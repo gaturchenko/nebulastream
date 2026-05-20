@@ -24,7 +24,6 @@
 #include <utility>
 #include <vector>
 
-#include <BatchInferenceOperatorHandler.hpp>
 #include <DataTypes/DataType.hpp>
 #include <Identifiers/Identifiers.hpp>
 #include <Nautilus/DataTypes/VarVal.hpp>
@@ -33,13 +32,14 @@
 #include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <Nautilus/Interface/Record.hpp>
 #include <Nautilus/Interface/RecordBuffer.hpp>
+#include <Util/StdInt.hpp>
 #include <nautilus/std/cstring.h>
+#include <BatchInferenceOperatorHandler.hpp>
 #include <CompilationContext.hpp>
 #include <ExecutionContext.hpp>
 #include <Model.hpp>
 #include <PhysicalOperator.hpp>
 #include <PipelineExecutionContext.hpp>
-#include <Util/StdInt.hpp>
 #include <static.hpp>
 #include <val.hpp>
 #include <val_arith.hpp>
@@ -128,10 +128,11 @@ BatchInferModelPhysicalOperator::BatchInferModelPhysicalOperator(
     std::vector<std::string> inputFieldNames,
     std::vector<std::string> outputFieldNames,
     size_t batchSize,
+    InferenceRuntimeOptions runtimeOptions,
     bool varsizedInput,
     bool varsizedOutput,
     OperatorHandlerId operatorHandlerId)
-    : threadLocal(std::make_shared<ThreadLocalRuntimeWrapper>(model))
+    : threadLocal(std::make_shared<ThreadLocalRuntimeWrapper>(model, runtimeOptions))
     , bufferRef(std::move(bufferRef))
     , projections(std::move(projections))
     , inputFieldNames(std::move(inputFieldNames))
@@ -184,8 +185,7 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         const auto inputBufferSize = nautilus::val<uint64_t>(batchSize * inputTupleSize);
 
         /// copies the input data into the backend
-        const auto writeBatchInputs
-            = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
+        const auto writeBatchInputs = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
         {
             for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
             {

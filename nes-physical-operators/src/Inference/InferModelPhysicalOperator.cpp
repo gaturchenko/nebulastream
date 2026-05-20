@@ -78,6 +78,7 @@ InferModelPhysicalOperator::InferModelPhysicalOperator(
     CompiledModel model,
     std::vector<std::string> inputFieldNames,
     std::vector<std::string> outputFieldNames,
+    InferenceRuntimeOptions runtimeOptions,
     bool varsizedInput,
     bool varsizedOutput)
     : inputFieldNames(std::move(inputFieldNames))
@@ -86,7 +87,7 @@ InferModelPhysicalOperator::InferModelPhysicalOperator(
     , varsizedInput(varsizedInput)
     , varsizedOutput(varsizedOutput)
 {
-    threadLocal = std::make_shared<ThreadLocalRuntimeWrapper>(std::move(model));
+    threadLocal = std::make_shared<ThreadLocalRuntimeWrapper>(std::move(model), runtimeOptions);
 }
 
 void InferModelPhysicalOperator::setup(ExecutionContext& executionCtx, CompilationContext& compilationContext) const

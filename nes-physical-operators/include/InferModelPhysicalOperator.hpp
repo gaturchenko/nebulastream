@@ -28,6 +28,7 @@
 
 namespace NES
 {
+struct InferenceRuntimeOptions;
 
 namespace detail
 {
@@ -42,6 +43,7 @@ public:
         CompiledModel model,
         std::vector<std::string> inputFieldNames,
         std::vector<std::string> outputFieldNames,
+        InferenceRuntimeOptions runtimeOptions,
         bool varsizedInput,
         bool varsizedOutput);
 

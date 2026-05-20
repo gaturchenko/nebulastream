@@ -58,7 +58,7 @@ void ireeCheckStatus(iree_status_t status, const char* msg)
 
 namespace NES
 {
-RuntimeMetadata IreeRuntimeBackend::setup(const CompiledModel& model, size_t batchSize)
+RuntimeMetadata IreeRuntimeBackend::setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions&)
 {
     iree_runtime_instance_options_t instanceOptions;
     iree_runtime_instance_options_initialize(&instanceOptions);

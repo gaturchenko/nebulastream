@@ -21,24 +21,24 @@
 #include <utility>
 #include <vector>
 
-#include <BatchInferenceOperatorHandler.hpp>
-#include <BatchingPhysicalOperator.hpp>
 #include <LoweringRules/AbstractLoweringRule.hpp>
+#include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
 #include <Operators/InferModelLogicalOperator.hpp>
 #include <Operators/LogicalOperator.hpp>
 #include <Operators/SequenceLogicalOperator.hpp>
 #include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
+#include <Runtime/Execution/OperatorHandler.hpp>
 #include <Traits/MemoryLayoutTypeTrait.hpp>
 #include <Traits/OutputOriginIdsTrait.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
-#include <ErrorHandling.hpp>
 #include <BatchInferModelPhysicalOperator.hpp>
+#include <BatchInferenceOperatorHandler.hpp>
+#include <BatchingPhysicalOperator.hpp>
+#include <ErrorHandling.hpp>
 #include <InferModelPhysicalOperator.hpp>
 #include <Inference.hpp>
 #include <InterBufferBatchingPhysicalOperator.hpp>
-#include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
-#include <Runtime/Execution/OperatorHandler.hpp>
 #include <LoweringRuleRegistry.hpp>
 #include <Model.hpp>
 #include <PhysicalOperator.hpp>
@@ -55,8 +55,7 @@ bool containsWindowedAggregation(const LogicalOperator& logicalOperator)
     {
         return true;
     }
-    return std::ranges::any_of(
-        logicalOperator.getChildren(), [](const auto& child) { return containsWindowedAggregation(child); });
+    return std::ranges::any_of(logicalOperator.getChildren(), [](const auto& child) { return containsWindowedAggregation(child); });
 }
 
 uint64_t getInferenceBatchSize(const LogicalOperator& inferModelOperator)
@@ -75,6 +74,15 @@ uint64_t getInferenceBatchSize(const LogicalOperator& inferModelOperator)
     }
 
     return sequenceOperator.value().get().getBatchSize();
+}
+
+InferenceRuntimeOptions getInferenceRuntimeOptions(const QueryExecutionConfiguration& conf)
+{
+    const auto& inference = conf.inferenceConfiguration;
+    return {
+        .openvinoInferenceNumThreads = inference.openvinoInferenceNumThreads.getValue(),
+        .openvinoNumStreams = inference.openvinoNumStreams.getValue(),
+        .openvinoEnableCpuPinning = inference.openvinoEnableCpuPinning.getValue()};
 }
 
 }
@@ -100,6 +108,7 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     PRECONDITION(memoryLayoutTypeTrait.has_value(), "Expected a memory layout type trait");
     const auto memoryLayoutType = memoryLayoutTypeTrait.value()->memoryLayout;
     const auto batchSize = getInferenceBatchSize(logicalOperator);
+    const auto runtimeOptions = getInferenceRuntimeOptions(conf);
 
     if (batchSize > 1)
     {
@@ -140,6 +149,7 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
             inferModelOp.get().getInputFieldNames(),
             inferModelOp.get().getOutputFieldNames(),
             batchSize,
+            runtimeOptions,
             inferModelOp.get().hasVarsizedInput(),
             inferModelOp.get().hasVarsizedOutput(),
             handlerId);
@@ -170,6 +180,7 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
         std::move(model),
         inferModelOp.get().getInputFieldNames(),
         inferModelOp.get().getOutputFieldNames(),
+        runtimeOptions,
         inferModelOp.get().hasVarsizedInput(),
         inferModelOp.get().hasVarsizedOutput());
 

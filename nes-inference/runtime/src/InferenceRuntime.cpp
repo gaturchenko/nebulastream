@@ -70,10 +70,10 @@ InferenceRuntime::~InferenceRuntime() = default;
 InferenceRuntime::InferenceRuntime(InferenceRuntime&&) noexcept = default;
 InferenceRuntime& InferenceRuntime::operator=(InferenceRuntime&&) noexcept = default;
 
-void InferenceRuntime::setup(const CompiledModel& model, size_t batchSize)
+void InferenceRuntime::setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options)
 {
     impl->backend = createRuntimeBackend(model.getBackend());
-    auto metadata = impl->backend->setup(model, batchSize);
+    auto metadata = impl->backend->setup(model, batchSize, options);
 
     this->inputShape = std::move(metadata.inputShape);
     this->outputShape = std::move(metadata.outputShape);

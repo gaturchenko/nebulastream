@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <string>
@@ -31,6 +32,13 @@ struct ImportError
 struct CompileError
 {
     std::string message;
+};
+
+struct InferenceRuntimeOptions
+{
+    uint64_t openvinoInferenceNumThreads = 1;
+    uint64_t openvinoNumStreams = 0;
+    bool openvinoEnableCpuPinning = false;
 };
 
 /// Import a model from a file.

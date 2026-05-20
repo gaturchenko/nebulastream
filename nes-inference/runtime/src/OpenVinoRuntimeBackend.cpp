@@ -15,6 +15,7 @@
 #include <OpenVinoRuntimeBackend.hpp>
 
 #include <Util/Logger/Logger.hpp>
+#include <Inference.hpp>
 #include <Model.hpp>
 #include <RuntimeBackend.hpp>
 
@@ -113,7 +114,7 @@ std::string formatTensor(const ov::Tensor& tensor)
 
 namespace NES
 {
-RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t batchSize)
+RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options)
 {
     /// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) byte-to-text for OpenVINO XML payload
     const std::string modelXml(reinterpret_cast<const char*>(model.getData().data()), model.getData().size());
@@ -142,8 +143,9 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
         "CPU",
         ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY),
         ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY),
-        ov::num_streams(0),
-        ov::inference_num_threads(1));
+        ov::num_streams(static_cast<int>(options.openvinoNumStreams)),
+        ov::inference_num_threads(static_cast<int>(options.openvinoInferenceNumThreads)),
+        ov::hint::enable_cpu_pinning(options.openvinoEnableCpuPinning));
 
     inferRequest = compiledModel.create_infer_request();
     inputElementType = compiledModel.input(0).get_element_type();

@@ -50,7 +50,7 @@ struct SessionDeleter
 class IreeRuntimeBackend final : public RuntimeBackend
 {
 public:
-    RuntimeMetadata setup(const CompiledModel& model, size_t batchSize) override;
+    RuntimeMetadata setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options) override;
     void infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t outputBufferSize) override;
 
 private:

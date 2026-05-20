@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include <Inference.hpp>
 #include <Model.hpp>
 
 namespace NES
@@ -41,7 +42,7 @@ public:
 
     /// Create the runtime session from the compiled model and allocate the input
     /// and output byte buffers. Must be called exactly once.
-    void setup(const CompiledModel& model, size_t batchSize = 1);
+    void setup(const CompiledModel& model, size_t batchSize = 1, const InferenceRuntimeOptions& options = {});
 
     /// Run inference: read from the owned input buffer, write into the owned output buffer.
     void infer();

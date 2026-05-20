@@ -31,6 +31,7 @@
 
 namespace NES
 {
+struct InferenceRuntimeOptions;
 
 namespace detail
 {
@@ -49,13 +50,16 @@ public:
         std::vector<std::string> inputFieldNames,
         std::vector<std::string> outputFieldNames,
         size_t batchSize,
+        InferenceRuntimeOptions runtimeOptions,
         bool varsizedInput,
         bool varsizedOutput,
         OperatorHandlerId operatorHandlerId);
 
     void setup(ExecutionContext& executionCtx, CompilationContext& compilationContext) const override;
     void open(ExecutionContext& ctx, RecordBuffer& recordBuffer) const override;
+
     void close(ExecutionContext&, RecordBuffer&) const override { /* closed by open() after the batch scan has produced records */ }
+
     void terminate(ExecutionContext& executionCtx) const override;
 
     [[nodiscard]] std::optional<PhysicalOperator> getChild() const override;
