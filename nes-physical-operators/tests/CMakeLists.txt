@@ -31,4 +31,15 @@ if (ENABLE_IREE_TESTS)
     endfunction()
 
     add_nes_inference_physical_operator_test(InferModelPhysicalOperatorTest InferModelPhysicalOperatorTest.cpp)
+
+    add_executable(BatchInferenceMicrobenchmark microbenchmark/BatchInferenceMicrobenchmark.cpp)
+    target_include_directories(BatchInferenceMicrobenchmark PRIVATE
+            microbenchmark/)
+    target_link_libraries(BatchInferenceMicrobenchmark PRIVATE
+            nes-data-types
+            nes-physical-operators
+            nes-memory-test-utils
+            nes-test-util
+            nes-inference
+            nes-nautilus-test-util)
 endif ()

@@ -141,7 +141,9 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
         openVinoModel,
         "CPU",
         ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY),
-        ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+        ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY),
+        ov::num_streams(0),
+        ov::inference_num_threads(1));
 
     inferRequest = compiledModel.create_infer_request();
     inputElementType = compiledModel.input(0).get_element_type();
