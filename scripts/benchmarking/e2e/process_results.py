@@ -27,6 +27,12 @@ TASK_METRIC_COLUMNS = [
     "pipeline_avg_task_duration_us",
     "pipeline_task_span_us",
 ]
+END_TO_END_METRIC_COLUMNS = [
+    "end_to_end_tuples",
+    "end_to_end_duration_us",
+    "end_to_end_throughput",
+    "end_to_end_latency_us",
+]
 
 
 def repo_root() -> Path:
@@ -78,6 +84,99 @@ def parse_event_throughput(event: Dict[str, object]) -> Optional[float]:
     if dur_val <= 0:
         return None
     return tuples_val * 1_000_000.0 / dur_val
+
+
+def parse_query_duration_us(events: List[object]) -> Optional[float]:
+    starts: Dict[Tuple[object, object, object], float] = {}
+    durations: List[float] = []
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("cat") != "query":
+            continue
+        name = event.get("name")
+        if not isinstance(name, str) or not name.startswith("Query "):
+            continue
+        timestamp = parse_float(event.get("ts"))
+        if timestamp is None:
+            continue
+
+        key = (name, event.get("pid"), event.get("tid"))
+        phase = event.get("ph")
+        if phase == "B":
+            starts[key] = timestamp
+        elif phase == "E":
+            start = starts.get(key)
+            if start is not None and timestamp >= start:
+                durations.append(timestamp - start)
+
+    if not durations:
+        return None
+    return max(durations)
+
+
+def parse_pipeline_wall_clock_duration_us(events: List[object]) -> Optional[float]:
+    starts: List[float] = []
+    ends: List[float] = []
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("cat") != "pipeline":
+            continue
+        timestamp = parse_float(event.get("ts"))
+        if timestamp is None:
+            continue
+        if event.get("ph") == "B":
+            starts.append(timestamp)
+        elif event.get("ph") == "E":
+            ends.append(timestamp)
+
+    if not starts or not ends:
+        return None
+    duration = max(ends) - min(starts)
+    if duration <= 0:
+        return None
+    return duration
+
+
+def parse_end_to_end_tuple_count(events: List[object]) -> Optional[float]:
+    tuple_counts: List[float] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("cat") != "pipeline" or event.get("ph") != "E":
+            continue
+        tuples = parse_float(event.get("tuples"))
+        if tuples is not None and tuples > 0:
+            tuple_counts.append(tuples)
+
+    if not tuple_counts:
+        return None
+    return max(tuple_counts)
+
+
+def parse_end_to_end_metrics(events: List[object]) -> Optional[Dict[str, float]]:
+    duration_us = parse_query_duration_us(events)
+    if duration_us is None:
+        duration_us = parse_pipeline_wall_clock_duration_us(events)
+    tuples = parse_end_to_end_tuple_count(events)
+    if duration_us is None or duration_us <= 0 or tuples is None or tuples <= 0:
+        return None
+
+    pipeline_latencies = [
+        latency
+        for latency in (parse_float(row.get("latency_us")) for row in parse_pipeline_latency_rows(events))
+        if latency is not None
+    ]
+
+    return {
+        "end_to_end_tuples": tuples,
+        "end_to_end_duration_us": duration_us,
+        "end_to_end_throughput": tuples * 1_000_000.0 / duration_us,
+        "end_to_end_latency_us": sum(pipeline_latencies) if pipeline_latencies else duration_us / tuples,
+    }
 
 
 def parse_pipeline_latency_rows(events: List[object]) -> List[Dict[str, object]]:
@@ -373,6 +472,38 @@ def iter_task_metric_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
             yield row
 
 
+def iter_end_to_end_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
+    for json_path in results_dir.rglob("*.json"):
+        context = infer_context(results_dir, json_path)
+        if context is None:
+            print(f"Skipping unexpected JSON path: {json_path}", file=sys.stderr)
+            continue
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print(f"Skipping invalid JSON: {json_path}", file=sys.stderr)
+            continue
+
+        events = payload.get("traceEvents")
+        if not isinstance(events, list):
+            continue
+
+        metrics = parse_end_to_end_metrics(events)
+        if metrics is None:
+            continue
+
+        inference_parts = parse_inference_config(context["inference_config"])
+        row: Dict[str, object] = {
+            "query_name": context["query_name"],
+            "source_name": parse_source_name(events),
+            "inference_config_param_name": inference_parts["param_name"],
+            "inference_config_param_value": inference_parts["param_value"],
+            "repetition": context["repetition"],
+        }
+        row.update(metrics)
+        yield row
+
+
 def parse_log_payload(log_path: Path) -> Optional[Dict[str, object]]:
     try:
         lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -598,6 +729,55 @@ def compute_task_metric_rows(results_dir: Path) -> "pd.DataFrame":
     return pd.DataFrame(rows)
 
 
+def compute_end_to_end_stats(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_end_to_end_rows(results_dir))
+    columns = [
+        "query_name",
+        "source_name",
+        "inference_config_param_name",
+        "inference_config_param_value",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    df = pd.DataFrame(rows)
+    if "repetition" in df.columns:
+        df = df.drop(columns=["repetition"])
+    for col in END_TO_END_METRIC_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    aggregations = {}
+    for col in END_TO_END_METRIC_COLUMNS:
+        if col in df.columns:
+            aggregations[f"avg_{col}"] = (col, "mean")
+            aggregations[f"std_{col}"] = (col, "std")
+
+    if not aggregations:
+        return pd.DataFrame(columns=columns)
+
+    return (
+        df.groupby(columns, dropna=False)
+        .agg(**aggregations)
+        .reset_index()
+    )
+
+
+def compute_end_to_end_rows(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_end_to_end_rows(results_dir))
+    columns = [
+        "query_name",
+        "source_name",
+        "inference_config_param_name",
+        "inference_config_param_value",
+        "repetition",
+        *END_TO_END_METRIC_COLUMNS,
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)
+
+
 def compute_log_stats(results_dir: Path) -> "pd.DataFrame":
     rows: List[Dict[str, object]] = list(iter_log_rows(results_dir))
     if not rows:
@@ -647,15 +827,22 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
         throughput_stats = compute_throughput_stats(results_dir)
         latency_stats = compute_latency_stats(results_dir)
         task_metric_stats = compute_task_metric_stats(results_dir)
+        end_to_end_stats = compute_end_to_end_stats(results_dir)
         log_stats = compute_log_stats(results_dir)
     else:
         throughput_stats = compute_throughput_rows(results_dir)
         latency_stats = compute_latency_rows(results_dir)
         task_metric_stats = compute_task_metric_rows(results_dir)
+        end_to_end_stats = compute_end_to_end_rows(results_dir)
         log_stats = compute_log_rows(results_dir)
 
     if throughput_stats.empty:
-        merged = task_metric_stats if not task_metric_stats.empty else latency_stats
+        if not task_metric_stats.empty:
+            merged = task_metric_stats
+        elif not latency_stats.empty:
+            merged = latency_stats
+        else:
+            merged = end_to_end_stats
         if (
                 not merged.empty
                 and not latency_stats.empty
@@ -677,6 +864,22 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
             ]
             if latency_merge_keys:
                 merged = merged.merge(latency_stats, on=latency_merge_keys, how="left")
+        if not merged.empty and not end_to_end_stats.empty and merged is not end_to_end_stats:
+            end_to_end_merge_key_candidates = [
+                "query_name",
+                "source_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+            ]
+            if not aggregate:
+                end_to_end_merge_key_candidates.append("repetition")
+            end_to_end_merge_keys = [
+                col
+                for col in end_to_end_merge_key_candidates
+                if col in merged.columns and col in end_to_end_stats.columns
+            ]
+            if end_to_end_merge_keys:
+                merged = merged.merge(end_to_end_stats, on=end_to_end_merge_keys, how="left")
         expanded = expand_inference_columns(merged)
         return drop_combined_inference_columns(expanded)
 
@@ -717,6 +920,23 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
         ]
         if task_metric_merge_keys:
             merged = merged.merge(task_metric_stats, on=task_metric_merge_keys, how="left")
+
+    if not end_to_end_stats.empty:
+        end_to_end_merge_key_candidates = [
+            "query_name",
+            "source_name",
+            "inference_config_param_name",
+            "inference_config_param_value",
+        ]
+        if not aggregate:
+            end_to_end_merge_key_candidates.append("repetition")
+        end_to_end_merge_keys = [
+            col
+            for col in end_to_end_merge_key_candidates
+            if col in merged.columns and col in end_to_end_stats.columns
+        ]
+        if end_to_end_merge_keys:
+            merged = merged.merge(end_to_end_stats, on=end_to_end_merge_keys, how="left")
 
     if log_stats.empty:
         expanded = expand_inference_columns(merged)
@@ -800,7 +1020,7 @@ def main() -> int:
         stats.to_csv(output_path, index=False)
     else:
         if stats.empty:
-            print("No throughput data found.")
+            print("No result data found.")
         else:
             print(stats.to_string(index=False))
 
