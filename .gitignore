@@ -55,5 +55,4 @@ scripts/__pycache__
 .nix/gdb
 
 # Ignore experimental results
-/scripts/benchmarking/e2e/config
 /scripts/benchmarking/e2e/results

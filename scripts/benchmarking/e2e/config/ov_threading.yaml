@@ -1,0 +1,2 @@
+"worker.query_engine.number_of_worker_threads": [1, 2, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48]
+"worker.default_query_execution.inference.openvino_inference_num_threads": [1, 2, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48]
