@@ -324,7 +324,8 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                 },
                 [&](const TaskEmit& taskEmit)
                 {
-                    printComma();
+                    (void)taskEmit;
+                    // printComma();
                     // fmt::print(
                     //     file,
                     //     R"x(    {{"args":{{"from_pipeline":{},"task_id":{},"to_pipeline":{},"tuples":{}}},"cat":"task","name":"Emit {}->{} (Task {}, Query {})","ph":"i","pid":{},"tid":{},"ts":{}}})x",
