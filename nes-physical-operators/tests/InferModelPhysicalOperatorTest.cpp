@@ -12,11 +12,11 @@
     limitations under the License.
 */
 
+#include <BatchInferModelPhysicalOperator.hpp>
+#include <BatchInferenceOperatorHandler.hpp>
+#include <BatchingPhysicalOperator.hpp>
 #include <EmitOperatorHandler.hpp>
 #include <EmitPhysicalOperator.hpp>
-#include <BatchInferenceOperatorHandler.hpp>
-#include <BatchInferModelPhysicalOperator.hpp>
-#include <BatchingPhysicalOperator.hpp>
 #include <InferModelPhysicalOperator.hpp>
 #include <Inference.hpp>
 #include <Model.hpp>
@@ -251,7 +251,8 @@ public:
         auto outputBufRef = LowerSchemaProvider::lowerSchema(bufferSize, outputSchema, MemoryLayoutType::ROW_LAYOUT);
 
         ScanPhysicalOperator scan(inputBufRef, inputSchema.getFieldNames());
-        InferModelPhysicalOperator inferModel(model, inputFieldNames, outputFieldNames, varsizedInput, varsizedOutput);
+        InferModelPhysicalOperator inferModel(
+            model, inputFieldNames, outputFieldNames, InferenceRuntimeOptions{}, varsizedInput, varsizedOutput);
         const EmitPhysicalOperator emit(OperatorHandlerId(1), outputBufRef);
 
         inferModel.setChild(PhysicalOperator(emit));
@@ -297,6 +298,7 @@ public:
             inputFieldNames,
             outputFieldNames,
             batchSize,
+            InferenceRuntimeOptions{},
             true,
             false,
             batchHandlerId);
@@ -800,8 +802,8 @@ TEST_F(InferModelPhysicalOperatorTest, OpenVinoBatchIdentity)
 
     for (bool compiled : {false, true})
     {
-        auto [batchingPipeline, inferencePipeline, handlers]
-            = createLoweredBatchInferencePipelines(*openVinoIdentityModel, inputSchema, outputSchema, {"input_blob"}, outputFieldNames, batchSize);
+        auto [batchingPipeline, inferencePipeline, handlers] = createLoweredBatchInferencePipelines(
+            *openVinoIdentityModel, inputSchema, outputSchema, {"input_blob"}, outputFieldNames, batchSize);
 
         auto options = [&]
         {

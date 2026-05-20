@@ -34,8 +34,8 @@
 #include <cstring>
 #include <expected>
 #include <filesystem>
-#include <functional>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -312,9 +312,7 @@ std::vector<TupleBuffer> createInputBuffers(const Schema& inputSchema, const std
             const auto* rawData = reinterpret_cast<const std::byte*>(floats.data());
             std::memcpy(childMemory.data() + payloadOffset, rawData, recordPayloadSize);
             parentRecords[localRecord] = VariableSizedAccess{
-                VariableSizedAccess::Index{0},
-                VariableSizedAccess::Offset{payloadOffset},
-                VariableSizedAccess::Size{recordPayloadSize}};
+                VariableSizedAccess::Index{0}, VariableSizedAccess::Offset{payloadOffset}, VariableSizedAccess::Size{recordPayloadSize}};
             payloadOffset += recordPayloadSize;
         }
         tupleBuffer->setNumberOfTuples(recordsInBuffer);
@@ -422,7 +420,16 @@ LoweredBatchInferencePipelines createLoweredBatchInferencePipelines(
     auto batchingPipeline = std::make_shared<Pipeline>(PhysicalOperator(scan));
 
     BatchInferModelPhysicalOperator batchInferModel(
-        model, inputBufRef, inputSchema.getFieldNames(), inputFieldNames, outputFieldNames, batchSize, true, false, batchHandlerId);
+        model,
+        inputBufRef,
+        inputSchema.getFieldNames(),
+        inputFieldNames,
+        outputFieldNames,
+        batchSize,
+        InferenceRuntimeOptions{},
+        true,
+        false,
+        batchHandlerId);
     const EmitPhysicalOperator emit(emitHandlerId, outputBufRef);
     batchInferModel.setChild(PhysicalOperator(emit));
     auto inferencePipeline = std::make_shared<Pipeline>(PhysicalOperator(batchInferModel));
@@ -798,9 +805,7 @@ RunResult runOnce(
         bufMgr,
         [&emittedRecords](const TupleBuffer& outputBuffer) { emittedRecords += outputBuffer.getNumberOfTuples(); },
         true};
-    MockedPipelineContext batchingPec{
-        emittedBatchBuffers,
-        bufMgr};
+    MockedPipelineContext batchingPec{emittedBatchBuffers, bufMgr};
 
     const auto drainBatchBuffers = [&]()
     {
