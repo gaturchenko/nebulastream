@@ -116,11 +116,18 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
         firstEvent = false;
     };
 
-    while (!token.stop_requested())
+    while (true)
     {
         CombinedEventType event = QueryStart{WorkerThreadId(0), INVALID_QUERY_ID}; /// Will be overwritten
 
-        if (!events.tryReadUntil(std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(READ_RETRY_MS), event))
+        if (token.stop_requested())
+        {
+            if (!events.readIfNotEmpty(event))
+            {
+                break;
+            }
+        }
+        else if (!events.tryReadUntil(std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(READ_RETRY_MS), event))
         {
             continue;
         }
@@ -243,15 +250,24 @@ void GoogleEventTracePrinter::threadRoutine(const std::stop_token& token)
                 },
                 [&](const PipelineStop& pipelineStop)
                 {
-                    /// Use the thread ID from the PipelineStart event to ensure matching begin/end pairs
                     auto it = activePipelines.find(pipelineStop.pipelineId);
-                    uint64_t originalTid = (it != activePipelines.end()) ? std::get<2>(it->second).getRawValue()
-                                                                         : pipelineStop.threadId.getRawValue(); /// fallback
+                    if (it == activePipelines.end())
+                    {
+                        /// Pipeline stops can be emitted more than once while a query tears down.
+                        /// Only the stop matching the PipelineStart has a valid Chrome trace pair and aggregate statistics.
+                        return;
+                    }
+
+                    /// Use the thread ID from the PipelineStart event to ensure matching begin/end pairs
+                    uint64_t originalTid = std::get<2>(it->second).getRawValue();
 
                     const auto pipelineId = pipelineStop.pipelineId;
-                    const auto pipelineDuration = pipelineDurations[pipelineId];
-                    const auto pipelineTuples = pipelineTuplesProcessed[pipelineId];
-                    const auto taskStats = pipelineTaskStats[pipelineId];
+                    const auto durationIt = pipelineDurations.find(pipelineId);
+                    const auto tuplesIt = pipelineTuplesProcessed.find(pipelineId);
+                    const auto statsIt = pipelineTaskStats.find(pipelineId);
+                    const auto pipelineDuration = durationIt != pipelineDurations.end() ? durationIt->second : 0;
+                    const auto pipelineTuples = tuplesIt != pipelineTuplesProcessed.end() ? tuplesIt->second : 0;
+                    const auto taskStats = statsIt != pipelineTaskStats.end() ? statsIt->second : PipelineTaskStats{};
                     const auto hasTaskSpan = taskStats.taskCount > 0;
                     const auto taskSpan = hasTaskSpan ? taskStats.lastTaskEndUs - taskStats.firstTaskStartUs : 0;
 
