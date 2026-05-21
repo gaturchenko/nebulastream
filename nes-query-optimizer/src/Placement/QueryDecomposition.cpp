@@ -26,8 +26,10 @@
 #include <Identifiers/Identifiers.hpp>
 #include <Iterators/BFSIterator.hpp>
 #include <Operators/LogicalOperator.hpp>
+#include <Operators/SequenceLogicalOperator.hpp>
 #include <Operators/Sinks/SinkLogicalOperator.hpp>
 #include <Operators/Sources/SourceDescriptorLogicalOperator.hpp>
+#include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
 #include <Plans/LogicalPlan.hpp>
 #include <Sinks/SinkCatalog.hpp>
 #include <Sources/SourceDescriptor.hpp>
@@ -178,12 +180,49 @@ NetworkTopology::NodeId getPlacementFor(const LogicalOperator& op)
     return placementTrait->onNode;
 }
 
+TraitSet replacePlacement(TraitSet traitSet, const NetworkTopology::NodeId& node)
+{
+    std::vector<Trait> traits;
+    traits.reserve(traitSet.size());
+    for (const auto& [_, trait] : traitSet)
+    {
+        if (!trait.tryGetAs<PlacementTrait>().has_value())
+        {
+            traits.emplace_back(trait);
+        }
+    }
+    traits.emplace_back(PlacementTrait(node));
+    return TraitSet(traits);
+}
+
+bool isAggregationSequence(const LogicalOperator& op)
+{
+    const auto sequence = op.tryGetAs<SequenceLogicalOperator>();
+    return sequence.has_value() && sequence->get().getSequenceSource() == SequenceLogicalOperator::SequenceSource::AGGREGATION;
+}
+
 LogicalOperator assignOperator(DecompositionContext& context, const LogicalOperator& op, const LogicalOperator& child)
 {
-    auto assignedChild = decomposePlanRecursive(context, child);
-
     const auto opNode = getPlacementFor(op);
     const auto childNode = getPlacementFor(child);
+
+    if (op.tryGetAs<WindowedAggregationLogicalOperator>().has_value() && isAggregationSequence(child))
+    {
+        const auto sequenceChildren = child.getChildren();
+        PRECONDITION(sequenceChildren.size() == 1, "Aggregation Sequence should have exactly one child");
+
+        const auto& sequenceInput = sequenceChildren.front();
+        auto assignedSequenceInput = decomposePlanRecursive(context, sequenceInput);
+        const auto sequenceInputNode = getPlacementFor(sequenceInput);
+        if (sequenceInputNode != opNode)
+        {
+            assignedSequenceInput = createNetworkChannel(context, assignedSequenceInput, sequenceInputNode, opNode);
+        }
+
+        return child.withTraitSet(replacePlacement(child.getTraitSet(), opNode)).withChildren({std::move(assignedSequenceInput)});
+    }
+
+    auto assignedChild = decomposePlanRecursive(context, child);
 
     if (opNode == childNode)
     {
