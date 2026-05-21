@@ -73,6 +73,8 @@ concept WindowAggregationFunctionConcept = requires(
 
     { thisFunction.shallIncludeNullValues() } noexcept -> std::convertible_to<bool>;
 
+    { thisFunction.requiresSequentialAggregation() } noexcept -> std::convertible_to<bool>;
+
     { thisFunction.reflect() } -> std::convertible_to<Reflected>;
 
     { thisFunction.getName() } noexcept -> std::convertible_to<std::string_view>;
@@ -98,6 +100,7 @@ struct ErasedWindowAggregationFunction
     [[nodiscard]] virtual FieldAccessLogicalFunction getAsField() const = 0;
 
     [[nodiscard]] virtual bool shallIncludeNullValues() const noexcept = 0;
+    [[nodiscard]] virtual bool requiresSequentialAggregation() const noexcept = 0;
     [[nodiscard]] virtual WindowAggregationLogicalFunction withInferredStamp(const Schema& schema) const = 0;
     [[nodiscard]] virtual WindowAggregationLogicalFunction withInputStamp(DataType inputStamp) const = 0;
     [[nodiscard]] virtual WindowAggregationLogicalFunction withPartialAggregateStamp(DataType partialAggregateStamp) const = 0;
@@ -270,6 +273,8 @@ struct TypedWindowAggregationLogicalFunction
 
     [[nodiscard]] bool shallIncludeNullValues() const noexcept { return self->shallIncludeNullValues(); }
 
+    [[nodiscard]] bool requiresSequentialAggregation() const noexcept { return self->requiresSequentialAggregation(); }
+
     [[nodiscard]] TypedWindowAggregationLogicalFunction withInferredStamp(const Schema& schema) const
     {
         return self->withInferredStamp(schema);
@@ -337,6 +342,8 @@ struct WindowAggregationFunctionModel : ErasedWindowAggregationFunction
     [[nodiscard]] Reflected reflect() const override { return impl.reflect(); }
 
     [[nodiscard]] bool shallIncludeNullValues() const noexcept override { return impl.shallIncludeNullValues(); }
+
+    [[nodiscard]] bool requiresSequentialAggregation() const noexcept override { return impl.requiresSequentialAggregation(); }
 
     [[nodiscard]] WindowAggregationLogicalFunction withInferredStamp(const Schema& schema) const override
     {

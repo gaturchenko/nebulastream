@@ -45,6 +45,11 @@ bool SumAggregationLogicalFunction::shallIncludeNullValues() noexcept
     return true;
 }
 
+bool SumAggregationLogicalFunction::requiresSequentialAggregation() noexcept
+{
+    return false;
+}
+
 std::string_view SumAggregationLogicalFunction::getName() const noexcept
 {
     return NAME;

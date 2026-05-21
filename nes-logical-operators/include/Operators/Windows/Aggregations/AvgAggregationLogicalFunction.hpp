@@ -49,6 +49,7 @@ public:
     [[nodiscard]] AvgAggregationLogicalFunction withOnField(FieldAccessLogicalFunction onField) const;
     [[nodiscard]] AvgAggregationLogicalFunction withAsField(FieldAccessLogicalFunction asField) const;
     [[nodiscard]] static bool shallIncludeNullValues() noexcept;
+    [[nodiscard]] static bool requiresSequentialAggregation() noexcept;
 
     [[nodiscard]] bool operator==(const AvgAggregationLogicalFunction& otherAvgAggregationLogicalFunction) const;
 

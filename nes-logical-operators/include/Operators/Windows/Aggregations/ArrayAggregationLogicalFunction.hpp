@@ -20,20 +20,18 @@
 #include <DataTypes/DataType.hpp>
 #include <DataTypes/Schema.hpp>
 #include <Functions/FieldAccessLogicalFunction.hpp>
-#include <Functions/LogicalFunction.hpp>
 #include <Operators/Windows/Aggregations/WindowAggregationLogicalFunction.hpp>
 #include <Util/Reflection.hpp>
-#include <SerializableVariantDescriptor.pb.h>
 
 namespace NES
 {
 
-class SumAggregationLogicalFunction
+class ArrayAggregationLogicalFunction
 {
 public:
-    SumAggregationLogicalFunction(const FieldAccessLogicalFunction& onField, FieldAccessLogicalFunction asField);
-    explicit SumAggregationLogicalFunction(const FieldAccessLogicalFunction& asField);
-    ~SumAggregationLogicalFunction() = default;
+    ArrayAggregationLogicalFunction(const FieldAccessLogicalFunction& onField, FieldAccessLogicalFunction asField);
+    explicit ArrayAggregationLogicalFunction(const FieldAccessLogicalFunction& onField);
+    ~ArrayAggregationLogicalFunction() = default;
 
     [[nodiscard]] std::string_view getName() const noexcept;
     [[nodiscard]] std::string toString() const;
@@ -44,18 +42,18 @@ public:
     [[nodiscard]] FieldAccessLogicalFunction getOnField() const;
     [[nodiscard]] FieldAccessLogicalFunction getAsField() const;
 
-    [[nodiscard]] SumAggregationLogicalFunction withInferredStamp(const Schema& schema) const;
-    [[nodiscard]] SumAggregationLogicalFunction withInputStamp(DataType inputStamp) const;
-    [[nodiscard]] SumAggregationLogicalFunction withPartialAggregateStamp(DataType partialAggregateStamp) const;
-    [[nodiscard]] SumAggregationLogicalFunction withFinalAggregateStamp(DataType finalAggregateStamp) const;
-    [[nodiscard]] SumAggregationLogicalFunction withOnField(FieldAccessLogicalFunction onField) const;
-    [[nodiscard]] SumAggregationLogicalFunction withAsField(FieldAccessLogicalFunction asField) const;
+    [[nodiscard]] ArrayAggregationLogicalFunction withInferredStamp(const Schema& schema) const;
+    [[nodiscard]] ArrayAggregationLogicalFunction withInputStamp(DataType inputStamp) const;
+    [[nodiscard]] ArrayAggregationLogicalFunction withPartialAggregateStamp(DataType partialAggregateStamp) const;
+    [[nodiscard]] ArrayAggregationLogicalFunction withFinalAggregateStamp(DataType finalAggregateStamp) const;
+    [[nodiscard]] ArrayAggregationLogicalFunction withOnField(FieldAccessLogicalFunction onField) const;
+    [[nodiscard]] ArrayAggregationLogicalFunction withAsField(FieldAccessLogicalFunction asField) const;
     [[nodiscard]] static bool shallIncludeNullValues() noexcept;
     [[nodiscard]] static bool requiresSequentialAggregation() noexcept;
-    [[nodiscard]] bool operator==(const SumAggregationLogicalFunction& otherSumAggregationLogicalFunction) const;
+    [[nodiscard]] bool operator==(const ArrayAggregationLogicalFunction& other) const;
 
 private:
-    static constexpr std::string_view NAME = "Sum";
+    static constexpr std::string_view NAME = "ARRAY_AGG";
 
     DataType inputStamp;
     DataType partialAggregateStamp;
@@ -64,24 +62,25 @@ private:
     FieldAccessLogicalFunction asField;
 };
 
-static_assert(WindowAggregationFunctionConcept<SumAggregationLogicalFunction>);
+static_assert(WindowAggregationFunctionConcept<ArrayAggregationLogicalFunction>);
 
 template <>
-struct Reflector<SumAggregationLogicalFunction>
+struct Reflector<ArrayAggregationLogicalFunction>
 {
-    Reflected operator()(const SumAggregationLogicalFunction& function) const;
+    Reflected operator()(const ArrayAggregationLogicalFunction& function) const;
 };
 
 template <>
-struct Unreflector<SumAggregationLogicalFunction>
+struct Unreflector<ArrayAggregationLogicalFunction>
 {
-    SumAggregationLogicalFunction operator()(const Reflected& reflected) const;
+    ArrayAggregationLogicalFunction operator()(const Reflected& reflected) const;
 };
+
 }
 
 namespace NES::detail
 {
-struct ReflectedSumAggregationLogicalFunction
+struct ReflectedArrayAggregationLogicalFunction
 {
     FieldAccessLogicalFunction onField;
     FieldAccessLogicalFunction asField;

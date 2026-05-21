@@ -46,6 +46,11 @@ bool MaxAggregationLogicalFunction::shallIncludeNullValues() noexcept
     return true;
 }
 
+bool MaxAggregationLogicalFunction::requiresSequentialAggregation() noexcept
+{
+    return false;
+}
+
 std::string_view MaxAggregationLogicalFunction::getName() noexcept
 {
     return NAME;

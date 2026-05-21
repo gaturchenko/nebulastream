@@ -46,6 +46,11 @@ bool AvgAggregationLogicalFunction::shallIncludeNullValues() noexcept
     return true;
 }
 
+bool AvgAggregationLogicalFunction::requiresSequentialAggregation() noexcept
+{
+    return false;
+}
+
 std::string_view AvgAggregationLogicalFunction::getName() noexcept
 {
     return NAME;

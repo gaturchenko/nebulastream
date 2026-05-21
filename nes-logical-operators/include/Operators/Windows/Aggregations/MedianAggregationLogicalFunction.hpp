@@ -54,6 +54,7 @@ public:
     [[nodiscard]] MedianAggregationLogicalFunction withOnField(FieldAccessLogicalFunction onField) const;
     [[nodiscard]] MedianAggregationLogicalFunction withAsField(FieldAccessLogicalFunction asField) const;
     [[nodiscard]] static bool shallIncludeNullValues() noexcept;
+    [[nodiscard]] static bool requiresSequentialAggregation() noexcept;
     [[nodiscard]] bool operator==(const MedianAggregationLogicalFunction& otherMedianAggregationLogicalFunction) const;
 
 

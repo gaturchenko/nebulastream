@@ -52,6 +52,7 @@ public:
     [[nodiscard]] CountAggregationLogicalFunction withOnField(FieldAccessLogicalFunction onField) const;
     [[nodiscard]] CountAggregationLogicalFunction withAsField(FieldAccessLogicalFunction asField) const;
     [[nodiscard]] static bool shallIncludeNullValues() noexcept;
+    [[nodiscard]] static bool requiresSequentialAggregation() noexcept;
 
     [[nodiscard]] bool operator==(const CountAggregationLogicalFunction& otherCountAggregationLogicalFunction) const;
 

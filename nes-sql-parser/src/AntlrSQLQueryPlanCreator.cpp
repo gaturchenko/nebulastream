@@ -50,6 +50,7 @@
 #include <Functions/FieldAccessLogicalFunction.hpp>
 #include <Functions/LogicalFunction.hpp>
 #include <Functions/LogicalFunctionProvider.hpp>
+#include <Operators/Windows/Aggregations/ArrayAggregationLogicalFunction.hpp>
 #include <Operators/Windows/Aggregations/AvgAggregationLogicalFunction.hpp>
 #include <Operators/Windows/Aggregations/CountAggregationLogicalFunction.hpp>
 #include <Operators/Windows/Aggregations/MaxAggregationLogicalFunction.hpp>
@@ -921,6 +922,12 @@ void AntlrSQLQueryPlanCreator::exitFunctionCall(AntlrSQLParser::FunctionCallCont
             ensureFieldAccessArgument();
             helpers.top().windowAggs.push_back(std::make_shared<WindowAggregationLogicalFunction>(
                 MedianAggregationLogicalFunction(helpers.top().functionBuilder.back().getAs<FieldAccessLogicalFunction>().get())));
+            isAggregation = true;
+            break;
+        case AntlrSQLLexer::ARRAY_AGG:
+            ensureFieldAccessArgument();
+            helpers.top().windowAggs.push_back(std::make_shared<WindowAggregationLogicalFunction>(
+                ArrayAggregationLogicalFunction(helpers.top().functionBuilder.back().getAs<FieldAccessLogicalFunction>().get())));
             isAggregation = true;
             break;
         default:

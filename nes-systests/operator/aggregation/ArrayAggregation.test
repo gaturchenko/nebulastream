@@ -1,0 +1,21 @@
+# name: operator/aggregation/ArrayAggregation.test
+# description: Test ARRAY_AGG window aggregation into a varsized value.
+# groups: [Aggregation, WindowOperators]
+
+CREATE LOGICAL SOURCE stream(ts UINT64 NOT NULL, character UINT8 NOT NULL);
+CREATE PHYSICAL SOURCE FOR stream TYPE File;
+ATTACH INLINE
+0,65
+1,66
+2,67
+10,68
+11,69
+12,70
+
+CREATE SINK sinkStream(stream.start UINT64 NOT NULL, stream.end UINT64 NOT NULL, stream.text VARSIZED NOT NULL) TYPE File;
+
+SELECT start, end, ARRAY_AGG(character) AS text
+FROM stream WINDOW TUMBLING(ts, size 10 ms) INTO sinkStream;
+----
+0,10,ABC
+10,20,DEF

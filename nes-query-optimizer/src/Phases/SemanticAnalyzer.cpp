@@ -20,9 +20,10 @@
 #include <Plans/LogicalPlan.hpp>
 #include <Rules/RuleManager.hpp>
 #include <Rules/Semantic/InferModelResolutionRule.hpp>
-#include <Rules/Semantic/InsertSequenceForBatchInferenceRule.hpp>
 #include <Rules/Semantic/InlineSinkBindingRule.hpp>
 #include <Rules/Semantic/InlineSourceBindingRule.hpp>
+#include <Rules/Semantic/InsertSequenceForBatchInferenceRule.hpp>
+#include <Rules/Semantic/InsertSequenceForWindowAggregationRule.hpp>
 #include <Rules/Semantic/LogicalSourceExpansionRule.hpp>
 #include <Rules/Semantic/OriginIdInferenceRule.hpp>
 #include <Rules/Semantic/SinkBindingRule.hpp>
@@ -50,6 +51,7 @@ SemanticAnalyzer::SemanticAnalyzer(
     ruleManager.addRule(LogicalSourceExpansionRule{this->sourceCatalog});
     ruleManager.addRule(InferModelResolutionRule{this->modelCatalog});
     ruleManager.addRule(InsertSequenceForBatchInferenceRule{this->defaultQueryOptimization.inferenceBatchSize.getValue()});
+    ruleManager.addRule(InsertSequenceForWindowAggregationRule{});
     ruleManager.addRule(TypeInferenceRule{});
     ruleManager.addRule(OriginIdInferenceRule{});
 

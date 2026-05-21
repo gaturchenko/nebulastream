@@ -53,6 +53,11 @@ bool MedianAggregationLogicalFunction::shallIncludeNullValues() noexcept
     return true;
 }
 
+bool MedianAggregationLogicalFunction::requiresSequentialAggregation() noexcept
+{
+    return false;
+}
+
 MedianAggregationLogicalFunction MedianAggregationLogicalFunction::withInferredStamp(const Schema& schema) const
 {
     /// We first infer the dataType of the input field and set the output dataType as the same.

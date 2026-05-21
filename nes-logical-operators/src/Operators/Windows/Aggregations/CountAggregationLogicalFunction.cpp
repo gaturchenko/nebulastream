@@ -48,6 +48,11 @@ bool CountAggregationLogicalFunction::shallIncludeNullValues() noexcept
     return false;
 }
 
+bool CountAggregationLogicalFunction::requiresSequentialAggregation() noexcept
+{
+    return false;
+}
+
 std::string_view CountAggregationLogicalFunction::getName() const noexcept
 {
     return NAME;

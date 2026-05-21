@@ -46,6 +46,11 @@ bool MinAggregationLogicalFunction::shallIncludeNullValues() noexcept
     return true;
 }
 
+bool MinAggregationLogicalFunction::requiresSequentialAggregation() noexcept
+{
+    return false;
+}
+
 std::string_view MinAggregationLogicalFunction::getName() const noexcept
 {
     return NAME;
