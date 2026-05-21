@@ -83,6 +83,7 @@ InferModelPhysicalOperator::InferModelPhysicalOperator(
     bool varsizedOutput)
     : inputFieldNames(std::move(inputFieldNames))
     , outputFieldNames(std::move(outputFieldNames))
+    , inputSize(model.inputSize())
     , outputSize(model.outputSize())
     , varsizedInput(varsizedInput)
     , varsizedOutput(varsizedOutput)
@@ -105,7 +106,13 @@ void InferModelPhysicalOperator::execute(ExecutionContext& ctx, Record& record) 
     {
         const auto& value = record.read(inputFieldNames.at(0));
         auto varSized = value.getRawValueAs<VariableSizedData>();
-        nautilus::memcpy(inputBuffer, varSized.getContent(), varSized.getSize());
+        const auto inputSizeVal = nautilus::val<uint64_t>(inputSize);
+        const auto bytesToCopy = varSized.getSize() < inputSizeVal ? varSized.getSize() : inputSizeVal;
+        nautilus::memcpy(inputBuffer, varSized.getContent(), bytesToCopy);
+        if (bytesToCopy < inputSizeVal)
+        {
+            nautilus::memset(inputBuffer + bytesToCopy, 0, inputSizeVal - bytesToCopy);
+        }
     }
     else
     {

@@ -60,6 +60,7 @@ private:
     std::shared_ptr<detail::ThreadLocalRuntimeWrapper> threadLocal;
     std::vector<std::string> inputFieldNames;
     std::vector<std::string> outputFieldNames;
+    size_t inputSize;
     size_t outputSize;
     bool varsizedInput;
     bool varsizedOutput;
