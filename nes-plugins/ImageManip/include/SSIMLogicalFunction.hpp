@@ -30,23 +30,23 @@
 namespace NES
 {
 
-/// Logical image resize function.
-/// Signature: RESIZE_IMAGE(image: VARSIZED, width: integer, height: integer) -> VARSIZED
-class ResizeImageLogicalFunction final
+/// Logical stateful SSIM image filter.
+/// Signature: SSIM(image: VARSIZED, threshold: FLOAT32/FLOAT64) -> VARSIZED
+class SSIMLogicalFunction final
 {
 public:
-    static constexpr std::string_view NAME = "RESIZE_IMAGE";
+    static constexpr std::string_view NAME = "SSIM";
 
-    ResizeImageLogicalFunction(const LogicalFunction& image, const LogicalFunction& width, const LogicalFunction& height);
+    SSIMLogicalFunction(const LogicalFunction& image, const LogicalFunction& threshold);
 
-    [[nodiscard]] bool operator==(const ResizeImageLogicalFunction& rhs) const;
+    [[nodiscard]] bool operator==(const SSIMLogicalFunction& rhs) const;
 
     [[nodiscard]] DataType getDataType() const;
-    [[nodiscard]] ResizeImageLogicalFunction withDataType(const DataType& dataType) const;
+    [[nodiscard]] SSIMLogicalFunction withDataType(const DataType& dataType) const;
     [[nodiscard]] LogicalFunction withInferredDataType(const Schema& schema) const;
 
     [[nodiscard]] std::vector<LogicalFunction> getChildren() const;
-    [[nodiscard]] ResizeImageLogicalFunction withChildren(const std::vector<LogicalFunction>& children) const;
+    [[nodiscard]] SSIMLogicalFunction withChildren(const std::vector<LogicalFunction>& children) const;
 
     [[nodiscard]] std::string_view getType() const;
     [[nodiscard]] std::string explain(ExplainVerbosity verbosity) const;
@@ -54,36 +54,34 @@ public:
 private:
     DataType dataType;
     LogicalFunction image;
-    LogicalFunction width;
-    LogicalFunction height;
+    LogicalFunction threshold;
 
-    friend Reflector<ResizeImageLogicalFunction>;
+    friend Reflector<SSIMLogicalFunction>;
 };
 
-static_assert(LogicalFunctionConcept<ResizeImageLogicalFunction>);
+static_assert(LogicalFunctionConcept<SSIMLogicalFunction>);
 
 template <>
-struct Reflector<ResizeImageLogicalFunction>
+struct Reflector<SSIMLogicalFunction>
 {
-    Reflected operator()(const ResizeImageLogicalFunction& function) const;
+    Reflected operator()(const SSIMLogicalFunction& function) const;
 };
 
 template <>
-struct Unreflector<ResizeImageLogicalFunction>
+struct Unreflector<SSIMLogicalFunction>
 {
-    ResizeImageLogicalFunction operator()(const Reflected& reflected) const;
+    SSIMLogicalFunction operator()(const Reflected& reflected) const;
 };
 
 }
 
 namespace NES::detail
 {
-struct ReflectedResizeImageLogicalFunction
+struct ReflectedSSIMLogicalFunction
 {
     std::optional<LogicalFunction> image;
-    std::optional<LogicalFunction> width;
-    std::optional<LogicalFunction> height;
+    std::optional<LogicalFunction> threshold;
 };
 }
 
-FMT_OSTREAM(NES::ResizeImageLogicalFunction);
+FMT_OSTREAM(NES::SSIMLogicalFunction);

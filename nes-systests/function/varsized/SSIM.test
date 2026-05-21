@@ -1,0 +1,16 @@
+# name: function/varsized/SSIM.test
+# description: SSIM varsized function using OpenCV
+# groups: [Functions]
+
+CREATE LOGICAL SOURCE imageStream(encoded VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR imageStream TYPE File;
+ATTACH INLINE
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNoAAAAggCB2kUIOwAAAABJRU5ErkJggg==
+
+CREATE SINK ssimSink(filtered VARSIZED NOT NULL) TYPE File;
+
+# The first image initializes SSIM state and is emitted unchanged.
+SELECT TO_BASE64(SSIM(FROM_BASE64(encoded), FLOAT32(0.99))) AS filtered
+FROM imageStream INTO ssimSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNoAAAAggCB2kUIOwAAAABJRU5ErkJggg==

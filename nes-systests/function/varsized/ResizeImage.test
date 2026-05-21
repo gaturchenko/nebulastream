@@ -1,5 +1,5 @@
 # name: function/varsized/ResizeImage.test
-# description: RESIZE_IMAGE varsized function using OpenVINO preprocessing
+# description: RESIZE_IMAGE varsized function using OpenCV
 # groups: [Functions]
 
 CREATE LOGICAL SOURCE imageStream(encoded VARSIZED NOT NULL);
@@ -13,7 +13,7 @@ CREATE SINK resizeSink(resized VARSIZED NOT NULL) TYPE File;
 SELECT TO_BASE64(RESIZE_IMAGE(FROM_BASE64(encoded), UINT32(2), UINT32(2))) AS resized
 FROM imageStream INTO resizeSink;
 ----
-iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAAAAABX3VL4AAAADklEQVR4AWNoaGBoaAAABgYCAX+As2QAAAAASUVORK5CYII=
+iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAAAAABX3VL4AAAADklEQVQIHWNsYGBsYAAAA48BA7PgjjkAAAAASUVORK5CYII=
 
 # A non-positive target width triggers passthrough.
 SELECT TO_BASE64(RESIZE_IMAGE(FROM_BASE64(encoded), UINT32(0), UINT32(2))) AS resized

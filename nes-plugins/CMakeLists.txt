@@ -21,9 +21,7 @@ activate_optional_plugin("Sources/GeneratorSource" ON)
 activate_optional_plugin("Sinks/VoidSink" ON)
 activate_optional_plugin("InputFormatters/JSONInputFormatter" ON)
 activate_optional_plugin("OutputFormatters/JSONOutputFormatter" ON)
-if (NES_ENABLE_OPENVINO_INFERENCE_BACKEND)
-  activate_optional_plugin("ImageManip" ON)
-endif()
+activate_optional_plugin("ImageManip" ON)
 
 if (NES_ENABLES_TESTS)
   # ChecksumSink depends on Checksum.cpp from systest which is only added when tests are enabled.

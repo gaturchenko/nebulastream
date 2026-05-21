@@ -13,15 +13,22 @@
 add_plugin(RESIZE_IMAGE LogicalFunction nes-logical-operators src/ResizeImageLogicalFunction.cpp)
 add_plugin_as_library(RESIZE_IMAGE PhysicalFunction nes-physical-operators resize-image src/ResizeImagePhysicalFunction.cpp)
 
-find_package(OpenVINO CONFIG REQUIRED COMPONENTS Runtime)
-find_package(ZLIB REQUIRED)
+add_plugin(CONVERT_COLOR_SCHEME LogicalFunction nes-logical-operators src/ConvertColorSchemeLogicalFunction.cpp)
+add_plugin_as_library(
+        CONVERT_COLOR_SCHEME
+        PhysicalFunction
+        nes-physical-operators
+        convert-color-scheme
+        src/ConvertColorSchemePhysicalFunction.cpp)
 
-if (COMMAND target_link_openvino_runtime)
-    target_link_openvino_runtime(resize-image)
-else()
-    target_link_libraries(resize-image PRIVATE openvino::runtime)
-endif()
-target_include_directories(resize-image PRIVATE
-        ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
-        ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
-target_link_libraries(resize-image PRIVATE ZLIB::ZLIB)
+add_plugin(SSIM LogicalFunction nes-logical-operators src/SSIMLogicalFunction.cpp)
+add_plugin_as_library(SSIM PhysicalFunction nes-physical-operators ssim src/SSIMPhysicalFunction.cpp)
+
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc)
+
+foreach(image_manip_physical_plugin resize-image convert-color-scheme ssim)
+    target_include_directories(${image_manip_physical_plugin} PRIVATE
+            ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
+            ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
+    target_link_libraries(${image_manip_physical_plugin} PRIVATE ${OpenCV_LIBS})
+endforeach()

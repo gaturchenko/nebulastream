@@ -30,23 +30,25 @@
 namespace NES
 {
 
-/// Logical image resize function.
-/// Signature: RESIZE_IMAGE(image: VARSIZED, width: integer, height: integer) -> VARSIZED
-class ResizeImageLogicalFunction final
+/// Logical image color conversion function.
+/// Signature: CONVERT_COLOR_SCHEME(image: VARSIZED, conversionMode: VARSIZED) -> VARSIZED
+/// Supported conversionMode values are case-insensitive:
+/// RGB_TO_BRG, BRG_TO_RGB, BRG_TO_GRAYSCALE, GRAYSCALE_TO_BRG, RGB_TO_GRAYSCALE, GRAYSCALE_TO_RGB.
+class ConvertColorSchemeLogicalFunction final
 {
 public:
-    static constexpr std::string_view NAME = "RESIZE_IMAGE";
+    static constexpr std::string_view NAME = "CONVERT_COLOR_SCHEME";
 
-    ResizeImageLogicalFunction(const LogicalFunction& image, const LogicalFunction& width, const LogicalFunction& height);
+    ConvertColorSchemeLogicalFunction(const LogicalFunction& image, const LogicalFunction& conversionMode);
 
-    [[nodiscard]] bool operator==(const ResizeImageLogicalFunction& rhs) const;
+    [[nodiscard]] bool operator==(const ConvertColorSchemeLogicalFunction& rhs) const;
 
     [[nodiscard]] DataType getDataType() const;
-    [[nodiscard]] ResizeImageLogicalFunction withDataType(const DataType& dataType) const;
+    [[nodiscard]] ConvertColorSchemeLogicalFunction withDataType(const DataType& dataType) const;
     [[nodiscard]] LogicalFunction withInferredDataType(const Schema& schema) const;
 
     [[nodiscard]] std::vector<LogicalFunction> getChildren() const;
-    [[nodiscard]] ResizeImageLogicalFunction withChildren(const std::vector<LogicalFunction>& children) const;
+    [[nodiscard]] ConvertColorSchemeLogicalFunction withChildren(const std::vector<LogicalFunction>& children) const;
 
     [[nodiscard]] std::string_view getType() const;
     [[nodiscard]] std::string explain(ExplainVerbosity verbosity) const;
@@ -54,36 +56,34 @@ public:
 private:
     DataType dataType;
     LogicalFunction image;
-    LogicalFunction width;
-    LogicalFunction height;
+    LogicalFunction conversionMode;
 
-    friend Reflector<ResizeImageLogicalFunction>;
+    friend Reflector<ConvertColorSchemeLogicalFunction>;
 };
 
-static_assert(LogicalFunctionConcept<ResizeImageLogicalFunction>);
+static_assert(LogicalFunctionConcept<ConvertColorSchemeLogicalFunction>);
 
 template <>
-struct Reflector<ResizeImageLogicalFunction>
+struct Reflector<ConvertColorSchemeLogicalFunction>
 {
-    Reflected operator()(const ResizeImageLogicalFunction& function) const;
+    Reflected operator()(const ConvertColorSchemeLogicalFunction& function) const;
 };
 
 template <>
-struct Unreflector<ResizeImageLogicalFunction>
+struct Unreflector<ConvertColorSchemeLogicalFunction>
 {
-    ResizeImageLogicalFunction operator()(const Reflected& reflected) const;
+    ConvertColorSchemeLogicalFunction operator()(const Reflected& reflected) const;
 };
 
 }
 
 namespace NES::detail
 {
-struct ReflectedResizeImageLogicalFunction
+struct ReflectedConvertColorSchemeLogicalFunction
 {
     std::optional<LogicalFunction> image;
-    std::optional<LogicalFunction> width;
-    std::optional<LogicalFunction> height;
+    std::optional<LogicalFunction> conversionMode;
 };
 }
 
-FMT_OSTREAM(NES::ResizeImageLogicalFunction);
+FMT_OSTREAM(NES::ConvertColorSchemeLogicalFunction);

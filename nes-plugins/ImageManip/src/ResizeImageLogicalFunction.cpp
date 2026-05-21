@@ -47,16 +47,12 @@ void validateResizeImageChildren(const LogicalFunction& image, const LogicalFunc
     if (!width.getDataType().isType(DataType::Type::UNDEFINED))
     {
         PRECONDITION(
-            width.getDataType().isInteger(),
-            "RESIZE_IMAGE requires second argument to be integer, but got {}",
-            width.getDataType());
+            width.getDataType().isInteger(), "RESIZE_IMAGE requires second argument to be integer, but got {}", width.getDataType());
     }
     if (!height.getDataType().isType(DataType::Type::UNDEFINED))
     {
         PRECONDITION(
-            height.getDataType().isInteger(),
-            "RESIZE_IMAGE requires third argument to be integer, but got {}",
-            height.getDataType());
+            height.getDataType().isInteger(), "RESIZE_IMAGE requires third argument to be integer, but got {}", height.getDataType());
     }
 }
 }
@@ -121,10 +117,8 @@ std::string_view ResizeImageLogicalFunction::getType() const
 
 Reflected Reflector<ResizeImageLogicalFunction>::operator()(const ResizeImageLogicalFunction& function) const
 {
-    return reflect(detail::ReflectedResizeImageLogicalFunction{
-        .image = function.image,
-        .width = function.width,
-        .height = function.height});
+    return reflect(
+        detail::ReflectedResizeImageLogicalFunction{.image = function.image, .width = function.width, .height = function.height});
 }
 
 ResizeImageLogicalFunction Unreflector<ResizeImageLogicalFunction>::operator()(const Reflected& reflected) const
