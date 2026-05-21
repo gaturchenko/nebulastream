@@ -1,0 +1,22 @@
+# name: function/varsized/ResizeImage.test
+# description: RESIZE_IMAGE varsized function using OpenCV
+# groups: [Functions]
+
+CREATE LOGICAL SOURCE imageStream(encoded VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR imageStream TYPE File;
+ATTACH INLINE
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNoAAAAggCB2kUIOwAAAABJRU5ErkJggg==
+
+CREATE SINK resizeSink(resized VARSIZED NOT NULL) TYPE File;
+
+# Resize a 1x1 grayscale PNG to 2x2 and verify the encoded PNG output.
+SELECT TO_BASE64(RESIZE_IMAGE(FROM_BASE64(encoded), UINT32(2), UINT32(2))) AS resized
+FROM imageStream INTO resizeSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAAAAABX3VL4AAAADklEQVQIHWNsYGBsYAAAA48BA7PgjjkAAAAASUVORK5CYII=
+
+# A non-positive target width triggers passthrough.
+SELECT TO_BASE64(RESIZE_IMAGE(FROM_BASE64(encoded), UINT32(0), UINT32(2))) AS resized
+FROM imageStream INTO resizeSink;
+----
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNoAAAAggCB2kUIOwAAAABJRU5ErkJggg==

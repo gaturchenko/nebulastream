@@ -22,6 +22,20 @@
           ]
         }
       ]
+    },
+    "opencv": {
+      "description": "opencv",
+      "dependencies": [
+        {
+          "name": "opencv4",
+          "default-features": false,
+          "features": [
+            "calib3d",
+            "jpeg",
+            "png"
+          ]
+        }
+      ]
     }
   },
   "dependencies": [
@@ -68,5 +82,8 @@
       "version": "0.8.3",
       "port-version": 0
     }
+  ],
+  "default-features": [
+    "opencv"
   ]
 }
