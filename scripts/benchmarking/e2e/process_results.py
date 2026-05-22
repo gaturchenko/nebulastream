@@ -116,6 +116,19 @@ def parse_query_duration_us(events: List[object]) -> Optional[float]:
     return max(durations)
 
 
+def parse_combined_query_duration_us(
+        trace_events: Iterable[List[object]]
+) -> Optional[float]:
+    durations = [
+        duration
+        for duration in (parse_query_duration_us(events) for events in trace_events)
+        if duration is not None and duration > 0
+    ]
+    if not durations:
+        return None
+    return sum(durations)
+
+
 def parse_pipeline_wall_clock_duration_us(events: List[object]) -> Optional[float]:
     starts: List[float] = []
     ends: List[float] = []
@@ -159,8 +172,6 @@ def parse_end_to_end_tuple_count(events: List[object]) -> Optional[float]:
 
 def parse_end_to_end_metrics(events: List[object]) -> Optional[Dict[str, float]]:
     duration_us = parse_query_duration_us(events)
-    if duration_us is None:
-        duration_us = parse_pipeline_wall_clock_duration_us(events)
     tuples = parse_end_to_end_tuple_count(events)
     if duration_us is None or duration_us <= 0 or tuples is None or tuples <= 0:
         return None
@@ -170,6 +181,37 @@ def parse_end_to_end_metrics(events: List[object]) -> Optional[Dict[str, float]]
         for latency in (parse_float(row.get("latency_us")) for row in parse_pipeline_latency_rows(events))
         if latency is not None
     ]
+
+    return {
+        "end_to_end_tuples": tuples,
+        "end_to_end_duration_us": duration_us,
+        "end_to_end_throughput": tuples * 1_000_000.0 / duration_us,
+        "end_to_end_latency_us": sum(pipeline_latencies) if pipeline_latencies else duration_us / tuples,
+    }
+
+
+def parse_combined_end_to_end_metrics(
+        trace_events: Iterable[List[object]]
+) -> Optional[Dict[str, float]]:
+    event_lists = list(trace_events)
+    duration_us = parse_combined_query_duration_us(event_lists)
+    tuple_counts = [
+        tuples
+        for tuples in (parse_end_to_end_tuple_count(events) for events in event_lists)
+        if tuples is not None and tuples > 0
+    ]
+    if duration_us is None or duration_us <= 0 or not tuple_counts:
+        return None
+
+    pipeline_latencies = [
+        latency
+        for events in event_lists
+        for latency in (
+            parse_float(row.get("latency_us")) for row in parse_pipeline_latency_rows(events)
+        )
+        if latency is not None
+    ]
+    tuples = max(tuple_counts)
 
     return {
         "end_to_end_tuples": tuples,
@@ -473,6 +515,8 @@ def iter_task_metric_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
 
 
 def iter_end_to_end_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
+    traces_by_context: Dict[Tuple[str, str, str], List[List[object]]] = {}
+
     for json_path in results_dir.rglob("*.json"):
         context = infer_context(results_dir, json_path)
         if context is None:
@@ -488,17 +532,26 @@ def iter_end_to_end_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
         if not isinstance(events, list):
             continue
 
-        metrics = parse_end_to_end_metrics(events)
+        context_key = (
+            context["inference_config"],
+            context["query_name"],
+            context["repetition"],
+        )
+        traces_by_context.setdefault(context_key, []).append(events)
+
+    for inference_config, query_name, repetition in sorted(traces_by_context):
+        metrics = parse_combined_end_to_end_metrics(
+            traces_by_context[(inference_config, query_name, repetition)]
+        )
         if metrics is None:
             continue
 
-        inference_parts = parse_inference_config(context["inference_config"])
+        inference_parts = parse_inference_config(inference_config)
         row: Dict[str, object] = {
-            "query_name": context["query_name"],
-            "source_name": parse_source_name(events),
+            "query_name": query_name,
             "inference_config_param_name": inference_parts["param_name"],
             "inference_config_param_value": inference_parts["param_value"],
-            "repetition": context["repetition"],
+            "repetition": repetition,
         }
         row.update(metrics)
         yield row
@@ -733,7 +786,6 @@ def compute_end_to_end_stats(results_dir: Path) -> "pd.DataFrame":
     rows: List[Dict[str, object]] = list(iter_end_to_end_rows(results_dir))
     columns = [
         "query_name",
-        "source_name",
         "inference_config_param_name",
         "inference_config_param_value",
     ]
@@ -767,7 +819,6 @@ def compute_end_to_end_rows(results_dir: Path) -> "pd.DataFrame":
     rows: List[Dict[str, object]] = list(iter_end_to_end_rows(results_dir))
     columns = [
         "query_name",
-        "source_name",
         "inference_config_param_name",
         "inference_config_param_value",
         "repetition",
