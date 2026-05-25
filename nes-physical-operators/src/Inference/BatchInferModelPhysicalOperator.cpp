@@ -12,7 +12,7 @@
     limitations under the License.
 */
 
-#include <BatchInferModelPhysicalOperator.hpp>
+#include <Inference/BatchInferModelPhysicalOperator.hpp>
 #include "ThreadLocalRuntimeWrapper.hpp"
 
 #include <cstddef>
@@ -26,6 +26,7 @@
 
 #include <DataTypes/DataType.hpp>
 #include <Identifiers/Identifiers.hpp>
+#include <Inference/BatchInferenceOperatorHandler.hpp>
 #include <Nautilus/DataTypes/VarVal.hpp>
 #include <Nautilus/DataTypes/VariableSizedData.hpp>
 #include <Nautilus/Interface/BufferRef/TupleBufferRef.hpp>
@@ -34,7 +35,6 @@
 #include <Nautilus/Interface/RecordBuffer.hpp>
 #include <Util/StdInt.hpp>
 #include <nautilus/std/cstring.h>
-#include <BatchInferenceOperatorHandler.hpp>
 #include <CompilationContext.hpp>
 #include <ExecutionContext.hpp>
 #include <Model.hpp>

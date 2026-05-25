@@ -12,7 +12,7 @@
     limitations under the License.
 */
 
-#include <InferModelPhysicalOperator.hpp>
+#include <Inference/InferModelPhysicalOperator.hpp>
 #include "ThreadLocalRuntimeWrapper.hpp"
 
 #include <cstddef>

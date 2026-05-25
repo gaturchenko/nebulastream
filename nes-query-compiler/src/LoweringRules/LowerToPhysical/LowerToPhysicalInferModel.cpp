@@ -21,6 +21,12 @@
 #include <utility>
 #include <vector>
 
+#include <Inference/BatchInferModelPhysicalOperator.hpp>
+#include <Inference/BatchInferenceOperatorHandler.hpp>
+#include <Inference/BatchingPhysicalOperator.hpp>
+#include <Inference/CacheInferModelPhysicalOperator.hpp>
+#include <Inference/InferModelPhysicalOperator.hpp>
+#include <Inference/InterBufferBatchingPhysicalOperator.hpp>
 #include <LoweringRules/AbstractLoweringRule.hpp>
 #include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
 #include <Operators/InferModelLogicalOperator.hpp>
@@ -32,13 +38,9 @@
 #include <Traits/OutputOriginIdsTrait.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
-#include <BatchInferModelPhysicalOperator.hpp>
-#include <BatchInferenceOperatorHandler.hpp>
-#include <BatchingPhysicalOperator.hpp>
 #include <ErrorHandling.hpp>
-#include <InferModelPhysicalOperator.hpp>
 #include <Inference.hpp>
-#include <InterBufferBatchingPhysicalOperator.hpp>
+#include <InferenceConfiguration.hpp>
 #include <LoweringRuleRegistry.hpp>
 #include <Model.hpp>
 #include <PhysicalOperator.hpp>
@@ -109,6 +111,7 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     const auto memoryLayoutType = memoryLayoutTypeTrait.value()->memoryLayout;
     const auto batchSize = getInferenceBatchSize(logicalOperator);
     const auto runtimeOptions = getInferenceRuntimeOptions(conf);
+    const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType.getValue();
 
     if (batchSize > 1)
     {
@@ -168,6 +171,34 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
             std::vector{batchingWrapper});
 
         std::vector leafes(logicalOperator.getChildren().size(), batchingWrapper);
+        return {.root = wrapper, .leafs = {leafes}};
+    }
+
+    if (predictionCacheType != PredictionCacheType::NONE)
+    {
+        auto physicalOperator = CacheInferModelPhysicalOperator(
+            std::move(model),
+            inferModelOp.get().getInputFieldNames(),
+            inferModelOp.get().getOutputFieldNames(),
+            runtimeOptions,
+            predictionCacheType,
+            conf.inferenceConfiguration.numberOfEntriesPredictionCache.getValue(),
+            inferModelOp.get().hasVarsizedInput(),
+            inferModelOp.get().hasVarsizedOutput());
+
+        NES_DEBUG(
+            "Lowering InferModel operator to physical CachedInferModelPhysicalOperator operator with {} cache entries",
+            conf.inferenceConfiguration.numberOfEntriesPredictionCache.getValue())
+
+        const auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
+            physicalOperator,
+            logicalOperator.getInputSchemas().at(0),
+            logicalOperator.getOutputSchema(),
+            memoryLayoutType,
+            memoryLayoutType,
+            PhysicalOperatorWrapper::PipelineLocation::INTERMEDIATE);
+
+        std::vector leafes(logicalOperator.getChildren().size(), wrapper);
         return {.root = wrapper, .leafs = {leafes}};
     }
 

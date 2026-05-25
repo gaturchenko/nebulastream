@@ -25,18 +25,18 @@
 namespace NES
 {
 
-class InterBufferBatchingPhysicalOperator final : public PhysicalOperatorConcept
+class BatchingPhysicalOperator final : public PhysicalOperatorConcept
 {
 public:
-    explicit InterBufferBatchingPhysicalOperator(
-        OperatorHandlerId operatorHandlerId,
-        std::shared_ptr<TupleBufferRef> tupleBufferRef);
+    explicit BatchingPhysicalOperator(OperatorHandlerId operatorHandlerId, std::shared_ptr<TupleBufferRef> tupleBufferRef);
 
     void setup(ExecutionContext&, CompilationContext&) const override { }
+
     void open(ExecutionContext& executionCtx, RecordBuffer&) const override;
     void execute(ExecutionContext& executionCtx, Record& record) const override;
     void close(ExecutionContext& executionCtx, RecordBuffer&) const override;
-    void terminate(ExecutionContext& executionCtx) const override;
+
+    void terminate(ExecutionContext&) const override { }
 
     [[nodiscard]] std::optional<PhysicalOperator> getChild() const override;
     void setChild(PhysicalOperator child) override;

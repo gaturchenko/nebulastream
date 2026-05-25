@@ -33,8 +33,6 @@ namespace NES
 enum class PredictionCacheType : uint8_t
 {
     NONE,
-    ALWAYS_MISS,
-    TWO_QUEUES,
     FIFO,
     LFU,
     LRU,
@@ -45,33 +43,25 @@ class InferenceConfiguration final : public BaseConfiguration
 {
 public:
     InferenceConfiguration() = default;
+
     InferenceConfiguration(const std::string& name, const std::string& description) : BaseConfiguration(name, description) { }
 
-    BoolOption useBatchDeduplication = {
-        "use_batch_deduplication",
-        "false",
-        "Whether to invoke the model only on unique values of a batch",
-        {std::make_shared<BooleanValidation>()}};
-    EnumOption<PredictionCacheType> predictionCacheType = {
-        "prediction_cache_type",
-        PredictionCacheType::NONE,
-        fmt::format("Type of prediction cache {}", fmt::join(magic_enum::enum_names<PredictionCacheType>(), ", "))};
-    UIntOption numberOfEntriesPredictionCache = {
-        "number_of_entries_prediction_cache",
-        "1",
-        "Size of the prediction cache",
-        {std::make_shared<NonZeroValidation>()}};
-    UIntOption openvinoInferenceNumThreads = {
-        "openvino_inference_num_threads",
-        "1",
-        "OpenVINO ov::inference_num_threads",
-        {std::make_shared<NonZeroValidation>()}};
+    BoolOption useBatchDeduplication
+        = {"use_batch_deduplication",
+           "false",
+           "Whether to invoke the model only on unique values of a batch",
+           {std::make_shared<BooleanValidation>()}};
+    EnumOption<PredictionCacheType> predictionCacheType
+        = {"prediction_cache_type",
+           PredictionCacheType::NONE,
+           fmt::format("Type of prediction cache {}", fmt::join(magic_enum::enum_names<PredictionCacheType>(), ", "))};
+    UIntOption numberOfEntriesPredictionCache
+        = {"number_of_entries_prediction_cache", "1", "Size of the prediction cache", {std::make_shared<NonZeroValidation>()}};
+    UIntOption openvinoInferenceNumThreads
+        = {"openvino_inference_num_threads", "1", "OpenVINO ov::inference_num_threads", {std::make_shared<NonZeroValidation>()}};
     UIntOption openvinoNumStreams = {"openvino_num_streams", "0", "OpenVINO ov::num_streams"};
-    BoolOption openvinoEnableCpuPinning = {
-        "openvino_enable_cpu_pinning",
-        "false",
-        "OpenVINO ov::hint::enable_cpu_pinning",
-        {std::make_shared<BooleanValidation>()}};
+    BoolOption openvinoEnableCpuPinning
+        = {"openvino_enable_cpu_pinning", "false", "OpenVINO ov::hint::enable_cpu_pinning", {std::make_shared<BooleanValidation>()}};
 
 private:
     std::vector<BaseOption*> getOptions() override

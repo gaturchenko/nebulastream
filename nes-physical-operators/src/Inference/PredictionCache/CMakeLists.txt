@@ -11,12 +11,10 @@
 # limitations under the License.
 
 add_source_files(nes-physical-operators
-        BatchInferenceOperatorHandler.cpp
-        BatchInferModelPhysicalOperator.cpp
-        BatchingPhysicalOperator.cpp
-        CacheInferModelPhysicalOperator.cpp
-        InferModelPhysicalOperator.cpp
-        InterBufferBatchingPhysicalOperator.cpp
+        PredictionCache.cpp
+        PredictionCacheFIFO.cpp
+        PredictionCacheLFU.cpp
+        PredictionCacheLRU.cpp
+        PredictionCacheSecondChance.cpp
+        PredictionCacheUtil.cpp
 )
-
-add_subdirectory(PredictionCache)

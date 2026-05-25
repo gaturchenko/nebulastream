@@ -12,16 +12,16 @@
     limitations under the License.
 */
 
-#include <BatchingPhysicalOperator.hpp>
+#include <Inference/BatchingPhysicalOperator.hpp>
 
 #include <cstddef>
 #include <memory>
 #include <utility>
 
-#include <BatchInferenceOperatorHandler.hpp>
+#include <Inference/BatchInferenceOperatorHandler.hpp>
+#include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <ErrorHandling.hpp>
 #include <ExecutionContext.hpp>
-#include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <OperatorState.hpp>
 #include <PipelineExecutionContext.hpp>
 #include <function.hpp>
@@ -63,10 +63,7 @@ PagedVector* getBatchPagedVector(Batch* batch)
 }
 
 void emitBatchesProxy(
-    OperatorHandler* ptrOpHandler,
-    PipelineExecutionContext* pipelineCtx,
-    const Timestamp watermarkTs,
-    const SequenceNumber sequenceNumber)
+    OperatorHandler* ptrOpHandler, PipelineExecutionContext* pipelineCtx, const Timestamp watermarkTs, const SequenceNumber sequenceNumber)
 {
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
@@ -86,8 +83,7 @@ void emitBatchesProxy(
 }
 
 BatchingPhysicalOperator::BatchingPhysicalOperator(
-    const OperatorHandlerId operatorHandlerId,
-    std::shared_ptr<TupleBufferRef> tupleBufferRef)
+    const OperatorHandlerId operatorHandlerId, std::shared_ptr<TupleBufferRef> tupleBufferRef)
     : operatorHandlerId(operatorHandlerId), tupleBufferRef(std::move(tupleBufferRef))
 {
 }
@@ -114,11 +110,7 @@ void BatchingPhysicalOperator::close(ExecutionContext& executionCtx, RecordBuffe
 {
     const auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
     nautilus::invoke(
-        emitBatchesProxy,
-        operatorHandlerMemRef,
-        executionCtx.pipelineContext,
-        executionCtx.watermarkTs,
-        executionCtx.sequenceNumber);
+        emitBatchesProxy, operatorHandlerMemRef, executionCtx.pipelineContext, executionCtx.watermarkTs, executionCtx.sequenceNumber);
 }
 
 std::optional<PhysicalOperator> BatchingPhysicalOperator::getChild() const

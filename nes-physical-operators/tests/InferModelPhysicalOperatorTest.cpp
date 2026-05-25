@@ -12,12 +12,12 @@
     limitations under the License.
 */
 
-#include <BatchInferModelPhysicalOperator.hpp>
-#include <BatchInferenceOperatorHandler.hpp>
-#include <BatchingPhysicalOperator.hpp>
+#include <Inference/BatchInferModelPhysicalOperator.hpp>
+#include <Inference/BatchInferenceOperatorHandler.hpp>
+#include <Inference/BatchingPhysicalOperator.hpp>
+#include <Inference/InferModelPhysicalOperator.hpp>
 #include <EmitOperatorHandler.hpp>
 #include <EmitPhysicalOperator.hpp>
-#include <InferModelPhysicalOperator.hpp>
 #include <Inference.hpp>
 #include <Model.hpp>
 #include <PhysicalOperator.hpp>

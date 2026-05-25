@@ -12,15 +12,15 @@
     limitations under the License.
 */
 
-#include <InterBufferBatchingPhysicalOperator.hpp>
+#include <Inference/InterBufferBatchingPhysicalOperator.hpp>
 
 #include <memory>
 #include <utility>
 
-#include <BatchInferenceOperatorHandler.hpp>
+#include <Inference/BatchInferenceOperatorHandler.hpp>
+#include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <ErrorHandling.hpp>
 #include <ExecutionContext.hpp>
-#include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <OperatorState.hpp>
 #include <PipelineExecutionContext.hpp>
 #include <function.hpp>
@@ -64,10 +64,7 @@ PagedVector* getBatchPagedVector(Batch* batch)
     return batch->getPagedVectorRef();
 }
 
-void emitInterBufferBatchesProxy(
-    OperatorHandler* ptrOpHandler,
-    PipelineExecutionContext* pipelineCtx,
-    const Timestamp watermarkTs)
+void emitInterBufferBatchesProxy(OperatorHandler* ptrOpHandler, PipelineExecutionContext* pipelineCtx, const Timestamp watermarkTs)
 {
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
@@ -82,10 +79,7 @@ void emitInterBufferBatchesProxy(
     }
 }
 
-void emitRemainingBatchesProxy(
-    OperatorHandler* ptrOpHandler,
-    PipelineExecutionContext* pipelineCtx,
-    const Timestamp watermarkTs)
+void emitRemainingBatchesProxy(OperatorHandler* ptrOpHandler, PipelineExecutionContext* pipelineCtx, const Timestamp watermarkTs)
 {
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
@@ -103,8 +97,7 @@ void emitRemainingBatchesProxy(
 }
 
 InterBufferBatchingPhysicalOperator::InterBufferBatchingPhysicalOperator(
-    const OperatorHandlerId operatorHandlerId,
-    std::shared_ptr<TupleBufferRef> tupleBufferRef)
+    const OperatorHandlerId operatorHandlerId, std::shared_ptr<TupleBufferRef> tupleBufferRef)
     : operatorHandlerId(operatorHandlerId), tupleBufferRef(std::move(tupleBufferRef))
 {
 }
@@ -130,21 +123,13 @@ void InterBufferBatchingPhysicalOperator::execute(ExecutionContext& executionCtx
 void InterBufferBatchingPhysicalOperator::close(ExecutionContext& executionCtx, RecordBuffer&) const
 {
     const auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
-    nautilus::invoke(
-        emitInterBufferBatchesProxy,
-        operatorHandlerMemRef,
-        executionCtx.pipelineContext,
-        executionCtx.watermarkTs);
+    nautilus::invoke(emitInterBufferBatchesProxy, operatorHandlerMemRef, executionCtx.pipelineContext, executionCtx.watermarkTs);
 }
 
 void InterBufferBatchingPhysicalOperator::terminate(ExecutionContext& executionCtx) const
 {
     const auto operatorHandlerMemRef = executionCtx.getGlobalOperatorHandler(operatorHandlerId);
-    nautilus::invoke(
-        emitRemainingBatchesProxy,
-        operatorHandlerMemRef,
-        executionCtx.pipelineContext,
-        executionCtx.watermarkTs);
+    nautilus::invoke(emitRemainingBatchesProxy, operatorHandlerMemRef, executionCtx.pipelineContext, executionCtx.watermarkTs);
 }
 
 std::optional<PhysicalOperator> InterBufferBatchingPhysicalOperator::getChild() const

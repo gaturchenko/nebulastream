@@ -12,7 +12,7 @@
     limitations under the License.
 */
 
-#include <BatchInferenceOperatorHandler.hpp>
+#include <Inference/BatchInferenceOperatorHandler.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -20,11 +20,11 @@
 #include <numeric>
 #include <utility>
 
-#include <PipelineExecutionContext.hpp>
 #include <Runtime/QueryTerminationType.hpp>
 #include <Runtime/TupleBuffer.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <ErrorHandling.hpp>
+#include <PipelineExecutionContext.hpp>
 
 namespace NES
 {
@@ -123,8 +123,8 @@ Batch* BatchInferenceOperatorHandler::getOrCreateNewBatch()
 std::shared_ptr<Batch> BatchInferenceOperatorHandler::getBatch(const uint64_t requestedBatchId) const
 {
     const std::scoped_lock lock(batchesMutex);
-    const auto it = std::ranges::find_if(
-        batches, [requestedBatchId](const auto& batch) { return batch && batch->batchId == requestedBatchId; });
+    const auto it
+        = std::ranges::find_if(batches, [requestedBatchId](const auto& batch) { return batch && batch->batchId == requestedBatchId; });
     if (it == batches.end())
     {
         return nullptr;
@@ -158,10 +158,7 @@ void BatchInferenceOperatorHandler::garbageCollectBatches()
 }
 
 void BatchInferenceOperatorHandler::emitBatchesToProbe(
-    Batch& batch,
-    const SequenceData& sequenceData,
-    PipelineExecutionContext* pipelineCtx,
-    const Timestamp watermarkTs)
+    Batch& batch, const SequenceData& sequenceData, PipelineExecutionContext* pipelineCtx, const Timestamp watermarkTs)
 {
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
 
