@@ -79,9 +79,19 @@ int8_t* getOutputBuffer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread)
     return reinterpret_cast<int8_t*>(twl->getHandle(thread).getOutputData());
 }
 
-void infer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread)
+void infer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread, uint64_t numberOfTuples)
 {
+    if (twl->model.getBackend() == ModelBackend::OPENVINO)
+    {
+        twl->getHandle(thread).infer(numberOfTuples);
+        return;
+    }
     twl->getHandle(thread).infer();
+}
+
+bool supportsReducedBatchInvocation(ThreadLocalRuntimeWrapper* twl)
+{
+    return twl->model.getBackend() == ModelBackend::OPENVINO;
 }
 
 void allocateBatchDeduplicationHashMaps(
@@ -240,6 +250,7 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         const auto inputTupleSizeVal = nautilus::val<uint64_t>(inputTupleSize);
         const auto outputTupleSizeVal = nautilus::val<uint64_t>(outputTupleSize);
         const auto inputBufferSize = nautilus::val<uint64_t>(batchSize * inputTupleSize);
+        const auto reducedBatchInvocation = nautilus::invoke(supportsReducedBatchInvocation, batchRuntime);
         auto hashMapPtr = nautilus::invoke(+[]() { return static_cast<HashMap*>(nullptr); });
         if (useBatchDeduplication)
         {
@@ -395,14 +406,14 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
                 writeBatchInputs(currentBatchStart, recordsInBatch);
             }
 
-            if (padBatch || useBatchDeduplication)
+            if (!reducedBatchInvocation && (padBatch || useBatchDeduplication))
             {
                 const auto paddingOffset = recordsToInfer * inputTupleSizeVal;
                 const auto paddingSize = inputBufferSize - paddingOffset;
                 nautilus::memset(inputBuffer + paddingOffset, 0, paddingSize);
             }
 
-            nautilus::invoke(infer, batchRuntime, ctx.workerThreadId);
+            nautilus::invoke(infer, batchRuntime, ctx.workerThreadId, recordsToInfer);
             emitBatchOutputs(currentBatchStart, recordsInBatch);
         };
 

@@ -47,6 +47,9 @@ public:
     /// Run inference: read from the owned input buffer, write into the owned output buffer.
     void infer();
 
+    /// Run inference over the prefix containing `numberOfTuples` rows in the owned buffers.
+    void infer(size_t numberOfTuples);
+
     /// Raw byte pointer into the input / output buffer. Callers (nautilus-generated
     /// code) write/read directly instead of going through per-element helpers.
     [[nodiscard]] std::byte* getInputData() { return inputData.get(); }

@@ -897,6 +897,83 @@ TEST_F(InferModelPhysicalOperatorTest, LoweredBatchIdentityWithDeduplication)
     }
 }
 
+/// Batched OpenVINO identity model with repeated records. Deduplication must run
+/// inference only for unique records and fan out outputs to duplicates.
+TEST_F(InferModelPhysicalOperatorTest, OpenVinoBatchIdentityWithDeduplication)
+{
+    if (!openVinoIdentityModel.has_value())
+    {
+        GTEST_SKIP() << "OpenVINO model import/compile unavailable in this environment";
+    }
+    constexpr size_t numFloats = 100;
+    constexpr size_t batchSize = 4;
+    const auto outputFieldNames = makeOutputFieldNames(numFloats);
+    const auto [inputSchema, outputSchema] = makeSchemas(outputFieldNames);
+
+    const std::vector<std::vector<float>> inputs{
+        makeFloats(numFloats, 1.0F),
+        makeFloats(numFloats, 101.0F),
+        makeFloats(numFloats, 1.0F),
+        makeFloats(numFloats, 201.0F),
+        makeFloats(numFloats, 301.0F),
+        makeFloats(numFloats, 301.0F),
+        makeFloats(numFloats, 401.0F)};
+    auto inputBuffer = createInputBuffer(inputSchema, inputs);
+
+    for (bool compiled : {false, true})
+    {
+        auto [batchingPipeline, inferencePipeline, handlers] = createLoweredBatchInferencePipelines(
+            *openVinoIdentityModel, inputSchema, outputSchema, {"input_blob"}, outputFieldNames, batchSize, true);
+
+        auto options = [&]
+        {
+            nautilus::engine::Options opt;
+            opt.setOption("engine.Compilation", compiled);
+            return opt;
+        }();
+        CompiledExecutablePipelineStage batchingStage(batchingPipeline, handlers, options);
+        CompiledExecutablePipelineStage inferenceStage(inferencePipeline, handlers, options);
+
+        folly::Synchronized<std::vector<TupleBuffer>> emittedBatchBuffers;
+        folly::Synchronized<std::vector<TupleBuffer>> outputBuffers;
+        auto bufMgr = BufferManager::create(bufferSize, 200);
+        MockedPipelineContext batchingPec{emittedBatchBuffers, bufMgr};
+        MockedPipelineContext inferencePec{outputBuffers, bufMgr};
+
+        batchingStage.start(batchingPec);
+        inferenceStage.start(inferencePec);
+        batchingStage.execute(inputBuffer, batchingPec);
+
+        auto batchBuffers = *emittedBatchBuffers.rlock();
+        for (auto& batchBuffer : batchBuffers)
+        {
+            inferenceStage.execute(batchBuffer, inferencePec);
+        }
+
+        inferenceStage.stop(inferencePec);
+        batchingStage.stop(batchingPec);
+
+        size_t totalRecords = 0;
+        auto lockedBuffers = *outputBuffers.rlock();
+        for (auto& outBuf : lockedBuffers)
+        {
+            Testing::TestTupleBuffer ttb(outputSchema);
+            auto view = ttb.open(outBuf);
+            for (size_t row = 0; row < view.getNumberOfTuples(); ++row)
+            {
+                ASSERT_LT(totalRecords, inputs.size()) << "(compiled=" << compiled << ")";
+                for (size_t i = 0; i < numFloats; ++i)
+                {
+                    EXPECT_NEAR(view[row]["out_" + std::to_string(i)].as<float>(), inputs[totalRecords][i], 1e-5F)
+                        << "OpenVINO record " << totalRecords << " field out_" << i << " (compiled=" << compiled << ")";
+                }
+                ++totalRecords;
+            }
+        }
+        EXPECT_EQ(totalRecords, inputs.size()) << "(compiled=" << compiled << ")";
+    }
+}
+
 /// Batched OpenVINO identity model with a partial tail batch. Interpreted + compiled.
 TEST_F(InferModelPhysicalOperatorTest, OpenVinoBatchIdentity)
 {

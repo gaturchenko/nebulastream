@@ -100,4 +100,18 @@ void InferenceRuntime::infer()
     impl->backend->infer(inputData.get(), inputSize, outputData.get(), outputSize);
 }
 
+void InferenceRuntime::infer(size_t numberOfTuples)
+{
+    if (impl->backend == nullptr)
+    {
+        throw NES::InferenceRuntimeFailure("Model Execution failed. Runtime backend was not set up");
+    }
+
+    PRECONDITION(numberOfTuples > 0, "Cannot run inference on an empty batch");
+    PRECONDITION(numberOfTuples * inputTupleSize <= inputSize, "Requested input batch exceeds runtime input buffer");
+    PRECONDITION(numberOfTuples * outputTupleSize <= outputSize, "Requested output batch exceeds runtime output buffer");
+
+    impl->backend->infer(inputData.get(), numberOfTuples * inputTupleSize, outputData.get(), numberOfTuples * outputTupleSize);
+}
+
 }

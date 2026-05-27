@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <DataTypes/DataTypeProvider.hpp>
+#include <Inference/BatchCacheInferModelPhysicalOperator.hpp>
 #include <Inference/BatchInferModelPhysicalOperator.hpp>
 #include <Inference/BatchInferenceOperatorHandler.hpp>
 #include <Inference/BatchingPhysicalOperator.hpp>
@@ -187,21 +188,46 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
             handler,
             PhysicalOperatorWrapper::PipelineLocation::EMIT);
 
-        auto physicalOperator = BatchInferModelPhysicalOperator(
-            std::move(model),
-            bufferRef,
-            inputSchema.getFieldNames(),
-            inferModelOp.get().getInputFieldNames(),
-            inferModelOp.get().getOutputFieldNames(),
-            batchSize,
-            runtimeOptions,
-            createBatchDeduplicationHashMapOptions(inputSchema, inferModelOp.get().getInputFieldNames(), conf),
-            inferModelOp.get().hasVarsizedInput(),
-            inferModelOp.get().hasVarsizedOutput(),
-            conf.inferenceConfiguration.useBatchDeduplication.getValue(),
-            handlerId);
+        PhysicalOperator physicalOperator;
+        if (predictionCacheType != PredictionCacheType::NONE)
+        {
+            physicalOperator = BatchCacheInferModelPhysicalOperator(
+                std::move(model),
+                bufferRef,
+                inputSchema.getFieldNames(),
+                inferModelOp.get().getInputFieldNames(),
+                inferModelOp.get().getOutputFieldNames(),
+                batchSize,
+                runtimeOptions,
+                predictionCacheType,
+                conf.inferenceConfiguration.numberOfEntriesPredictionCache.getValue(),
+                createBatchDeduplicationHashMapOptions(inputSchema, inferModelOp.get().getInputFieldNames(), conf),
+                inferModelOp.get().hasVarsizedInput(),
+                inferModelOp.get().hasVarsizedOutput(),
+                conf.inferenceConfiguration.useBatchDeduplication.getValue(),
+                handlerId);
 
-        NES_DEBUG("Lowering InferModel operator to physical BatchInferModelPhysicalOperator operator with batch size {}", batchSize)
+            NES_DEBUG(
+                "Lowering InferModel operator to physical BatchCacheInferModelPhysicalOperator operator with batch size {}", batchSize)
+        }
+        else
+        {
+            physicalOperator = BatchInferModelPhysicalOperator(
+                std::move(model),
+                bufferRef,
+                inputSchema.getFieldNames(),
+                inferModelOp.get().getInputFieldNames(),
+                inferModelOp.get().getOutputFieldNames(),
+                batchSize,
+                runtimeOptions,
+                createBatchDeduplicationHashMapOptions(inputSchema, inferModelOp.get().getInputFieldNames(), conf),
+                inferModelOp.get().hasVarsizedInput(),
+                inferModelOp.get().hasVarsizedOutput(),
+                conf.inferenceConfiguration.useBatchDeduplication.getValue(),
+                handlerId);
+
+            NES_DEBUG("Lowering InferModel operator to physical BatchInferModelPhysicalOperator operator with batch size {}", batchSize)
+        }
 
         const auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
             physicalOperator,

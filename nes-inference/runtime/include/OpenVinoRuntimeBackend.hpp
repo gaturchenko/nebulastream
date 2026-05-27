@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <openvino/core/shape.hpp>
 #include <openvino/core/type/element_type.hpp>
 #include <openvino/runtime/infer_request.hpp>
@@ -35,5 +36,7 @@ private:
     ov::Shape inputShape;
     ov::element::Type outputElementType;
     ov::Shape outputShape;
+    size_t inputTupleSize = 0;
+    size_t outputTupleSize = 0;
 };
 }

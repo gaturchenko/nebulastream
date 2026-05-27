@@ -35,6 +35,7 @@ CREATE SINK result(`STREAM$P1` FLOAT32 NOT NULL, `STREAM$P2` FLOAT32 NOT NULL, `
 
 Configuration worker.default_query_execution.inference.prediction_cache_type: [FIFO, LFU, LRU, SECOND_CHANCE]
 Configuration worker.default_query_execution.inference.number_of_entries_prediction_cache: [1, 2]
+Configuration worker.default_query_execution.inference.use_batch_deduplication: [false, true]
 SELECT * FROM MODEL_INFERENCE(iris, stream)
 INTO result;
 ----

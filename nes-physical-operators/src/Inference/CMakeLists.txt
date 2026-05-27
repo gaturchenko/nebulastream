@@ -11,6 +11,7 @@
 # limitations under the License.
 
 add_source_files(nes-physical-operators
+        BatchCacheInferModelPhysicalOperator.cpp
         BatchInferenceOperatorHandler.cpp
         BatchInferModelPhysicalOperator.cpp
         BatchingPhysicalOperator.cpp

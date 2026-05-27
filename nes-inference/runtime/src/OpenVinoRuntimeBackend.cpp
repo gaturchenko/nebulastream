@@ -15,6 +15,7 @@
 #include <OpenVinoRuntimeBackend.hpp>
 
 #include <Util/Logger/Logger.hpp>
+#include <ErrorHandling.hpp>
 #include <Inference.hpp>
 #include <Model.hpp>
 #include <RuntimeBackend.hpp>
@@ -30,6 +31,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <openvino/core/partial_shape.hpp>
 #include <openvino/core/shape.hpp>
 #include <openvino/core/type/element_type.hpp>
 #include <openvino/core/type/float16.hpp>
@@ -110,6 +112,33 @@ std::string formatTensor(const ov::Tensor& tensor)
     }
     return result;
 }
+
+ov::PartialShape makeDynamicBatchShape(const std::vector<size_t>& shape)
+{
+    std::vector<ov::Dimension> dimensions;
+    dimensions.reserve(shape.size());
+    for (size_t i = 0; i < shape.size(); ++i)
+    {
+        if (i == 0)
+        {
+            dimensions.emplace_back(ov::Dimension::dynamic());
+        }
+        else
+        {
+            dimensions.emplace_back(static_cast<int64_t>(shape.at(i)));
+        }
+    }
+    return ov::PartialShape(dimensions);
+}
+
+ov::Shape makeRuntimeShape(std::vector<size_t> shape, size_t batchSize)
+{
+    if (!shape.empty())
+    {
+        shape.front() = batchSize;
+    }
+    return ov::Shape(shape.begin(), shape.end());
+}
 }
 
 namespace NES
@@ -124,11 +153,10 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
     static ov::Core sharedCore;
     static std::mutex coreMutex;
     auto runtimeInputShape = model.getInputShape();
-    if (!runtimeInputShape.empty())
-    {
-        runtimeInputShape.front() = batchSize;
-    }
-    const ov::Shape modelInputShape(runtimeInputShape.begin(), runtimeInputShape.end());
+    auto runtimeOutputShape = model.getOutputShape();
+    const auto modelInputShape = makeDynamicBatchShape(runtimeInputShape);
+    const auto maxInputShape = makeRuntimeShape(runtimeInputShape, batchSize);
+    const auto maxOutputShape = makeRuntimeShape(runtimeOutputShape, batchSize);
     ov::Tensor weights(ov::element::u8, {modelBin.size()});
     if (!modelBin.empty())
     {
@@ -149,27 +177,43 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
 
     inferRequest = compiledModel.create_infer_request();
     inputElementType = compiledModel.input(0).get_element_type();
-    inputShape = compiledModel.input(0).get_shape();
+    inputShape = maxInputShape;
     outputElementType = compiledModel.output(0).get_element_type();
-    outputShape = compiledModel.output(0).get_shape();
+    outputShape = maxOutputShape;
+    inputTupleSize = inputShape.empty() ? ov::Tensor(inputElementType, inputShape).get_byte_size()
+                                        : ov::Tensor(inputElementType, inputShape).get_byte_size() / inputShape.front();
+    outputTupleSize = outputShape.empty() ? ov::Tensor(outputElementType, outputShape).get_byte_size()
+                                          : ov::Tensor(outputElementType, outputShape).get_byte_size() / outputShape.front();
 
     return RuntimeMetadata{
-        .inputShape = runtimeInputShape,
+        .inputShape = std::vector<size_t>(inputShape.begin(), inputShape.end()),
         .outputShape = std::vector<size_t>(outputShape.begin(), outputShape.end()),
         .nDim = runtimeInputShape.size(),
         .functionName = model.getFunctionName(),
-        .inputSize = sizeof(float) * std::accumulate(runtimeInputShape.begin(), runtimeInputShape.end(), size_t{1}, std::multiplies<>()),
+        .inputSize = ov::Tensor(inputElementType, inputShape).get_byte_size(),
         .outputSize = ov::Tensor(outputElementType, outputShape).get_byte_size()};
 }
 
-void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t /*outputBufferSize*/)
+void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSize, std::byte* outputBuffer, size_t outputBufferSize)
 {
-    const ov::Tensor inputTensor(inputElementType, inputShape, inputBuffer);
+    auto currentInputShape = inputShape;
+    auto currentOutputShape = outputShape;
+    if (!currentInputShape.empty())
+    {
+        const auto currentBatchSize = inputBufferSize / inputTupleSize;
+        currentInputShape.front() = currentBatchSize;
+        currentOutputShape.front() = currentBatchSize;
+    }
+    PRECONDITION(ov::Tensor(inputElementType, currentInputShape).get_byte_size() <= inputBufferSize, "Input tensor exceeds input buffer");
+    PRECONDITION(
+        ov::Tensor(outputElementType, currentOutputShape).get_byte_size() <= outputBufferSize, "Output tensor exceeds output buffer");
+
+    const ov::Tensor inputTensor(inputElementType, currentInputShape, inputBuffer);
     inferRequest.set_input_tensor(inputTensor);
 
     NES_DEBUG("Model input: {}", formatTensor(inferRequest.get_input_tensor()))
 
-    const ov::Tensor outputTensor(outputElementType, outputShape, outputBuffer);
+    const ov::Tensor outputTensor(outputElementType, currentOutputShape, outputBuffer);
     inferRequest.set_output_tensor(0, outputTensor);
 
     inferRequest.infer();
