@@ -41,6 +41,9 @@
 #include <Identifiers/Identifiers.hpp>
 #include <Identifiers/NESStrongType.hpp>
 #include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
+#include <Nautilus/Interface/Hash/MurMur3HashFunction.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedEntryMemoryProvider.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 #include <Pipelines/CompiledExecutablePipelineStage.hpp>
 #include <Runtime/AbstractBufferProvider.hpp>
 #include <Runtime/BufferManager.hpp>
@@ -62,6 +65,42 @@ namespace NES
 {
 
 constexpr size_t bufferSize = 8192;
+
+HashMapOptions createBatchDeduplicationHashMapOptions(const Schema& inputSchema, const std::vector<std::string>& inputFieldNames)
+{
+    Schema hashMapSchema;
+    for (const auto& inputFieldName : inputFieldNames)
+    {
+        const auto field = inputSchema.getFieldByName(inputFieldName);
+        PRECONDITION(field.has_value(), "Expected inference input field {} to exist in schema {}", inputFieldName, inputSchema);
+        hashMapSchema.addField(field->name, field->dataType);
+    }
+
+    const auto keySize = hashMapSchema.getSizeOfSchemaInBytes();
+    constexpr auto valueSize = sizeof(uint64_t) * 2;
+    constexpr auto pageSize = bufferSize;
+    constexpr auto numberOfBuckets = 100;
+    const auto entrySize = sizeof(ChainedHashMapEntry) + keySize + valueSize;
+    const auto entriesPerPage = pageSize / entrySize;
+    const auto fieldKeyNames = hashMapSchema.getFieldNames();
+    hashMapSchema.addField("rowInputIndex", DataType::Type::UINT64);
+    hashMapSchema.addField("rowOutputIndex", DataType::Type::UINT64);
+
+    const auto& [fieldKeys, fieldValues]
+        = ChainedEntryMemoryProvider::createFieldOffsets(hashMapSchema, fieldKeyNames, {"rowInputIndex", "rowOutputIndex"});
+
+    return HashMapOptions{
+        std::make_unique<MurMur3HashFunction>(),
+        {},
+        fieldKeys,
+        fieldValues,
+        entriesPerPage,
+        entrySize,
+        keySize,
+        valueSize,
+        pageSize,
+        numberOfBuckets};
+}
 
 class InferModelPhysicalOperatorTest : public Testing::BaseUnitTest
 {
@@ -279,7 +318,8 @@ public:
         const Schema& outputSchema,
         const std::vector<std::string>& inputFieldNames,
         const std::vector<std::string>& outputFieldNames,
-        size_t batchSize)
+        size_t batchSize,
+        bool useBatchDeduplication = false)
     {
         auto inputBufRef = LowerSchemaProvider::lowerSchema(bufferSize, inputSchema, MemoryLayoutType::ROW_LAYOUT);
         auto outputBufRef = LowerSchemaProvider::lowerSchema(bufferSize, outputSchema, MemoryLayoutType::ROW_LAYOUT);
@@ -299,8 +339,10 @@ public:
             outputFieldNames,
             batchSize,
             InferenceRuntimeOptions{},
+            createBatchDeduplicationHashMapOptions(inputSchema, inputFieldNames),
             true,
             false,
+            useBatchDeduplication,
             batchHandlerId);
         const EmitPhysicalOperator emit(emitHandlerId, outputBufRef);
         batchInferModel.setChild(PhysicalOperator(emit));
@@ -775,6 +817,83 @@ TEST_F(InferModelPhysicalOperatorTest, LoweredBatchIdentity)
             }
         }
         EXPECT_EQ(totalRecords, numRecords) << "(compiled=" << compiled << ")";
+    }
+}
+
+/// Batched identity model with repeated records. Deduplication must fan out each unique
+/// inference result back to all original records. Interpreted + compiled.
+TEST_F(InferModelPhysicalOperatorTest, LoweredBatchIdentityWithDeduplication)
+{
+    if (!identityModel.has_value())
+    {
+        GTEST_SKIP() << "IREE identity model unavailable in this environment";
+    }
+    constexpr size_t numFloats = 100;
+    constexpr size_t batchSize = 4;
+    const auto outputFieldNames = makeOutputFieldNames(numFloats);
+    const auto [inputSchema, outputSchema] = makeSchemas(outputFieldNames);
+
+    const std::vector<std::vector<float>> inputs{
+        makeFloats(numFloats, 1.0F),
+        makeFloats(numFloats, 101.0F),
+        makeFloats(numFloats, 1.0F),
+        makeFloats(numFloats, 201.0F),
+        makeFloats(numFloats, 301.0F),
+        makeFloats(numFloats, 301.0F),
+        makeFloats(numFloats, 401.0F)};
+    auto inputBuffer = createInputBuffer(inputSchema, inputs);
+
+    for (bool compiled : {false, true})
+    {
+        auto [batchingPipeline, inferencePipeline, handlers] = createLoweredBatchInferencePipelines(
+            *identityModel, inputSchema, outputSchema, {"input_blob"}, outputFieldNames, batchSize, true);
+
+        auto options = [&]
+        {
+            nautilus::engine::Options opt;
+            opt.setOption("engine.Compilation", compiled);
+            return opt;
+        }();
+        CompiledExecutablePipelineStage batchingStage(batchingPipeline, handlers, options);
+        CompiledExecutablePipelineStage inferenceStage(inferencePipeline, handlers, options);
+
+        folly::Synchronized<std::vector<TupleBuffer>> emittedBatchBuffers;
+        folly::Synchronized<std::vector<TupleBuffer>> outputBuffers;
+        auto bufMgr = BufferManager::create(bufferSize, 200);
+        MockedPipelineContext batchingPec{emittedBatchBuffers, bufMgr};
+        MockedPipelineContext inferencePec{outputBuffers, bufMgr};
+
+        batchingStage.start(batchingPec);
+        inferenceStage.start(inferencePec);
+        batchingStage.execute(inputBuffer, batchingPec);
+
+        auto batchBuffers = *emittedBatchBuffers.rlock();
+        for (auto& batchBuffer : batchBuffers)
+        {
+            inferenceStage.execute(batchBuffer, inferencePec);
+        }
+
+        inferenceStage.stop(inferencePec);
+        batchingStage.stop(batchingPec);
+
+        size_t totalRecords = 0;
+        auto lockedBuffers = *outputBuffers.rlock();
+        for (auto& outBuf : lockedBuffers)
+        {
+            Testing::TestTupleBuffer ttb(outputSchema);
+            auto view = ttb.open(outBuf);
+            for (size_t row = 0; row < view.getNumberOfTuples(); ++row)
+            {
+                ASSERT_LT(totalRecords, inputs.size()) << "(compiled=" << compiled << ")";
+                for (size_t i = 0; i < numFloats; ++i)
+                {
+                    EXPECT_NEAR(view[row]["out_" + std::to_string(i)].as<float>(), inputs[totalRecords][i], 1e-5F)
+                        << "Record " << totalRecords << " field out_" << i << " (compiled=" << compiled << ")";
+                }
+                ++totalRecords;
+            }
+        }
+        EXPECT_EQ(totalRecords, inputs.size()) << "(compiled=" << compiled << ")";
     }
 }
 

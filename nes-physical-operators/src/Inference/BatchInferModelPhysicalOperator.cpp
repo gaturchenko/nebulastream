@@ -30,6 +30,7 @@
 #include <Nautilus/DataTypes/VarVal.hpp>
 #include <Nautilus/DataTypes/VariableSizedData.hpp>
 #include <Nautilus/Interface/BufferRef/TupleBufferRef.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMapRef.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVectorRef.hpp>
 #include <Nautilus/Interface/Record.hpp>
 #include <Nautilus/Interface/RecordBuffer.hpp>
@@ -83,6 +84,47 @@ void infer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread)
     twl->getHandle(thread).infer();
 }
 
+void allocateBatchDeduplicationHashMaps(
+    OperatorHandler* ptrOpHandler,
+    PipelineExecutionContext* pipelineExecutionContext,
+    uint64_t keySize,
+    uint64_t valueSize,
+    uint64_t numberOfBuckets,
+    uint64_t pageSize)
+{
+    PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
+    PRECONDITION(pipelineExecutionContext != nullptr, "pipeline execution context should not be null!");
+    auto* opHandler = dynamic_cast<BatchInferenceOperatorHandler*>(ptrOpHandler);
+    PRECONDITION(opHandler != nullptr, "operator handler should be a BatchInferenceOperatorHandler");
+    opHandler->allocateHashMaps(pipelineExecutionContext->getNumberOfWorkerThreads(), keySize, valueSize, numberOfBuckets, pageSize);
+}
+
+HashMap* getHashMapPtr(OperatorHandler* ptrOpHandler, WorkerThreadId thread)
+{
+    PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
+    auto* opHandler = dynamic_cast<BatchInferenceOperatorHandler*>(ptrOpHandler);
+    PRECONDITION(opHandler != nullptr, "operator handler should be a BatchInferenceOperatorHandler");
+    return opHandler->getHashMapPtr(thread);
+}
+
+void clearHashMap(OperatorHandler* ptrOpHandler, WorkerThreadId thread)
+{
+    PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
+    auto* opHandler = dynamic_cast<BatchInferenceOperatorHandler*>(ptrOpHandler);
+    PRECONDITION(opHandler != nullptr, "operator handler should be a BatchInferenceOperatorHandler");
+    opHandler->clearHashMap(thread);
+}
+
+uint64_t* allocateOutputRowIndices(uint64_t numberOfRows)
+{
+    return new uint64_t[numberOfRows];
+}
+
+void freeOutputRowIndices(uint64_t* outputRowIndices)
+{
+    delete[] outputRowIndices;
+}
+
 Batch* getBatchFromEmittedBuffer(OperatorHandler* ptrOpHandler, const EmittedBatch* currentBatch)
 {
     PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
@@ -129,8 +171,10 @@ BatchInferModelPhysicalOperator::BatchInferModelPhysicalOperator(
     std::vector<std::string> outputFieldNames,
     size_t batchSize,
     InferenceRuntimeOptions runtimeOptions,
+    HashMapOptions hashMapOptions,
     bool varsizedInput,
     bool varsizedOutput,
+    bool useBatchDeduplication,
     OperatorHandlerId operatorHandlerId)
     : threadLocal(std::make_shared<ThreadLocalRuntimeWrapper>(model, runtimeOptions))
     , bufferRef(std::move(bufferRef))
@@ -138,10 +182,12 @@ BatchInferModelPhysicalOperator::BatchInferModelPhysicalOperator(
     , inputFieldNames(std::move(inputFieldNames))
     , outputFieldNames(std::move(outputFieldNames))
     , batchSize(batchSize)
+    , hashMapOptions(std::move(hashMapOptions))
     , inputTupleSize(tupleSizeFor(model.getInputShape(), model.inputSize()))
     , outputTupleSize(tupleSizeFor(model.getOutputShape(), model.outputSize()))
     , varsizedInput(varsizedInput)
     , varsizedOutput(varsizedOutput)
+    , useBatchDeduplication(useBatchDeduplication)
     , operatorHandlerId(operatorHandlerId)
 {
 }
@@ -154,6 +200,17 @@ void BatchInferModelPhysicalOperator::setup(ExecutionContext& executionCtx, Comp
         nautilus::val<ThreadLocalRuntimeWrapper*>(threadLocal.get()),
         executionCtx.pipelineContext,
         nautilus::val<size_t>(batchSize));
+    if (useBatchDeduplication)
+    {
+        nautilus::invoke(
+            allocateBatchDeduplicationHashMaps,
+            executionCtx.getGlobalOperatorHandler(operatorHandlerId),
+            executionCtx.pipelineContext,
+            nautilus::val<uint64_t>(hashMapOptions.keySize),
+            nautilus::val<uint64_t>(hashMapOptions.valueSize),
+            nautilus::val<uint64_t>(hashMapOptions.numberOfBuckets),
+            nautilus::val<uint64_t>(hashMapOptions.pageSize));
+    }
 }
 
 void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& recordBuffer) const
@@ -183,6 +240,52 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         const auto inputTupleSizeVal = nautilus::val<uint64_t>(inputTupleSize);
         const auto outputTupleSizeVal = nautilus::val<uint64_t>(outputTupleSize);
         const auto inputBufferSize = nautilus::val<uint64_t>(batchSize * inputTupleSize);
+        auto hashMapPtr = nautilus::invoke(+[]() { return static_cast<HashMap*>(nullptr); });
+        if (useBatchDeduplication)
+        {
+            hashMapPtr = nautilus::invoke(getHashMapPtr, operatorHandler, ctx.workerThreadId);
+        }
+        ChainedHashMapRef hashMap{
+            hashMapPtr,
+            hashMapOptions.fieldKeys,
+            hashMapOptions.fieldValues,
+            nautilus::val<uint64_t>(hashMapOptions.entriesPerPage),
+            nautilus::val<uint64_t>(hashMapOptions.entrySize)};
+        const auto chainedHashMapPtr = static_cast<nautilus::val<ChainedHashMap*>>(hashMapPtr);
+        auto deduplicatedOutputRowIndices = nautilus::invoke(+[]() { return static_cast<uint64_t*>(nullptr); });
+        if (useBatchDeduplication)
+        {
+            deduplicatedOutputRowIndices = nautilus::invoke(allocateOutputRowIndices, configuredBatchSize);
+        }
+
+        const auto writeInputRecord = [&](const Record& record, const nautilus::val<uint64_t> inputRowIndex)
+        {
+            const auto inputTupleBuffer = inputBuffer + (inputRowIndex * inputTupleSizeVal);
+
+            if (varsizedInput)
+            {
+                const auto& value = record.read(inputFieldNames.at(0));
+                auto varSized = value.getRawValueAs<VariableSizedData>();
+                const auto bytesToCopy = varSized.getSize() < inputTupleSizeVal ? varSized.getSize() : inputTupleSizeVal;
+                nautilus::memcpy(inputTupleBuffer, varSized.getContent(), bytesToCopy);
+
+                /// if the number of bytes to copy is less than the tuple size, pad the remaining bytes with zeros
+                /// this is important, because some models may produce biased outputs if the input tensor has stale values
+                if (bytesToCopy < inputTupleSizeVal)
+                {
+                    nautilus::memset(inputTupleBuffer + bytesToCopy, 0, inputTupleSizeVal - bytesToCopy);
+                }
+            }
+            else
+            {
+                for (nautilus::static_val<size_t> i = 0; i < inputFieldNames.size(); ++i)
+                {
+                    const auto value = record.read(inputFieldNames.at(nautilus::static_val<int>(i)));
+                    const auto memPos = inputTupleBuffer + nautilus::val<uint64_t>(i * sizeof(float));
+                    value.writeToMemory(memPos);
+                }
+            }
+        };
 
         /// copies the input data into the backend
         const auto writeBatchInputs = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
@@ -191,32 +294,55 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
             {
                 auto recordIndex = currentBatchStart + batchOffset;
                 auto record = batchPagedVectorRef.readRecord(recordIndex, projections);
-                const auto inputTupleBuffer = inputBuffer + (batchOffset * inputTupleSizeVal);
-
-                if (varsizedInput)
-                {
-                    const auto& value = record.read(inputFieldNames.at(0));
-                    auto varSized = value.getRawValueAs<VariableSizedData>();
-                    const auto bytesToCopy = varSized.getSize() < inputTupleSizeVal ? varSized.getSize() : inputTupleSizeVal;
-                    nautilus::memcpy(inputTupleBuffer, varSized.getContent(), bytesToCopy);
-
-                    /// if the number of bytes to copy is less than the tuple size, pad the remaining bytes with zeros
-                    /// this is important, because some models may produce biased outputs if the input tensor has stale values
-                    if (bytesToCopy < inputTupleSizeVal)
-                    {
-                        nautilus::memset(inputTupleBuffer + bytesToCopy, 0, inputTupleSizeVal - bytesToCopy);
-                    }
-                }
-                else
-                {
-                    for (nautilus::static_val<size_t> i = 0; i < inputFieldNames.size(); ++i)
-                    {
-                        const auto value = record.read(inputFieldNames.at(nautilus::static_val<int>(i)));
-                        const auto memPos = inputTupleBuffer + nautilus::val<uint64_t>(i * sizeof(float));
-                        value.writeToMemory(memPos);
-                    }
-                }
+                writeInputRecord(record, batchOffset);
             }
+        };
+
+        const auto writeDeduplicatedBatchInputs
+            = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
+        {
+            nautilus::invoke(clearHashMap, operatorHandler, ctx.workerThreadId);
+
+            nautilus::val<uint64_t> uniqueRecords = 0_u64;
+            for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
+            {
+                auto recordIndex = currentBatchStart + batchOffset;
+                auto record = batchPagedVectorRef.readRecord(recordIndex, projections);
+
+                const auto hashMapEntry = hashMap.findOrCreateEntry(
+                    record,
+                    *hashMapOptions.hashFunction,
+                    [&](const nautilus::val<AbstractHashMapEntry*>& entry)
+                    {
+                        const auto chainedEntry = static_cast<nautilus::val<ChainedHashMapEntry*>>(entry);
+                        const ChainedHashMapRef::ChainedEntryRef ref(
+                            chainedEntry, chainedHashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+                        Record valueRecord;
+                        valueRecord.write("rowInputIndex", VarVal(batchOffset));
+                        valueRecord.write("rowOutputIndex", VarVal(0_u64));
+                        ref.copyValuesToEntry(valueRecord, ctx.pipelineMemoryProvider.bufferProvider);
+                    },
+                    ctx.pipelineMemoryProvider.bufferProvider);
+
+                const auto chainedEntry = static_cast<nautilus::val<ChainedHashMapEntry*>>(hashMapEntry);
+                const ChainedHashMapRef::ChainedEntryRef entryRef(
+                    chainedEntry, chainedHashMapPtr, hashMapOptions.fieldKeys, hashMapOptions.fieldValues);
+                auto valueRecord = entryRef.getValue();
+                const auto entryRowIndex = valueRecord.read("rowInputIndex").getRawValueAs<nautilus::val<uint64_t>>();
+                auto outputRowIndex = valueRecord.read("rowOutputIndex").getRawValueAs<nautilus::val<uint64_t>>();
+
+                if (entryRowIndex == batchOffset)
+                {
+                    outputRowIndex = uniqueRecords;
+                    writeInputRecord(record, uniqueRecords);
+                    valueRecord.write("rowOutputIndex", VarVal(outputRowIndex));
+                    entryRef.copyValuesToEntry(valueRecord, ctx.pipelineMemoryProvider.bufferProvider);
+                    uniqueRecords = uniqueRecords + 1_u64;
+                }
+
+                *(deduplicatedOutputRowIndices + batchOffset) = outputRowIndex;
+            }
+            return uniqueRecords;
         };
 
         /// copies the output data from the backend
@@ -227,7 +353,12 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
             {
                 auto recordIndex = currentBatchStart + batchOffset;
                 auto record = batchPagedVectorRef.readRecord(recordIndex, projections);
-                const auto outputTupleBuffer = outputBuffer + (batchOffset * outputTupleSizeVal);
+                auto outputRowIndex = batchOffset;
+                if (useBatchDeduplication)
+                {
+                    outputRowIndex = *(deduplicatedOutputRowIndices + batchOffset);
+                }
+                const auto outputTupleBuffer = outputBuffer + (outputRowIndex * outputTupleSizeVal);
 
                 if (varsizedOutput)
                 {
@@ -254,10 +385,19 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         const auto processBatch
             = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch, const bool padBatch)
         {
-            writeBatchInputs(currentBatchStart, recordsInBatch);
-            if (padBatch)
+            auto recordsToInfer = recordsInBatch;
+            if (useBatchDeduplication)
             {
-                const auto paddingOffset = recordsInBatch * inputTupleSizeVal;
+                recordsToInfer = writeDeduplicatedBatchInputs(currentBatchStart, recordsInBatch);
+            }
+            else
+            {
+                writeBatchInputs(currentBatchStart, recordsInBatch);
+            }
+
+            if (padBatch || useBatchDeduplication)
+            {
+                const auto paddingOffset = recordsToInfer * inputTupleSizeVal;
                 const auto paddingSize = inputBufferSize - paddingOffset;
                 nautilus::memset(inputBuffer + paddingOffset, 0, paddingSize);
             }
@@ -276,6 +416,11 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         if (batchStart < numberOfRecords)
         {
             processBatch(batchStart, numberOfRecords - batchStart, true);
+        }
+
+        if (useBatchDeduplication)
+        {
+            nautilus::invoke(freeOutputRowIndices, deduplicatedOutputRowIndices);
         }
 
         nautilus::invoke(markBatchProcessed, operatorHandler, emittedBatch);

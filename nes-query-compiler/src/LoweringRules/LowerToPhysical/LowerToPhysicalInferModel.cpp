@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include <DataTypes/DataTypeProvider.hpp>
 #include <Inference/BatchInferModelPhysicalOperator.hpp>
 #include <Inference/BatchInferenceOperatorHandler.hpp>
 #include <Inference/BatchingPhysicalOperator.hpp>
@@ -29,6 +30,9 @@
 #include <Inference/InterBufferBatchingPhysicalOperator.hpp>
 #include <LoweringRules/AbstractLoweringRule.hpp>
 #include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
+#include <Nautilus/Interface/Hash/MurMur3HashFunction.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedEntryMemoryProvider.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 #include <Operators/InferModelLogicalOperator.hpp>
 #include <Operators/LogicalOperator.hpp>
 #include <Operators/SequenceLogicalOperator.hpp>
@@ -39,6 +43,7 @@
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <ErrorHandling.hpp>
+#include <HashMapOptions.hpp>
 #include <Inference.hpp>
 #include <InferenceConfiguration.hpp>
 #include <LoweringRuleRegistry.hpp>
@@ -85,6 +90,43 @@ InferenceRuntimeOptions getInferenceRuntimeOptions(const QueryExecutionConfigura
         .openvinoInferenceNumThreads = inference.openvinoInferenceNumThreads.getValue(),
         .openvinoNumStreams = inference.openvinoNumStreams.getValue(),
         .openvinoEnableCpuPinning = inference.openvinoEnableCpuPinning.getValue()};
+}
+
+HashMapOptions createBatchDeduplicationHashMapOptions(
+    const Schema& inputSchema, const std::vector<std::string>& inputFieldNames, const QueryExecutionConfiguration& conf)
+{
+    Schema hashMapSchema;
+    for (const auto& inputFieldName : inputFieldNames)
+    {
+        const auto field = inputSchema.getFieldByName(inputFieldName);
+        PRECONDITION(field.has_value(), "Expected inference input field {} to exist in schema {}", inputFieldName, inputSchema);
+        hashMapSchema.addField(field->name, field->dataType);
+    }
+
+    const auto keySize = hashMapSchema.getSizeOfSchemaInBytes();
+    constexpr auto valueSize = sizeof(uint64_t) * 2;
+    const auto pageSize = conf.pageSize.getValue();
+    const auto numberOfBuckets = conf.numberOfPartitions.getValue();
+    const auto entrySize = sizeof(ChainedHashMapEntry) + keySize + valueSize;
+    const auto entriesPerPage = pageSize / entrySize;
+    const auto fieldKeyNames = hashMapSchema.getFieldNames();
+    hashMapSchema.addField("rowInputIndex", DataType::Type::UINT64);
+    hashMapSchema.addField("rowOutputIndex", DataType::Type::UINT64);
+
+    const auto& [fieldKeys, fieldValues]
+        = ChainedEntryMemoryProvider::createFieldOffsets(hashMapSchema, fieldKeyNames, {"rowInputIndex", "rowOutputIndex"});
+
+    return HashMapOptions{
+        std::make_unique<MurMur3HashFunction>(),
+        {},
+        fieldKeys,
+        fieldValues,
+        entriesPerPage,
+        entrySize,
+        keySize,
+        valueSize,
+        pageSize,
+        numberOfBuckets};
 }
 
 }
@@ -153,8 +195,10 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
             inferModelOp.get().getOutputFieldNames(),
             batchSize,
             runtimeOptions,
+            createBatchDeduplicationHashMapOptions(inputSchema, inferModelOp.get().getInputFieldNames(), conf),
             inferModelOp.get().hasVarsizedInput(),
             inferModelOp.get().hasVarsizedOutput(),
+            conf.inferenceConfiguration.useBatchDeduplication.getValue(),
             handlerId);
 
         NES_DEBUG("Lowering InferModel operator to physical BatchInferModelPhysicalOperator operator with batch size {}", batchSize)

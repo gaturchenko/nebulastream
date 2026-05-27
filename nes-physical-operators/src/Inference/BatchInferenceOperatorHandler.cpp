@@ -20,6 +20,7 @@
 #include <numeric>
 #include <utility>
 
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 #include <Runtime/QueryTerminationType.hpp>
 #include <Runtime/TupleBuffer.hpp>
 #include <Util/Logger/Logger.hpp>
@@ -94,6 +95,38 @@ void BatchInferenceOperatorHandler::stop(QueryTerminationType, PipelineExecution
     batches.clear();
     batchId = 0;
     tuplesSeen = 0;
+    threadLocalHashMaps.clear();
+}
+
+void BatchInferenceOperatorHandler::allocateHashMaps(
+    const uint64_t numberOfWorkerThreads,
+    const uint64_t keySize,
+    const uint64_t valueSize,
+    const uint64_t numberOfBuckets,
+    const uint64_t pageSize)
+{
+    if (!threadLocalHashMaps.empty())
+    {
+        return;
+    }
+
+    threadLocalHashMaps.reserve(numberOfWorkerThreads);
+    for (uint64_t threadId = 0; threadId < numberOfWorkerThreads; ++threadId)
+    {
+        threadLocalHashMaps.emplace_back(std::make_unique<ChainedHashMap>(keySize, valueSize, numberOfBuckets, pageSize));
+    }
+}
+
+HashMap* BatchInferenceOperatorHandler::getHashMapPtr(const WorkerThreadId workerThreadId) const
+{
+    PRECONDITION(!threadLocalHashMaps.empty(), "Batch deduplication hash maps should be allocated before execution");
+    return threadLocalHashMaps[workerThreadId % threadLocalHashMaps.size()].get();
+}
+
+void BatchInferenceOperatorHandler::clearHashMap(const WorkerThreadId workerThreadId)
+{
+    PRECONDITION(!threadLocalHashMaps.empty(), "Batch deduplication hash maps should be allocated before execution");
+    dynamic_cast<ChainedHashMap*>(threadLocalHashMaps[workerThreadId % threadLocalHashMaps.size()].get())->clear();
 }
 
 std::shared_ptr<Batch> BatchInferenceOperatorHandler::createNewBatch()

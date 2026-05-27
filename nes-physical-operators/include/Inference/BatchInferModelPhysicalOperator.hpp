@@ -24,6 +24,7 @@
 #include <Nautilus/Interface/Record.hpp>
 #include <Nautilus/Interface/RecordBuffer.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
+#include <HashMapOptions.hpp>
 
 #include <CompilationContext.hpp>
 #include <Model.hpp>
@@ -51,8 +52,10 @@ public:
         std::vector<std::string> outputFieldNames,
         size_t batchSize,
         InferenceRuntimeOptions runtimeOptions,
+        HashMapOptions hashMapOptions,
         bool varsizedInput,
         bool varsizedOutput,
+        bool useBatchDeduplication,
         OperatorHandlerId operatorHandlerId);
 
     void setup(ExecutionContext& executionCtx, CompilationContext& compilationContext) const override;
@@ -72,10 +75,12 @@ private:
     std::vector<std::string> inputFieldNames;
     std::vector<std::string> outputFieldNames;
     size_t batchSize;
+    HashMapOptions hashMapOptions;
     size_t inputTupleSize;
     size_t outputTupleSize;
     bool varsizedInput;
     bool varsizedOutput;
+    bool useBatchDeduplication;
     OperatorHandlerId operatorHandlerId;
     std::optional<PhysicalOperator> child;
 };

@@ -53,6 +53,9 @@
 #include <Identifiers/Identifiers.hpp>
 #include <Identifiers/NESStrongType.hpp>
 #include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
+#include <Nautilus/Interface/Hash/MurMur3HashFunction.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedEntryMemoryProvider.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 #include <Pipelines/CompiledExecutablePipelineStage.hpp>
 #include <Runtime/AbstractBufferProvider.hpp>
 #include <Runtime/BufferManager.hpp>
@@ -76,6 +79,42 @@ namespace
 constexpr size_t bufferSize = 8192;
 constexpr size_t numFloats = 100;
 constexpr uint64_t inputBufferPoolSize = 1;
+
+HashMapOptions createBatchDeduplicationHashMapOptions(const Schema& inputSchema, const std::vector<std::string>& inputFieldNames)
+{
+    Schema hashMapSchema;
+    for (const auto& inputFieldName : inputFieldNames)
+    {
+        const auto field = inputSchema.getFieldByName(inputFieldName);
+        PRECONDITION(field.has_value(), "Expected inference input field {} to exist in schema {}", inputFieldName, inputSchema);
+        hashMapSchema.addField(field->name, field->dataType);
+    }
+
+    const auto keySize = hashMapSchema.getSizeOfSchemaInBytes();
+    constexpr auto valueSize = sizeof(uint64_t) * 2;
+    constexpr auto pageSize = bufferSize;
+    constexpr auto numberOfBuckets = 100;
+    const auto entrySize = sizeof(ChainedHashMapEntry) + keySize + valueSize;
+    const auto entriesPerPage = pageSize / entrySize;
+    const auto fieldKeyNames = hashMapSchema.getFieldNames();
+    hashMapSchema.addField("rowInputIndex", DataType::Type::UINT64);
+    hashMapSchema.addField("rowOutputIndex", DataType::Type::UINT64);
+
+    const auto& [fieldKeys, fieldValues]
+        = ChainedEntryMemoryProvider::createFieldOffsets(hashMapSchema, fieldKeyNames, {"rowInputIndex", "rowOutputIndex"});
+
+    return HashMapOptions{
+        std::make_unique<MurMur3HashFunction>(),
+        {},
+        fieldKeys,
+        fieldValues,
+        entriesPerPage,
+        entrySize,
+        keySize,
+        valueSize,
+        pageSize,
+        numberOfBuckets};
+}
 
 struct MockedPipelineContext final : PipelineExecutionContext
 {
@@ -427,7 +466,9 @@ LoweredBatchInferencePipelines createLoweredBatchInferencePipelines(
         outputFieldNames,
         batchSize,
         InferenceRuntimeOptions{},
+        createBatchDeduplicationHashMapOptions(inputSchema, inputFieldNames),
         true,
+        false,
         false,
         batchHandlerId);
     const EmitPhysicalOperator emit(emitHandlerId, outputBufRef);

@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <Identifiers/Identifiers.hpp>
+#include <Nautilus/Interface/HashMap/HashMap.hpp>
 #include <Nautilus/Interface/PagedVector/PagedVector.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
 #include <Sequencing/SequenceData.hpp>
@@ -69,15 +70,16 @@ public:
     void start(PipelineExecutionContext& pipelineExecutionContext, uint32_t localStateVariableId) override;
     void stop(QueryTerminationType terminationType, PipelineExecutionContext& pipelineExecutionContext) override;
 
+    void
+    allocateHashMaps(uint64_t numberOfWorkerThreads, uint64_t keySize, uint64_t valueSize, uint64_t numberOfBuckets, uint64_t pageSize);
+    [[nodiscard]] HashMap* getHashMapPtr(WorkerThreadId workerThreadId) const;
+    void clearHashMap(WorkerThreadId workerThreadId);
+
     [[nodiscard]] Batch* getOrCreateNewBatch();
     [[nodiscard]] std::shared_ptr<Batch> getBatch(uint64_t requestedBatchId) const;
     [[nodiscard]] std::vector<std::shared_ptr<Batch>> getCreatedBatches(bool fullBatchesOnly) const;
     void garbageCollectBatches();
-    void emitBatchesToProbe(
-        Batch& batch,
-        const SequenceData& sequenceData,
-        PipelineExecutionContext* pipelineCtx,
-        Timestamp watermarkTs);
+    void emitBatchesToProbe(Batch& batch, const SequenceData& sequenceData, PipelineExecutionContext* pipelineCtx, Timestamp watermarkTs);
 
     [[nodiscard]] uint64_t getBatchSize() const { return batchSize; }
 
@@ -90,6 +92,7 @@ private:
     uint64_t tuplesSeen = 0;
     mutable std::mutex batchesMutex;
     std::vector<std::shared_ptr<Batch>> batches;
+    std::vector<std::unique_ptr<HashMap>> threadLocalHashMaps;
 };
 
 }
