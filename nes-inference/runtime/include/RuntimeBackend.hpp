@@ -39,6 +39,9 @@ public:
     virtual ~RuntimeBackend() = default;
 
     virtual RuntimeMetadata setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options) = 0;
+
+    [[nodiscard]] virtual bool supportsActiveBatchSize() const { return false; }
+
     virtual void infer(std::byte* inputBuffer, size_t inputBufferSize, std::byte* outputBuffer, size_t outputBufferSize) = 0;
 };
 }

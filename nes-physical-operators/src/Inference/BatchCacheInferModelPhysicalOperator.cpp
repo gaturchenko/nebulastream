@@ -112,20 +112,7 @@ struct ThreadLocalBatchPredictionCacheWrapper
 
     [[nodiscard]] InferenceRuntime& getHandle(const WorkerThreadId thread) { return wrappers[thread.getRawValue() % wrappers.size()]; }
 
-    [[nodiscard]] bool supportsReducedBatchInvocation() const { return model.getBackend() == ModelBackend::OPENVINO; }
-
-    void infer(const WorkerThreadId thread, const size_t numberOfTuples)
-    {
-        auto& runtime = getHandle(thread);
-        if (supportsReducedBatchInvocation())
-        {
-            runtime.infer(numberOfTuples);
-        }
-        else
-        {
-            runtime.infer();
-        }
-    }
+    void infer(const WorkerThreadId thread, const size_t numberOfTuples) { getHandle(thread).infer(numberOfTuples); }
 
     [[nodiscard]] int8_t* getCacheStart(const WorkerThreadId thread)
     {
@@ -212,11 +199,6 @@ void setReplacementPosition(ThreadLocalBatchPredictionCacheWrapper* twl, WorkerT
 void infer(ThreadLocalBatchPredictionCacheWrapper* twl, WorkerThreadId thread, uint64_t numberOfTuples)
 {
     twl->infer(thread, numberOfTuples);
-}
-
-bool supportsReducedBatchInvocation(ThreadLocalBatchPredictionCacheWrapper* twl)
-{
-    return twl->supportsReducedBatchInvocation();
 }
 
 void allocateBatchDeduplicationHashMaps(
@@ -432,8 +414,6 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
         const auto configuredBatchSize = nautilus::val<uint64_t>(batchSize);
         const auto inputTupleSizeVal = nautilus::val<uint64_t>(inputTupleSize);
         const auto outputTupleSizeVal = nautilus::val<uint64_t>(outputTupleSize);
-        const auto inputBufferSize = nautilus::val<uint64_t>(batchSize * inputTupleSize);
-        const auto reducedBatchInvocation = nautilus::invoke(supportsReducedBatchInvocation, batchRuntime);
 
         const auto startOfEntries = nautilus::invoke(getPredictionCacheStart, batchRuntime, ctx.workerThreadId);
         const auto lookupIndex = nautilus::invoke(getPredictionCacheLookupIndex, batchRuntime, ctx.workerThreadId);
@@ -594,12 +574,6 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
 
             if (numberOfMisses > 0_u64)
             {
-                if (!reducedBatchInvocation)
-                {
-                    const auto paddingOffset = numberOfMisses * inputTupleSizeVal;
-                    const auto paddingSize = inputBufferSize - paddingOffset;
-                    nautilus::memset(inputBuffer + paddingOffset, 0, paddingSize);
-                }
                 nautilus::invoke(infer, batchRuntime, ctx.workerThreadId, numberOfMisses);
 
                 for (nautilus::val<uint64_t> missOffset = 0_u64; missOffset < numberOfMisses; missOffset = missOffset + 1_u64)

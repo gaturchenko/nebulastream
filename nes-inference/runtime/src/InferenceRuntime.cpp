@@ -15,6 +15,7 @@
 #include <InferenceRuntime.hpp>
 
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -111,7 +112,15 @@ void InferenceRuntime::infer(size_t numberOfTuples)
     PRECONDITION(numberOfTuples * inputTupleSize <= inputSize, "Requested input batch exceeds runtime input buffer");
     PRECONDITION(numberOfTuples * outputTupleSize <= outputSize, "Requested output batch exceeds runtime output buffer");
 
-    impl->backend->infer(inputData.get(), numberOfTuples * inputTupleSize, outputData.get(), numberOfTuples * outputTupleSize);
+    if (impl->backend->supportsActiveBatchSize())
+    {
+        impl->backend->infer(inputData.get(), numberOfTuples * inputTupleSize, outputData.get(), numberOfTuples * outputTupleSize);
+        return;
+    }
+
+    const auto paddingOffset = numberOfTuples * inputTupleSize;
+    std::memset(inputData.get() + paddingOffset, 0, inputSize - paddingOffset);
+    impl->backend->infer(inputData.get(), inputSize, outputData.get(), outputSize);
 }
 
 }

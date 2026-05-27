@@ -28,6 +28,9 @@ class OpenVinoRuntimeBackend final : public RuntimeBackend
 {
 public:
     RuntimeMetadata setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options) override;
+
+    [[nodiscard]] bool supportsActiveBatchSize() const override { return true; }
+
     void infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t outputBufferSize) override;
 
 private:
