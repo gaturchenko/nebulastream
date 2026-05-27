@@ -31,6 +31,9 @@
 #include <Inference/PredictionCache/PredictionCacheEntry.hpp>
 #include <Inference/PredictionCache/PredictionCacheUtil.hpp>
 #include <Nautilus/DataTypes/DataTypesUtil.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
+#include <Runtime/AbstractBufferProvider.hpp>
+#include <Runtime/BufferManager.hpp>
 #include <Util/ExecutionMode.hpp>
 #include <Util/Logger/LogLevel.hpp>
 #include <Util/Logger/Logger.hpp>
@@ -390,14 +393,20 @@ public:
 
 TEST_P(PredictionCacheTest, testPredictionCacheReplacementPolicy)
 {
-    using CompiledCacheFunction
-        = std::function<nautilus::val<uint64_t>(nautilus::val<int8_t*>, nautilus::val<PredictionCacheTestOperation*>)>;
+    using CompiledCacheFunction = std::function<nautilus::val<uint64_t>(
+        nautilus::val<int8_t*>,
+        nautilus::val<PredictionCacheTestOperation*>,
+        nautilus::val<ChainedHashMap*>,
+        nautilus::val<AbstractBufferProvider*>)>;
 
     auto predictionCacheCallableFunction = nautilusEngine->registerFunction(CompiledCacheFunction(
         [&](const nautilus::val<int8_t*>& cacheStart,
-            const nautilus::val<PredictionCacheTestOperation*>& operationsStart) -> nautilus::val<uint64_t>
+            const nautilus::val<PredictionCacheTestOperation*>& operationsStart,
+            const nautilus::val<ChainedHashMap*>& lookupIndex,
+            const nautilus::val<AbstractBufferProvider*>& bufferProvider) -> nautilus::val<uint64_t>
         {
             auto predictionCache = Util::createPredictionCache(cacheType, numberOfEntries, cacheStart, recordSize);
+            predictionCache->configureLookupIndex(lookupIndex, bufferProvider);
             nautilus::val<uint64_t> mismatches = 0;
 
             for (nautilus::val<uint64_t> i = 0; i < operations.size(); ++i)
@@ -446,7 +455,10 @@ TEST_P(PredictionCacheTest, testPredictionCacheReplacementPolicy)
             return mismatches;
         }));
 
-    const auto mismatches = predictionCacheCallableFunction(reinterpret_cast<int8_t*>(cacheMemory.data()), operations.data());
+    auto bufferManager = BufferManager::create(4096, 1000);
+    ChainedHashMap lookupIndex(recordSize, 2 * sizeof(uint64_t), numberOfEntries, 4096);
+    const auto mismatches = predictionCacheCallableFunction(
+        reinterpret_cast<int8_t*>(cacheMemory.data()), operations.data(), &lookupIndex, bufferManager.get());
     EXPECT_EQ(mismatches, 0) << "Prediction cache result mismatch in policy " << magic_enum::enum_name(cacheType);
 }
 

@@ -30,6 +30,7 @@
 #include <Inference/PredictionCache/PredictionCacheUtil.hpp>
 #include <Nautilus/DataTypes/VarVal.hpp>
 #include <Nautilus/DataTypes/VariableSizedData.hpp>
+#include <Nautilus/Interface/HashMap/ChainedHashMap/ChainedHashMap.hpp>
 #include <Nautilus/Interface/Record.hpp>
 #include <Nautilus/Interface/RecordBuffer.hpp>
 #include <nautilus/function.hpp>
@@ -53,6 +54,17 @@ namespace NES
 
 namespace detail
 {
+namespace
+{
+constexpr uint64_t MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE = 4096;
+
+uint64_t getPredictionCacheLookupIndexPageSize(const uint64_t keySize)
+{
+    const auto mapEntrySize = sizeof(ChainedHashMapEntry) + keySize + 2 * sizeof(uint64_t);
+    return std::max(MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE, mapEntrySize);
+}
+
+}
 
 struct ThreadLocalPredictionCacheWrapper
 {
@@ -66,18 +78,23 @@ struct ThreadLocalPredictionCacheWrapper
     {
         wrappers.clear();
         cacheStorage.clear();
+        lookupIndexes.clear();
         replacementPositions.clear();
         wrappers.reserve(numThreads);
         cacheStorage.reserve(numThreads);
+        lookupIndexes.reserve(numThreads);
         replacementPositions.reserve(numThreads);
         const auto entrySize = Util::getPredictionCacheEntrySize(cacheType);
         const auto cacheMemorySize = sizeof(HitsAndMisses) + numberOfCacheEntries * entrySize;
+        const auto lookupIndexPageSize = getPredictionCacheLookupIndexPageSize(model.inputSize());
         for (size_t i = 0; i < numThreads; ++i)
         {
             wrappers.emplace_back();
             wrappers.back().setup(model, 1, options);
             cacheStorage.emplace_back(cacheMemorySize);
             std::ranges::fill(cacheStorage.back(), std::byte{0});
+            lookupIndexes.emplace_back(
+                std::make_unique<ChainedHashMap>(model.inputSize(), 2 * sizeof(uint64_t), numberOfCacheEntries, lookupIndexPageSize));
             replacementPositions.emplace_back(0);
         }
     }
@@ -87,6 +104,11 @@ struct ThreadLocalPredictionCacheWrapper
     [[nodiscard]] int8_t* getCacheStart(const WorkerThreadId thread)
     {
         return reinterpret_cast<int8_t*>(cacheStorage[thread.getRawValue() % cacheStorage.size()].data());
+    }
+
+    [[nodiscard]] ChainedHashMap* getLookupIndex(const WorkerThreadId thread)
+    {
+        return lookupIndexes[thread.getRawValue() % lookupIndexes.size()].get();
     }
 
     [[nodiscard]] uint64_t getReplacementPosition(const WorkerThreadId thread) const
@@ -122,6 +144,7 @@ struct ThreadLocalPredictionCacheWrapper
     size_t numberOfCacheEntries;
     std::vector<InferenceRuntime> wrappers;
     std::vector<std::vector<std::byte>> cacheStorage;
+    std::vector<std::unique_ptr<ChainedHashMap>> lookupIndexes;
     std::vector<uint64_t> replacementPositions;
 };
 
@@ -156,6 +179,11 @@ std::byte* getInputBuffer(ThreadLocalPredictionCacheWrapper* twl, WorkerThreadId
 int8_t* getPredictionCacheStart(ThreadLocalPredictionCacheWrapper* twl, WorkerThreadId thread)
 {
     return twl->getCacheStart(thread);
+}
+
+ChainedHashMap* getPredictionCacheLookupIndex(ThreadLocalPredictionCacheWrapper* twl, WorkerThreadId thread)
+{
+    return twl->getLookupIndex(thread);
 }
 
 uint64_t getReplacementPosition(ThreadLocalPredictionCacheWrapper* twl, WorkerThreadId thread)
@@ -207,6 +235,8 @@ void CacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
     const auto startOfEntries = nautilus::invoke(getPredictionCacheStart, runtime, ctx.workerThreadId);
     auto predictionCache = Util::createPredictionCache(
         threadLocal->cacheType, threadLocal->numberOfCacheEntries, startOfEntries, nautilus::val<size_t>(inputSize));
+    predictionCache->configureLookupIndex(
+        nautilus::invoke(getPredictionCacheLookupIndex, runtime, ctx.workerThreadId), ctx.pipelineMemoryProvider.bufferProvider);
     predictionCache->setReplacementPos(nautilus::invoke(getReplacementPosition, runtime, ctx.workerThreadId));
     ctx.setLocalOperatorState(id, std::make_unique<CachedInferenceLocalState>(std::move(predictionCache)));
     openChild(ctx, recordBuffer);
