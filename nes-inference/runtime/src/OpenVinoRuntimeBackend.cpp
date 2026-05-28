@@ -204,9 +204,6 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
         currentInputShape.front() = currentBatchSize;
         currentOutputShape.front() = currentBatchSize;
     }
-    PRECONDITION(ov::Tensor(inputElementType, currentInputShape).get_byte_size() <= inputBufferSize, "Input tensor exceeds input buffer");
-    PRECONDITION(
-        ov::Tensor(outputElementType, currentOutputShape).get_byte_size() <= outputBufferSize, "Output tensor exceeds output buffer");
 
     const ov::Tensor inputTensor(inputElementType, currentInputShape, inputBuffer);
     inferRequest.set_input_tensor(inputTensor);
@@ -215,6 +212,13 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
 
     const ov::Tensor outputTensor(outputElementType, currentOutputShape, outputBuffer);
     inferRequest.set_output_tensor(0, outputTensor);
+
+    const auto outputSizeBytes = outputTensor.get_byte_size();
+    if (outputSizeBytes > outputBufferSize)
+    {
+        throw NES::InferenceRuntimeFailure(
+            "Model Execution failed. Model output size {} B exceeds buffer capacity {} B", outputSizeBytes, outputBufferSize);
+    }
 
     inferRequest.infer();
     NES_DEBUG("Model output: {}", formatTensor(inferRequest.get_output_tensor(0)))
