@@ -1,4 +1,4 @@
-"worker.default_query_execution.inference.batch_size": [1]
+"optimizer.inference_batch_size": [1]
 "worker.default_query_execution.inference.use_batch_deduplication": [false]
 "worker.default_query_execution.inference.prediction_cache_type": ["SECOND_CHANCE"]
 "worker.default_query_execution.inference.number_of_entries_prediction_cache": [1024]

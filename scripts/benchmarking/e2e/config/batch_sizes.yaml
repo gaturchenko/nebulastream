@@ -1,0 +1,1 @@
+"optimizer.inference_batch_size": [64, 128, 256, 512, 1024, 2048, 4096, 8192]

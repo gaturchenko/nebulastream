@@ -23,6 +23,8 @@ QUERY_RETRIES = 3
 INFERENCE_CONFIG_PREFIX = "worker.default_query_execution.inference."
 INFERENCE_CONFIG_LABEL_PREFIX = "inference."
 BATCH_SIZE_KEY = f"{INFERENCE_CONFIG_PREFIX}batch_size"
+OPTIMIZER_BATCH_SIZE_KEY = "optimizer.inference_batch_size"
+OPTIMIZER_BATCH_SIZE_ARG = "inference_batch_size"
 USE_BATCH_DEDUPLICATION_KEY = f"{INFERENCE_CONFIG_PREFIX}use_batch_deduplication"
 PREDICTION_CACHE_TYPE_KEY = f"{INFERENCE_CONFIG_PREFIX}prediction_cache_type"
 PREDICTION_CACHE_ENTRIES_KEY = f"{INFERENCE_CONFIG_PREFIX}number_of_entries_prediction_cache"
@@ -74,7 +76,9 @@ def normalize_inference_config(config: Dict[str, object]) -> Dict[str, object]:
     normalized: Dict[str, object] = {}
 
     for key, value in config.items():
-        if key == "use_batch_deduplication":
+        if key in ("batch_size", OPTIMIZER_BATCH_SIZE_ARG, OPTIMIZER_BATCH_SIZE_KEY):
+            key = BATCH_SIZE_KEY
+        elif key == "use_batch_deduplication":
             key = USE_BATCH_DEDUPLICATION_KEY
         normalized[key] = value
 
@@ -154,8 +158,23 @@ def build_command(
         query: str,
         params: Dict[str, object],
 ) -> List[str]:
-    cmd = [str(systest_path), "-t", query, "-n", "1", "--"]
+    optimizer_params: Dict[str, object] = {}
+    worker_params: Dict[str, object] = {}
+
     for key, value in params.items():
+        if key == BATCH_SIZE_KEY:
+            optimizer_params[OPTIMIZER_BATCH_SIZE_ARG] = value
+        elif key == OPTIMIZER_BATCH_SIZE_KEY:
+            optimizer_params[OPTIMIZER_BATCH_SIZE_ARG] = value
+        else:
+            worker_params[key] = value
+
+    cmd = [str(systest_path), "-t", query, "-n", "1"]
+    for key, value in optimizer_params.items():
+        cmd.extend(["--optimizer", f"{key}={format_value(value)}"])
+
+    cmd.append("--")
+    for key, value in worker_params.items():
         cmd.append(f"--{key}={format_value(value)}")
     return cmd
 
