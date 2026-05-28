@@ -18,7 +18,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -287,7 +286,7 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
             for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
             {
                 auto recordIndex = currentBatchStart + batchOffset;
-                auto record = batchPagedVectorRef.readRecord(recordIndex, projections);
+                auto record = batchPagedVectorRef.readRecord(recordIndex, inputFieldNames);
                 writeInputRecord(record, batchOffset);
             }
         };
@@ -301,7 +300,7 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
             for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
             {
                 auto recordIndex = currentBatchStart + batchOffset;
-                auto record = batchPagedVectorRef.readRecord(recordIndex, projections);
+                auto record = batchPagedVectorRef.readRecord(recordIndex, inputFieldNames);
 
                 const auto hashMapEntry = hashMap.findOrCreateEntry(
                     record,
@@ -343,6 +342,11 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         const auto emitBatchOutputs = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
         {
             const auto outputBuffer = nautilus::invoke(getOutputBuffer, batchRuntime, ctx.workerThreadId);
+            auto varsizedOutputBatchBuffer = nautilus::invoke(+[]() { return static_cast<int8_t*>(nullptr); });
+            if (varsizedOutput)
+            {
+                varsizedOutputBatchBuffer = ctx.pipelineMemoryProvider.arena.allocateMemory(recordsInBatch * outputTupleSizeVal);
+            }
             for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
             {
                 auto recordIndex = currentBatchStart + batchOffset;
@@ -356,8 +360,9 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
 
                 if (varsizedOutput)
                 {
-                    auto output = ctx.pipelineMemoryProvider.arena.allocateVariableSizedData(outputTupleSizeVal);
-                    nautilus::memcpy(output.getContent(), outputTupleBuffer, outputTupleSizeVal);
+                    auto outputContent = varsizedOutputBatchBuffer + (batchOffset * outputTupleSizeVal);
+                    nautilus::memcpy(outputContent, outputTupleBuffer, outputTupleSizeVal);
+                    VariableSizedData output(outputContent, outputTupleSizeVal);
                     record.write(outputFieldNames.at(0), VarVal(output));
                 }
                 else

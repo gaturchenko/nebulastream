@@ -93,12 +93,20 @@ void InferenceRuntime::setup(const CompiledModel& model, size_t batchSize, const
 
 void InferenceRuntime::infer()
 {
+    infer(inputData.get(), inputSize);
+}
+
+void InferenceRuntime::infer(std::byte* inputBuffer, size_t inputBufferSize)
+{
     if (impl->backend == nullptr)
     {
         throw NES::InferenceRuntimeFailure("Model Execution failed. Runtime backend was not set up");
     }
 
-    impl->backend->infer(inputData.get(), inputSize, outputData.get(), outputSize);
+    PRECONDITION(inputBuffer != nullptr, "Cannot run inference with a null input buffer");
+    PRECONDITION(inputBufferSize == inputSize, "Expected single-tuple input size {} B, but got {} B", inputSize, inputBufferSize);
+
+    impl->backend->infer(inputBuffer, inputBufferSize, outputData.get(), outputSize);
 }
 
 void InferenceRuntime::infer(size_t numberOfTuples)

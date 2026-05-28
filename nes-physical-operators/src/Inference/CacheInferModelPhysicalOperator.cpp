@@ -57,10 +57,13 @@ namespace detail
 namespace
 {
 constexpr uint64_t MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE = 4096;
+constexpr uint64_t PREDICTION_CACHE_LOOKUP_INDEX_KEY_SIZE = 0;
+constexpr uint64_t PREDICTION_CACHE_LOOKUP_INDEX_VALUE_SIZE = sizeof(uint64_t);
 
-uint64_t getPredictionCacheLookupIndexPageSize(const uint64_t keySize)
+uint64_t getPredictionCacheLookupIndexPageSize()
 {
-    const auto mapEntrySize = sizeof(ChainedHashMapEntry) + keySize + 2 * sizeof(uint64_t);
+    const auto mapEntrySize
+        = sizeof(ChainedHashMapEntry) + PREDICTION_CACHE_LOOKUP_INDEX_KEY_SIZE + PREDICTION_CACHE_LOOKUP_INDEX_VALUE_SIZE;
     return std::max(MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE, mapEntrySize);
 }
 
@@ -90,7 +93,7 @@ struct ThreadLocalPredictionCacheWrapper
         outputStorage.reserve(numThreads);
         const auto entrySize = Util::getPredictionCacheEntrySize(cacheType);
         const auto cacheMemorySize = sizeof(HitsAndMisses) + numberOfCacheEntries * entrySize;
-        const auto lookupIndexPageSize = getPredictionCacheLookupIndexPageSize(model.inputSize());
+        const auto lookupIndexPageSize = getPredictionCacheLookupIndexPageSize();
         for (size_t i = 0; i < numThreads; ++i)
         {
             wrappers.emplace_back();
@@ -99,8 +102,11 @@ struct ThreadLocalPredictionCacheWrapper
             std::ranges::fill(cacheStorage.back(), std::byte{0});
             recordStorage.emplace_back(numberOfCacheEntries * model.inputSize());
             outputStorage.emplace_back(numberOfCacheEntries * model.outputSize());
-            lookupIndexes.emplace_back(
-                std::make_unique<ChainedHashMap>(model.inputSize(), 2 * sizeof(uint64_t), numberOfCacheEntries, lookupIndexPageSize));
+            lookupIndexes.emplace_back(std::make_unique<ChainedHashMap>(
+                PREDICTION_CACHE_LOOKUP_INDEX_KEY_SIZE,
+                PREDICTION_CACHE_LOOKUP_INDEX_VALUE_SIZE,
+                numberOfCacheEntries,
+                lookupIndexPageSize));
             replacementPositions.emplace_back(0);
         }
     }
@@ -127,15 +133,20 @@ struct ThreadLocalPredictionCacheWrapper
         replacementPositions[thread.getRawValue() % replacementPositions.size()] = replacementPosition;
     }
 
-    [[nodiscard]] std::byte* replaceEntry(const WorkerThreadId thread, PredictionCacheEntry* entry, const uint64_t replacementIndex)
+    [[nodiscard]] std::byte* replaceEntry(
+        const WorkerThreadId thread,
+        PredictionCacheEntry* entry,
+        const uint64_t replacementIndex,
+        std::byte* inputRecord,
+        const size_t inputRecordSize)
     {
         const auto threadIndex = thread.getRawValue() % wrappers.size();
         auto& runtime = getHandle(thread);
-        runtime.infer();
+        runtime.infer(inputRecord, inputRecordSize);
 
-        entry->recordSize = runtime.getInputSize();
+        entry->recordSize = inputRecordSize;
         entry->record = recordStorage[threadIndex].data() + replacementIndex * entry->recordSize;
-        std::memcpy(entry->record, runtime.getInputData(), entry->recordSize);
+        std::memcpy(entry->record, inputRecord, entry->recordSize);
 
         entry->dataSize = runtime.getOutputSize();
         entry->dataStructure = outputStorage[threadIndex].data() + replacementIndex * entry->dataSize;
@@ -204,9 +215,14 @@ void setReplacementPosition(ThreadLocalPredictionCacheWrapper* twl, WorkerThread
 }
 
 std::byte* replacePredictionCacheEntry(
-    ThreadLocalPredictionCacheWrapper* twl, WorkerThreadId thread, PredictionCacheEntry* entry, uint64_t replacementIndex)
+    ThreadLocalPredictionCacheWrapper* twl,
+    WorkerThreadId thread,
+    PredictionCacheEntry* entry,
+    uint64_t replacementIndex,
+    std::byte* inputRecord,
+    uint64_t inputRecordSize)
 {
-    return twl->replaceEntry(thread, entry, replacementIndex);
+    return twl->replaceEntry(thread, entry, replacementIndex, inputRecord, inputRecordSize);
 }
 
 }
@@ -254,17 +270,25 @@ void CacheInferModelPhysicalOperator::execute(ExecutionContext& ctx, Record& rec
 {
     const auto runtime = nautilus::val<ThreadLocalPredictionCacheWrapper*>(threadLocal.get());
     const auto inputBuffer = nautilus::invoke(getInputBuffer, runtime, ctx.workerThreadId);
+    auto cacheInputBuffer = inputBuffer;
 
     if (varsizedInput)
     {
         const auto& value = record.read(inputFieldNames.at(0));
         auto varSized = value.getRawValueAs<VariableSizedData>();
         const auto inputSizeVal = nautilus::val<uint64_t>(inputSize);
-        const auto bytesToCopy = varSized.getSize() < inputSizeVal ? varSized.getSize() : inputSizeVal;
-        nautilus::memcpy(inputBuffer, varSized.getContent(), bytesToCopy);
-        if (bytesToCopy < inputSizeVal)
+        if (varSized.getSize() == inputSizeVal)
         {
-            nautilus::memset(inputBuffer + bytesToCopy, 0, inputSizeVal - bytesToCopy);
+            cacheInputBuffer = static_cast<nautilus::val<std::byte*>>(varSized.getContent());
+        }
+        else
+        {
+            const auto bytesToCopy = varSized.getSize() < inputSizeVal ? varSized.getSize() : inputSizeVal;
+            nautilus::memcpy(inputBuffer, varSized.getContent(), bytesToCopy);
+            if (bytesToCopy < inputSizeVal)
+            {
+                nautilus::memset(inputBuffer + bytesToCopy, 0, inputSizeVal - bytesToCopy);
+            }
         }
     }
     else
@@ -280,11 +304,17 @@ void CacheInferModelPhysicalOperator::execute(ExecutionContext& ctx, Record& rec
     auto* localState = dynamic_cast<CachedInferenceLocalState*>(ctx.getLocalState(id));
     auto* predictionCache = localState->getPredictionCache();
     const auto outputBuffer = predictionCache->getDataStructureRef(
-        inputBuffer,
+        cacheInputBuffer,
         [&](const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>& replacementIndex)
         {
             return nautilus::invoke(
-                replacePredictionCacheEntry, runtime, ctx.workerThreadId, predictionCacheEntryToReplace, replacementIndex);
+                replacePredictionCacheEntry,
+                runtime,
+                ctx.workerThreadId,
+                predictionCacheEntryToReplace,
+                replacementIndex,
+                cacheInputBuffer,
+                nautilus::val<uint64_t>(inputSize));
         });
 
     if (varsizedOutput)

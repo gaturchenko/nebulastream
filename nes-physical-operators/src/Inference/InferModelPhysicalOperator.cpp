@@ -67,9 +67,9 @@ int8_t* getOutputBuffer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread)
     return reinterpret_cast<int8_t*>(twl->getHandle(thread).getOutputData());
 }
 
-void infer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread)
+void infer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread, std::byte* inputBuffer, uint64_t inputBufferSize)
 {
-    twl->getHandle(thread).infer();
+    twl->getHandle(thread).infer(inputBuffer, inputBufferSize);
 }
 
 }
@@ -101,17 +101,25 @@ void InferModelPhysicalOperator::execute(ExecutionContext& ctx, Record& record) 
 {
     const auto runtime = nautilus::val<ThreadLocalRuntimeWrapper*>(threadLocal.get());
     const auto inputBuffer = nautilus::invoke(getInputBuffer, runtime, ctx.workerThreadId);
+    auto inferenceInputBuffer = static_cast<nautilus::val<std::byte*>>(inputBuffer);
 
     if (varsizedInput)
     {
         const auto& value = record.read(inputFieldNames.at(0));
         auto varSized = value.getRawValueAs<VariableSizedData>();
         const auto inputSizeVal = nautilus::val<uint64_t>(inputSize);
-        const auto bytesToCopy = varSized.getSize() < inputSizeVal ? varSized.getSize() : inputSizeVal;
-        nautilus::memcpy(inputBuffer, varSized.getContent(), bytesToCopy);
-        if (bytesToCopy < inputSizeVal)
+        if (varSized.getSize() == inputSizeVal)
         {
-            nautilus::memset(inputBuffer + bytesToCopy, 0, inputSizeVal - bytesToCopy);
+            inferenceInputBuffer = static_cast<nautilus::val<std::byte*>>(varSized.getContent());
+        }
+        else
+        {
+            const auto bytesToCopy = varSized.getSize() < inputSizeVal ? varSized.getSize() : inputSizeVal;
+            nautilus::memcpy(inputBuffer, varSized.getContent(), bytesToCopy);
+            if (bytesToCopy < inputSizeVal)
+            {
+                nautilus::memset(inputBuffer + bytesToCopy, 0, inputSizeVal - bytesToCopy);
+            }
         }
     }
     else
@@ -124,7 +132,7 @@ void InferModelPhysicalOperator::execute(ExecutionContext& ctx, Record& record) 
         }
     }
 
-    nautilus::invoke(infer, runtime, ctx.workerThreadId);
+    nautilus::invoke(infer, runtime, ctx.workerThreadId, inferenceInputBuffer, nautilus::val<uint64_t>(inputSize));
 
     const auto outputBuffer = nautilus::invoke(getOutputBuffer, runtime, ctx.workerThreadId);
 

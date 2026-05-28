@@ -47,6 +47,9 @@ public:
     /// Run inference: read from the owned input buffer, write into the owned output buffer.
     void infer();
 
+    /// Run inference: read from the supplied input buffer, write into the owned output buffer.
+    void infer(std::byte* inputBuffer, size_t inputBufferSize);
+
     /// Run inference over the prefix containing `numberOfTuples` rows in the owned buffers.
     void infer(size_t numberOfTuples);
 

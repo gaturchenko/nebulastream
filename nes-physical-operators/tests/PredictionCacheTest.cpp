@@ -456,7 +456,7 @@ TEST_P(PredictionCacheTest, testPredictionCacheReplacementPolicy)
         }));
 
     auto bufferManager = BufferManager::create(4096, 1000);
-    ChainedHashMap lookupIndex(recordSize, 2 * sizeof(uint64_t), numberOfEntries, 4096);
+    ChainedHashMap lookupIndex(0, sizeof(uint64_t), numberOfEntries, 4096);
     const auto mismatches = predictionCacheCallableFunction(
         reinterpret_cast<int8_t*>(cacheMemory.data()), operations.data(), &lookupIndex, bufferManager.get());
     EXPECT_EQ(mismatches, 0) << "Prediction cache result mismatch in policy " << magic_enum::enum_name(cacheType);

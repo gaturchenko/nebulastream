@@ -60,10 +60,13 @@ namespace detail
 namespace
 {
 constexpr uint64_t MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE = 4096;
+constexpr uint64_t PREDICTION_CACHE_LOOKUP_INDEX_KEY_SIZE = 0;
+constexpr uint64_t PREDICTION_CACHE_LOOKUP_INDEX_VALUE_SIZE = sizeof(uint64_t);
 
-uint64_t getPredictionCacheLookupIndexPageSize(const uint64_t keySize)
+uint64_t getPredictionCacheLookupIndexPageSize()
 {
-    const auto mapEntrySize = sizeof(ChainedHashMapEntry) + keySize + 2 * sizeof(uint64_t);
+    const auto mapEntrySize
+        = sizeof(ChainedHashMapEntry) + PREDICTION_CACHE_LOOKUP_INDEX_KEY_SIZE + PREDICTION_CACHE_LOOKUP_INDEX_VALUE_SIZE;
     return std::max(MIN_PREDICTION_CACHE_LOOKUP_INDEX_PAGE_SIZE, mapEntrySize);
 }
 }
@@ -111,7 +114,7 @@ struct ThreadLocalBatchPredictionCacheWrapper
 
         const auto entrySize = Util::getPredictionCacheEntrySize(cacheType);
         const auto cacheMemorySize = sizeof(HitsAndMisses) + numberOfCacheEntries * entrySize;
-        const auto lookupIndexPageSize = getPredictionCacheLookupIndexPageSize(inputTupleSize);
+        const auto lookupIndexPageSize = getPredictionCacheLookupIndexPageSize();
         for (size_t i = 0; i < numThreads; ++i)
         {
             wrappers.emplace_back();
@@ -124,8 +127,11 @@ struct ThreadLocalBatchPredictionCacheWrapper
             missOutputRowsScratch.emplace_back(batchSize);
             cachedPredictionsScratch.emplace_back(batchSize);
             deduplicatedOutputRowIndicesScratch.emplace_back(batchSize);
-            lookupIndexes.emplace_back(
-                std::make_unique<ChainedHashMap>(inputTupleSize, 2 * sizeof(uint64_t), numberOfCacheEntries, lookupIndexPageSize));
+            lookupIndexes.emplace_back(std::make_unique<ChainedHashMap>(
+                PREDICTION_CACHE_LOOKUP_INDEX_KEY_SIZE,
+                PREDICTION_CACHE_LOOKUP_INDEX_VALUE_SIZE,
+                numberOfCacheEntries,
+                lookupIndexPageSize));
             replacementPositions.emplace_back(0);
         }
     }
@@ -562,7 +568,7 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
             for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
             {
                 auto recordIndex = currentBatchStart + batchOffset;
-                auto record = batchPagedVectorRef.readRecord(recordIndex, projections);
+                auto record = batchPagedVectorRef.readRecord(recordIndex, inputFieldNames);
 
                 if (useBatchDeduplication)
                 {
@@ -647,6 +653,11 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
 
         const auto emitBatchOutputs = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
         {
+            auto varsizedOutputBatchBuffer = nautilus::invoke(+[]() { return static_cast<int8_t*>(nullptr); });
+            if (varsizedOutput)
+            {
+                varsizedOutputBatchBuffer = ctx.pipelineMemoryProvider.arena.allocateMemory(recordsInBatch * outputTupleSizeVal);
+            }
             for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
             {
                 auto recordIndex = currentBatchStart + batchOffset;
@@ -665,8 +676,9 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
 
                 if (varsizedOutput)
                 {
-                    auto output = ctx.pipelineMemoryProvider.arena.allocateVariableSizedData(outputTupleSizeVal);
-                    nautilus::memcpy(output.getContent(), outputTupleBuffer, outputTupleSizeVal);
+                    auto outputContent = varsizedOutputBatchBuffer + (batchOffset * outputTupleSizeVal);
+                    nautilus::memcpy(outputContent, outputTupleBuffer, outputTupleSizeVal);
+                    VariableSizedData output(outputContent, outputTupleSizeVal);
                     record.write(outputFieldNames.at(0), VarVal(output));
                 }
                 else
