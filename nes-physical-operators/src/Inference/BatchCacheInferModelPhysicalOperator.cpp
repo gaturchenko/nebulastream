@@ -75,12 +75,14 @@ struct ThreadLocalBatchPredictionCacheWrapper
         InferenceRuntimeOptions options,
         PredictionCacheType cacheType,
         size_t numberOfCacheEntries,
-        size_t inputTupleSize)
+        size_t inputTupleSize,
+        size_t outputTupleSize)
         : model(std::move(model))
         , options(options)
         , cacheType(cacheType)
         , numberOfCacheEntries(numberOfCacheEntries)
         , inputTupleSize(inputTupleSize)
+        , outputTupleSize(outputTupleSize)
     {
     }
 
@@ -90,10 +92,22 @@ struct ThreadLocalBatchPredictionCacheWrapper
         cacheStorage.clear();
         lookupIndexes.clear();
         replacementPositions.clear();
+        recordStorage.clear();
+        outputStorage.clear();
+        missCachePositionsScratch.clear();
+        missOutputRowsScratch.clear();
+        cachedPredictionsScratch.clear();
+        deduplicatedOutputRowIndicesScratch.clear();
         wrappers.reserve(numThreads);
         cacheStorage.reserve(numThreads);
         lookupIndexes.reserve(numThreads);
         replacementPositions.reserve(numThreads);
+        recordStorage.reserve(numThreads);
+        outputStorage.reserve(numThreads);
+        missCachePositionsScratch.reserve(numThreads);
+        missOutputRowsScratch.reserve(numThreads);
+        cachedPredictionsScratch.reserve(numThreads);
+        deduplicatedOutputRowIndicesScratch.reserve(numThreads);
 
         const auto entrySize = Util::getPredictionCacheEntrySize(cacheType);
         const auto cacheMemorySize = sizeof(HitsAndMisses) + numberOfCacheEntries * entrySize;
@@ -104,6 +118,12 @@ struct ThreadLocalBatchPredictionCacheWrapper
             wrappers.back().setup(model, batchSize, options);
             cacheStorage.emplace_back(cacheMemorySize);
             std::ranges::fill(cacheStorage.back(), std::byte{0});
+            recordStorage.emplace_back(numberOfCacheEntries * inputTupleSize);
+            outputStorage.emplace_back(numberOfCacheEntries * outputTupleSize);
+            missCachePositionsScratch.emplace_back(batchSize);
+            missOutputRowsScratch.emplace_back(batchSize);
+            cachedPredictionsScratch.emplace_back(batchSize);
+            deduplicatedOutputRowIndicesScratch.emplace_back(batchSize);
             lookupIndexes.emplace_back(
                 std::make_unique<ChainedHashMap>(inputTupleSize, 2 * sizeof(uint64_t), numberOfCacheEntries, lookupIndexPageSize));
             replacementPositions.emplace_back(0);
@@ -134,13 +154,60 @@ struct ThreadLocalBatchPredictionCacheWrapper
         replacementPositions[thread.getRawValue() % replacementPositions.size()] = replacementPosition;
     }
 
+    void copyRecordToEntry(
+        const WorkerThreadId thread, PredictionCacheEntry* predictionCacheEntry, const uint64_t cachePos, std::byte* inputTupleBuffer)
+    {
+        auto* record = recordStorage[thread.getRawValue() % recordStorage.size()].data() + cachePos * inputTupleSize;
+        predictionCacheEntry->recordSize = inputTupleSize;
+        predictionCacheEntry->record = record;
+        std::memcpy(predictionCacheEntry->record, inputTupleBuffer, inputTupleSize);
+        predictionCacheEntry->dataSize = 0;
+        predictionCacheEntry->dataStructure = nullptr;
+    }
+
+    void copyOutputToEntry(
+        const WorkerThreadId thread, PredictionCacheEntry* predictionCacheEntry, const uint64_t cachePos, std::byte* outputTupleBuffer)
+    {
+        auto* output = outputStorage[thread.getRawValue() % outputStorage.size()].data() + cachePos * outputTupleSize;
+        predictionCacheEntry->dataSize = outputTupleSize;
+        predictionCacheEntry->dataStructure = output;
+        std::memcpy(predictionCacheEntry->dataStructure, outputTupleBuffer, outputTupleSize);
+    }
+
+    [[nodiscard]] uint64_t* getMissCachePositions(const WorkerThreadId thread)
+    {
+        return missCachePositionsScratch[thread.getRawValue() % missCachePositionsScratch.size()].data();
+    }
+
+    [[nodiscard]] uint64_t* getMissOutputRows(const WorkerThreadId thread)
+    {
+        return missOutputRowsScratch[thread.getRawValue() % missOutputRowsScratch.size()].data();
+    }
+
+    [[nodiscard]] std::byte** getCachedPredictions(const WorkerThreadId thread)
+    {
+        return cachedPredictionsScratch[thread.getRawValue() % cachedPredictionsScratch.size()].data();
+    }
+
+    [[nodiscard]] uint64_t* getDeduplicatedOutputRowIndices(const WorkerThreadId thread)
+    {
+        return deduplicatedOutputRowIndicesScratch[thread.getRawValue() % deduplicatedOutputRowIndicesScratch.size()].data();
+    }
+
     CompiledModel model;
     InferenceRuntimeOptions options;
     PredictionCacheType cacheType;
     size_t numberOfCacheEntries;
     size_t inputTupleSize;
+    size_t outputTupleSize;
     std::vector<InferenceRuntime> wrappers;
     std::vector<std::vector<std::byte>> cacheStorage;
+    std::vector<std::vector<std::byte>> recordStorage;
+    std::vector<std::vector<std::byte>> outputStorage;
+    std::vector<std::vector<uint64_t>> missCachePositionsScratch;
+    std::vector<std::vector<uint64_t>> missOutputRowsScratch;
+    std::vector<std::vector<std::byte*>> cachedPredictionsScratch;
+    std::vector<std::vector<uint64_t>> deduplicatedOutputRowIndicesScratch;
     std::vector<std::unique_ptr<ChainedHashMap>> lookupIndexes;
     std::vector<uint64_t> replacementPositions;
 };
@@ -201,6 +268,26 @@ void infer(ThreadLocalBatchPredictionCacheWrapper* twl, WorkerThreadId thread, u
     twl->infer(thread, numberOfTuples);
 }
 
+uint64_t* getMissCachePositions(ThreadLocalBatchPredictionCacheWrapper* twl, WorkerThreadId thread)
+{
+    return twl->getMissCachePositions(thread);
+}
+
+uint64_t* getMissOutputRows(ThreadLocalBatchPredictionCacheWrapper* twl, WorkerThreadId thread)
+{
+    return twl->getMissOutputRows(thread);
+}
+
+std::byte** getCachedPredictions(ThreadLocalBatchPredictionCacheWrapper* twl, WorkerThreadId thread)
+{
+    return twl->getCachedPredictions(thread);
+}
+
+uint64_t* getDeduplicatedOutputRowIndices(ThreadLocalBatchPredictionCacheWrapper* twl, WorkerThreadId thread)
+{
+    return twl->getDeduplicatedOutputRowIndices(thread);
+}
+
 void allocateBatchDeduplicationHashMaps(
     OperatorHandler* ptrOpHandler,
     PipelineExecutionContext* pipelineExecutionContext,
@@ -232,46 +319,9 @@ void clearHashMap(OperatorHandler* ptrOpHandler, WorkerThreadId thread)
     opHandler->clearHashMap(thread);
 }
 
-uint64_t* allocateRowIndexArray(uint64_t numberOfRows)
-{
-    return new uint64_t[numberOfRows];
-}
-
-void freeRowIndexArray(uint64_t* rowIndices)
-{
-    delete[] rowIndices;
-}
-
-std::byte** allocatePredictionArray(uint64_t numberOfRows)
-{
-    return new std::byte*[numberOfRows];
-}
-
-std::byte* allocatePredictionCopyBuffer(uint64_t numberOfRows, size_t outputTupleSize)
-{
-    return new std::byte[numberOfRows * outputTupleSize];
-}
-
-void freePredictionArray(std::byte** predictions)
-{
-    delete[] predictions;
-}
-
-void freePredictionCopyBuffer(std::byte* predictionCopyBuffer)
-{
-    delete[] predictionCopyBuffer;
-}
-
 void clearPredictionArray(std::byte** predictions, uint64_t numberOfRows)
 {
     std::fill_n(predictions, numberOfRows, nullptr);
-}
-
-void copyPrediction(std::byte** predictions, std::byte* predictionCopyBuffer, uint64_t row, std::byte* prediction, size_t outputTupleSize)
-{
-    auto* predictionCopy = predictionCopyBuffer + row * outputTupleSize;
-    std::memcpy(predictionCopy, prediction, outputTupleSize);
-    predictions[row] = predictionCopy;
 }
 
 std::byte* getPrediction(std::byte** predictions, uint64_t row)
@@ -279,23 +329,24 @@ std::byte* getPrediction(std::byte** predictions, uint64_t row)
     return predictions[row];
 }
 
-void copyOutputToCacheEntry(PredictionCacheEntry* predictionCacheEntry, std::byte* outputTupleBuffer, size_t outputTupleSize)
+void copyOutputToCacheEntry(
+    ThreadLocalBatchPredictionCacheWrapper* twl,
+    WorkerThreadId thread,
+    PredictionCacheEntry* predictionCacheEntry,
+    uint64_t cachePos,
+    std::byte* outputTupleBuffer)
 {
-    delete[] predictionCacheEntry->dataStructure;
-    predictionCacheEntry->dataSize = outputTupleSize;
-    predictionCacheEntry->dataStructure = new std::byte[outputTupleSize];
-    std::memcpy(predictionCacheEntry->dataStructure, outputTupleBuffer, outputTupleSize);
+    twl->copyOutputToEntry(thread, predictionCacheEntry, cachePos, outputTupleBuffer);
 }
 
-void copyRecordToCacheEntry(PredictionCacheEntry* predictionCacheEntry, std::byte* inputTupleBuffer, size_t inputTupleSize)
+void copyRecordToCacheEntry(
+    ThreadLocalBatchPredictionCacheWrapper* twl,
+    WorkerThreadId thread,
+    PredictionCacheEntry* predictionCacheEntry,
+    uint64_t cachePos,
+    std::byte* inputTupleBuffer)
 {
-    delete[] predictionCacheEntry->record;
-    delete[] predictionCacheEntry->dataStructure;
-    predictionCacheEntry->recordSize = inputTupleSize;
-    predictionCacheEntry->record = new std::byte[inputTupleSize];
-    std::memcpy(predictionCacheEntry->record, inputTupleBuffer, inputTupleSize);
-    predictionCacheEntry->dataSize = 0;
-    predictionCacheEntry->dataStructure = nullptr;
+    twl->copyRecordToEntry(thread, predictionCacheEntry, cachePos, inputTupleBuffer);
 }
 
 Batch* getBatchFromEmittedBuffer(OperatorHandler* ptrOpHandler, const EmittedBatch* currentBatch)
@@ -352,7 +403,12 @@ BatchCacheInferModelPhysicalOperator::BatchCacheInferModelPhysicalOperator(
     bool useBatchDeduplication,
     OperatorHandlerId operatorHandlerId)
     : threadLocal(std::make_shared<ThreadLocalBatchPredictionCacheWrapper>(
-          model, runtimeOptions, predictionCacheType, numberOfCacheEntries, tupleSizeFor(model.getInputShape(), model.inputSize())))
+          model,
+          runtimeOptions,
+          predictionCacheType,
+          numberOfCacheEntries,
+          tupleSizeFor(model.getInputShape(), model.inputSize()),
+          tupleSizeFor(model.getOutputShape(), model.outputSize())))
     , bufferRef(std::move(bufferRef))
     , projections(std::move(projections))
     , inputFieldNames(std::move(inputFieldNames))
@@ -435,15 +491,13 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
             nautilus::val<uint64_t>(hashMapOptions.entrySize)};
         const auto chainedHashMapPtr = static_cast<nautilus::val<ChainedHashMap*>>(hashMapPtr);
 
-        const auto missCachePositions = nautilus::invoke(allocateRowIndexArray, configuredBatchSize);
-        const auto missOutputRows = nautilus::invoke(allocateRowIndexArray, configuredBatchSize);
-        const auto cachedPredictions = nautilus::invoke(allocatePredictionArray, configuredBatchSize);
-        const auto cachedPredictionCopies
-            = nautilus::invoke(allocatePredictionCopyBuffer, configuredBatchSize, nautilus::val<size_t>(outputTupleSize));
+        const auto missCachePositions = nautilus::invoke(getMissCachePositions, batchRuntime, ctx.workerThreadId);
+        const auto missOutputRows = nautilus::invoke(getMissOutputRows, batchRuntime, ctx.workerThreadId);
+        const auto cachedPredictions = nautilus::invoke(getCachedPredictions, batchRuntime, ctx.workerThreadId);
         auto deduplicatedOutputRowIndices = nautilus::invoke(+[]() { return static_cast<uint64_t*>(nullptr); });
         if (useBatchDeduplication)
         {
-            deduplicatedOutputRowIndices = nautilus::invoke(allocateRowIndexArray, configuredBatchSize);
+            deduplicatedOutputRowIndices = nautilus::invoke(getDeduplicatedOutputRowIndices, batchRuntime, ctx.workerThreadId);
         }
 
         const auto writeInputRecord = [&](const Record& record, const nautilus::val<uint64_t> inputRowIndex)
@@ -472,17 +526,27 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
             }
         };
 
-        const auto updateCacheValue = [&](const nautilus::val<uint64_t> cachePos, const nautilus::val<uint64_t> outputRow)
+        const auto commitCacheEntry
+            = [&](const nautilus::val<uint64_t> cachePos, const nautilus::val<uint64_t> inputRow, const nautilus::val<uint64_t> outputRow)
         {
             predictionCache->updateValues(
                 cachePos,
                 [&](const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToUpdate, const nautilus::val<uint64_t>&)
                 {
                     nautilus::invoke(
-                        copyOutputToCacheEntry,
+                        copyRecordToCacheEntry,
+                        batchRuntime,
+                        ctx.workerThreadId,
                         predictionCacheEntryToUpdate,
-                        static_cast<nautilus::val<std::byte*>>(outputBuffer + (outputRow * outputTupleSizeVal)),
-                        nautilus::val<size_t>(outputTupleSize));
+                        cachePos,
+                        static_cast<nautilus::val<std::byte*>>(inputBuffer + (inputRow * inputTupleSizeVal)));
+                    nautilus::invoke(
+                        copyOutputToCacheEntry,
+                        batchRuntime,
+                        ctx.workerThreadId,
+                        predictionCacheEntryToUpdate,
+                        cachePos,
+                        static_cast<nautilus::val<std::byte*>>(outputBuffer + (outputRow * outputTupleSizeVal)));
                 });
         };
 
@@ -536,50 +600,32 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
                 const auto cacheProbeTuple = static_cast<nautilus::val<std::byte*>>(inputTupleBuffer);
                 const auto cacheKeyIndex = predictionCache->updateKeys(
                     cacheProbeTuple,
-                    [&](const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>&)
+                    [&](const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace,
+                        const nautilus::val<uint64_t>& replacementIndex)
                     {
-                        nautilus::invoke(
-                            copyRecordToCacheEntry, predictionCacheEntryToReplace, cacheProbeTuple, nautilus::val<size_t>(inputTupleSize));
+                        static_cast<void>(predictionCacheEntryToReplace);
+                        static_cast<void>(replacementIndex);
                     });
 
-                auto cachePos = cacheKeyIndex;
-                if (cacheKeyIndex == PredictionCache::NOT_FOUND)
+                if (cacheKeyIndex != PredictionCache::NOT_FOUND)
                 {
-                    cachePos = predictionCache->getReplacementIndex();
+                    *(cachedPredictions + batchOffset) = predictionCache->getDataStructure(cacheKeyIndex);
+                    continue;
                 }
 
-                const auto cachedPrediction = predictionCache->getDataStructure(cachePos);
-                const auto hasCachedPrediction = cachedPrediction != nautilus::val<std::byte*>(nullptr);
-                if (hasCachedPrediction)
+                const auto cachePos = predictionCache->getReplacementIndex();
+                if (numberOfMisses != batchOffset)
                 {
-                    nautilus::invoke(
-                        copyPrediction,
-                        cachedPredictions,
-                        cachedPredictionCopies,
-                        batchOffset,
-                        cachedPrediction,
-                        nautilus::val<size_t>(outputTupleSize));
+                    nautilus::memcpy(inputBuffer + (numberOfMisses * inputTupleSizeVal), inputTupleBuffer, inputTupleSizeVal);
                 }
-                else
-                {
-                    if (numberOfMisses != batchOffset)
-                    {
-                        nautilus::memcpy(inputBuffer + (numberOfMisses * inputTupleSizeVal), inputTupleBuffer, inputTupleSizeVal);
-                    }
-                    *(missCachePositions + numberOfMisses) = cachePos;
-                    *(missOutputRows + numberOfMisses) = batchOffset;
-                    numberOfMisses = numberOfMisses + 1_u64;
-                }
+                *(missCachePositions + numberOfMisses) = cachePos;
+                *(missOutputRows + numberOfMisses) = batchOffset;
+                numberOfMisses = numberOfMisses + 1_u64;
             }
 
             if (numberOfMisses > 0_u64)
             {
                 nautilus::invoke(infer, batchRuntime, ctx.workerThreadId, numberOfMisses);
-
-                for (nautilus::val<uint64_t> missOffset = 0_u64; missOffset < numberOfMisses; missOffset = missOffset + 1_u64)
-                {
-                    updateCacheValue(*(missCachePositions + missOffset), missOffset);
-                }
 
                 for (auto missOffset = numberOfMisses; missOffset > 0_u64; missOffset = missOffset - 1_u64)
                 {
@@ -596,17 +642,7 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
                 }
             }
 
-            for (nautilus::val<uint64_t> batchOffset = 0_u64; batchOffset < recordsInBatch; batchOffset = batchOffset + 1_u64)
-            {
-                const auto cachedPrediction = nautilus::invoke(getPrediction, cachedPredictions, batchOffset);
-                if (cachedPrediction != nautilus::val<std::byte*>(nullptr))
-                {
-                    nautilus::memcpy(
-                        outputBuffer + (batchOffset * outputTupleSizeVal),
-                        static_cast<nautilus::val<int8_t*>>(cachedPrediction),
-                        outputTupleSizeVal);
-                }
-            }
+            return numberOfMisses;
         };
 
         const auto emitBatchOutputs = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
@@ -620,7 +656,12 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
                 {
                     outputRowIndex = *(deduplicatedOutputRowIndices + batchOffset);
                 }
-                const auto outputTupleBuffer = outputBuffer + (outputRowIndex * outputTupleSizeVal);
+                auto outputTupleBuffer = outputBuffer + (outputRowIndex * outputTupleSizeVal);
+                const auto cachedPrediction = nautilus::invoke(getPrediction, cachedPredictions, outputRowIndex);
+                if (cachedPrediction != nautilus::val<std::byte*>(nullptr))
+                {
+                    outputTupleBuffer = static_cast<nautilus::val<int8_t*>>(cachedPrediction);
+                }
 
                 if (varsizedOutput)
                 {
@@ -643,28 +684,30 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
             }
         };
 
+        const auto commitBatchCache = [&](const nautilus::val<uint64_t> numberOfMisses)
+        {
+            for (nautilus::val<uint64_t> missOffset = 0_u64; missOffset < numberOfMisses; missOffset = missOffset + 1_u64)
+            {
+                commitCacheEntry(*(missCachePositions + missOffset), missOffset, *(missOutputRows + missOffset));
+            }
+        };
+
         nautilus::val<uint64_t> batchStart = 0_u64;
         for (; batchStart + configuredBatchSize <= numberOfRecords; batchStart = batchStart + configuredBatchSize)
         {
-            processBatch(batchStart, configuredBatchSize);
+            const auto numberOfMisses = processBatch(batchStart, configuredBatchSize);
             emitBatchOutputs(batchStart, configuredBatchSize);
+            commitBatchCache(numberOfMisses);
         }
         if (batchStart < numberOfRecords)
         {
             const auto recordsInTailBatch = numberOfRecords - batchStart;
-            processBatch(batchStart, recordsInTailBatch);
+            const auto numberOfMisses = processBatch(batchStart, recordsInTailBatch);
             emitBatchOutputs(batchStart, recordsInTailBatch);
+            commitBatchCache(numberOfMisses);
         }
 
         nautilus::invoke(setReplacementPosition, batchRuntime, ctx.workerThreadId, predictionCache->getReplacementPos());
-        if (useBatchDeduplication)
-        {
-            nautilus::invoke(freeRowIndexArray, deduplicatedOutputRowIndices);
-        }
-        nautilus::invoke(freePredictionCopyBuffer, cachedPredictionCopies);
-        nautilus::invoke(freePredictionArray, cachedPredictions);
-        nautilus::invoke(freeRowIndexArray, missOutputRows);
-        nautilus::invoke(freeRowIndexArray, missCachePositions);
         nautilus::invoke(markBatchProcessed, operatorHandler, emittedBatch);
         closeChild(ctx, recordBuffer);
     }

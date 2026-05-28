@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -34,19 +35,28 @@ struct ThreadLocalRuntimeWrapper
     void setup(size_t numThreads, size_t batchSize = 1)
     {
         wrappers.clear();
+        deduplicatedOutputRowIndices.clear();
         wrappers.reserve(numThreads);
+        deduplicatedOutputRowIndices.reserve(numThreads);
         for (size_t i = 0; i < numThreads; ++i)
         {
             wrappers.emplace_back();
             wrappers.back().setup(model, batchSize, options);
+            deduplicatedOutputRowIndices.emplace_back(batchSize);
         }
     }
 
     [[nodiscard]] InferenceRuntime& getHandle(WorkerThreadId thread) { return wrappers[thread.getRawValue() % wrappers.size()]; }
 
+    [[nodiscard]] uint64_t* getDeduplicatedOutputRowIndices(WorkerThreadId thread)
+    {
+        return deduplicatedOutputRowIndices[thread.getRawValue() % deduplicatedOutputRowIndices.size()].data();
+    }
+
     CompiledModel model;
     InferenceRuntimeOptions options;
     std::vector<InferenceRuntime> wrappers;
+    std::vector<std::vector<uint64_t>> deduplicatedOutputRowIndices;
 };
 
 }

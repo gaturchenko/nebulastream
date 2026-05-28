@@ -84,6 +84,11 @@ void infer(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread, uint64_t numbe
     twl->getHandle(thread).infer(numberOfTuples);
 }
 
+uint64_t* getDeduplicatedOutputRowIndices(ThreadLocalRuntimeWrapper* twl, WorkerThreadId thread)
+{
+    return twl->getDeduplicatedOutputRowIndices(thread);
+}
+
 void allocateBatchDeduplicationHashMaps(
     OperatorHandler* ptrOpHandler,
     PipelineExecutionContext* pipelineExecutionContext,
@@ -113,16 +118,6 @@ void clearHashMap(OperatorHandler* ptrOpHandler, WorkerThreadId thread)
     auto* opHandler = dynamic_cast<BatchInferenceOperatorHandler*>(ptrOpHandler);
     PRECONDITION(opHandler != nullptr, "operator handler should be a BatchInferenceOperatorHandler");
     opHandler->clearHashMap(thread);
-}
-
-uint64_t* allocateOutputRowIndices(uint64_t numberOfRows)
-{
-    return new uint64_t[numberOfRows];
-}
-
-void freeOutputRowIndices(uint64_t* outputRowIndices)
-{
-    delete[] outputRowIndices;
 }
 
 Batch* getBatchFromEmittedBuffer(OperatorHandler* ptrOpHandler, const EmittedBatch* currentBatch)
@@ -254,7 +249,7 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         auto deduplicatedOutputRowIndices = nautilus::invoke(+[]() { return static_cast<uint64_t*>(nullptr); });
         if (useBatchDeduplication)
         {
-            deduplicatedOutputRowIndices = nautilus::invoke(allocateOutputRowIndices, configuredBatchSize);
+            deduplicatedOutputRowIndices = nautilus::invoke(getDeduplicatedOutputRowIndices, batchRuntime, ctx.workerThreadId);
         }
 
         const auto writeInputRecord = [&](const Record& record, const nautilus::val<uint64_t> inputRowIndex)
@@ -407,11 +402,6 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
         if (batchStart < numberOfRecords)
         {
             processBatch(batchStart, numberOfRecords - batchStart);
-        }
-
-        if (useBatchDeduplication)
-        {
-            nautilus::invoke(freeOutputRowIndices, deduplicatedOutputRowIndices);
         }
 
         nautilus::invoke(markBatchProcessed, operatorHandler, emittedBatch);
