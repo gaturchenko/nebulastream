@@ -60,6 +60,7 @@ struct LookupResult
 {
     bool hit;
     uint64_t value;
+    uint64_t position;
 };
 
 struct ReferenceCacheEntry
@@ -76,6 +77,8 @@ struct PredictionCacheTestOperation
     uint64_t key;
     uint64_t value;
     uint64_t expectedValue;
+    uint64_t expectedPosition;
+    uint64_t expectedHit;
     std::array<std::byte, sizeof(uint64_t)> record;
     std::array<std::byte, sizeof(uint64_t)> dataStructure;
 };
@@ -130,12 +133,13 @@ private:
     {
         if (const auto pos = findKey(key); pos != notFound)
         {
-            return {.hit = true, .value = entries[pos].value};
+            return {.hit = true, .value = entries[pos].value, .position = pos};
         }
 
         replaceEntry(fifoReplacementIndex, key, newValue);
+        const auto replacementPos = fifoReplacementIndex;
         fifoReplacementIndex = (fifoReplacementIndex + 1) % entries.size();
-        return {.hit = false, .value = newValue};
+        return {.hit = false, .value = newValue, .position = replacementPos};
     }
 
     void recomputeMinFrequencyIndex()
@@ -163,7 +167,7 @@ private:
             {
                 minFrequencyDirty = true;
             }
-            return {.hit = true, .value = entries[pos].value};
+            return {.hit = true, .value = entries[pos].value, .position = pos};
         }
 
         uint64_t replacementPos;
@@ -187,7 +191,7 @@ private:
             minFrequencyIndex = replacementPos;
             minFrequencyDirty = false;
         }
-        return {.hit = false, .value = newValue};
+        return {.hit = false, .value = newValue, .position = replacementPos};
     }
 
     void appendLruTail(const uint64_t pos)
@@ -201,7 +205,7 @@ private:
         if (const auto pos = findKey(key); pos != notFound)
         {
             appendLruTail(pos);
-            return {.hit = true, .value = entries[pos].value};
+            return {.hit = true, .value = entries[pos].value, .position = pos};
         }
 
         uint64_t replacementPos;
@@ -216,7 +220,7 @@ private:
         }
         replaceEntry(replacementPos, key, newValue);
         appendLruTail(replacementPos);
-        return {.hit = false, .value = newValue};
+        return {.hit = false, .value = newValue, .position = replacementPos};
     }
 
     LookupResult lookupSecondChance(const uint64_t key, const uint64_t newValue)
@@ -224,7 +228,7 @@ private:
         if (const auto pos = findKey(key); pos != notFound)
         {
             entries[pos].secondChanceBit = true;
-            return {.hit = true, .value = entries[pos].value};
+            return {.hit = true, .value = entries[pos].value, .position = pos};
         }
 
         while (entries[secondChanceReplacementIndex].secondChanceBit)
@@ -233,9 +237,10 @@ private:
             secondChanceReplacementIndex = (secondChanceReplacementIndex + 1) % entries.size();
         }
 
-        replaceEntry(secondChanceReplacementIndex, key, newValue);
-        entries[secondChanceReplacementIndex].secondChanceBit = true;
-        return {.hit = false, .value = newValue};
+        const auto replacementPos = secondChanceReplacementIndex;
+        replaceEntry(replacementPos, key, newValue);
+        entries[replacementPos].secondChanceBit = true;
+        return {.hit = false, .value = newValue, .position = replacementPos};
     }
 
     PredictionCacheType cacheType;
@@ -364,8 +369,10 @@ public:
         ReferencePredictionCache referenceCache(cacheType, numberOfEntries);
         for (auto& operation : operations)
         {
-            const auto [hit, value] = referenceCache.lookup(operation.key, operation.value);
+            const auto [hit, value, position] = referenceCache.lookup(operation.key, operation.value);
             operation.expectedValue = value;
+            operation.expectedPosition = position;
+            operation.expectedHit = hit ? 1 : 0;
             expectedHits += hit ? 1 : 0;
             expectedMisses += hit ? 0 : 1;
         }
@@ -460,6 +467,140 @@ TEST_P(PredictionCacheTest, testPredictionCacheReplacementPolicy)
     const auto mismatches = predictionCacheCallableFunction(
         reinterpret_cast<int8_t*>(cacheMemory.data()), operations.data(), &lookupIndex, bufferManager.get());
     EXPECT_EQ(mismatches, 0) << "Prediction cache result mismatch in policy " << magic_enum::enum_name(cacheType);
+}
+
+TEST_P(PredictionCacheTest, testPredictionCacheUpdateKeysReplacementPolicy)
+{
+    using CompiledCacheFunction = std::function<nautilus::val<uint64_t>(
+        nautilus::val<int8_t*>,
+        nautilus::val<PredictionCacheTestOperation*>,
+        nautilus::val<ChainedHashMap*>,
+        nautilus::val<AbstractBufferProvider*>)>;
+
+    auto predictionCacheCallableFunction = nautilusEngine->registerFunction(CompiledCacheFunction(
+        [&](const nautilus::val<int8_t*>& cacheStart,
+            const nautilus::val<PredictionCacheTestOperation*>& operationsStart,
+            const nautilus::val<ChainedHashMap*>& lookupIndex,
+            const nautilus::val<AbstractBufferProvider*>& bufferProvider) -> nautilus::val<uint64_t>
+        {
+            auto predictionCache = Util::createPredictionCache(cacheType, numberOfEntries, cacheStart, recordSize);
+            predictionCache->configureLookupIndex(lookupIndex, bufferProvider);
+            nautilus::val<uint64_t> mismatches = 0;
+
+            for (nautilus::val<uint64_t> i = 0; i < operations.size(); ++i)
+            {
+                const auto operation = operationsStart + i;
+                const auto operationBytes = static_cast<nautilus::val<int8_t*>>(operation);
+                const auto record
+                    = static_cast<nautilus::val<std::byte*>>(getMemberRef(operationBytes, &PredictionCacheTestOperation::key));
+                const auto dataStructure
+                    = static_cast<nautilus::val<std::byte*>>(getMemberRef(operationBytes, &PredictionCacheTestOperation::value));
+                const nautilus::val<uint64_t> expectedValue{
+                    *getMemberWithOffset<uint64_t>(getMemberRef(operationBytes, &PredictionCacheTestOperation::expectedValue), 0)};
+                const nautilus::val<uint64_t> expectedPosition{
+                    *getMemberWithOffset<uint64_t>(getMemberRef(operationBytes, &PredictionCacheTestOperation::expectedPosition), 0)};
+                const nautilus::val<uint64_t> expectedHit{
+                    *getMemberWithOffset<uint64_t>(getMemberRef(operationBytes, &PredictionCacheTestOperation::expectedHit), 0)};
+
+                nautilus::val<uint64_t> keyUpdateCallbackCalls = 0;
+                const auto lookupResult = predictionCache->updateKeys(
+                    record,
+                    [&](const nautilus::val<PredictionCacheEntry*>& entryToReplace, const nautilus::val<uint64_t>& replacementIndex)
+                    {
+                        static_cast<void>(entryToReplace);
+                        keyUpdateCallbackCalls = keyUpdateCallbackCalls + 1;
+                        if (replacementIndex != expectedPosition)
+                        {
+                            mismatches = mismatches + 1;
+                        }
+                    });
+
+                if (expectedHit != 0)
+                {
+                    if (lookupResult == PredictionCache::NOT_FOUND)
+                    {
+                        mismatches = mismatches + 1;
+                    }
+                    else
+                    {
+                        if (lookupResult != expectedPosition)
+                        {
+                            mismatches = mismatches + 1;
+                        }
+                        if (keyUpdateCallbackCalls != 0)
+                        {
+                            mismatches = mismatches + 1;
+                        }
+
+                        const auto dataStructureRef = predictionCache->getDataStructure(lookupResult);
+                        const nautilus::val<uint64_t> actualValue{*static_cast<nautilus::val<uint64_t*>>(dataStructureRef)};
+                        if (actualValue != expectedValue)
+                        {
+                            mismatches = mismatches + 1;
+                        }
+                    }
+                }
+                else
+                {
+                    if (lookupResult != PredictionCache::NOT_FOUND)
+                    {
+                        mismatches = mismatches + 1;
+                    }
+                    if (keyUpdateCallbackCalls != 1)
+                    {
+                        mismatches = mismatches + 1;
+                    }
+
+                    const auto replacementIndex = predictionCache->getReplacementIndex();
+                    if (replacementIndex != expectedPosition)
+                    {
+                        mismatches = mismatches + 1;
+                    }
+
+                    predictionCache->updateValues(
+                        replacementIndex,
+                        [&](const nautilus::val<PredictionCacheEntry*>& entryToUpdate, const nautilus::val<uint64_t>& updateIndex)
+                        {
+                            if (updateIndex != expectedPosition)
+                            {
+                                mismatches = mismatches + 1;
+                            }
+                            nautilus::invoke(
+                                replacePredictionCacheTestEntry,
+                                entryToUpdate,
+                                record,
+                                dataStructure,
+                                nautilus::val<size_t>(recordSize),
+                                nautilus::val<size_t>(dataSize));
+                        });
+
+                    const auto dataStructureRef = predictionCache->getDataStructure(replacementIndex);
+                    const nautilus::val<uint64_t> actualValue{*static_cast<nautilus::val<uint64_t*>>(dataStructureRef)};
+                    if (actualValue != expectedValue)
+                    {
+                        mismatches = mismatches + 1;
+                    }
+                }
+            }
+
+            const nautilus::val<uint64_t> hits{*static_cast<nautilus::val<uint64_t*>>(cacheStart)};
+            const nautilus::val<uint64_t> misses{*(static_cast<nautilus::val<uint64_t*>>(cacheStart) + nautilus::val<uint64_t>(1))};
+            if (hits != expectedHits)
+            {
+                mismatches = mismatches + 1;
+            }
+            if (misses != expectedMisses)
+            {
+                mismatches = mismatches + 1;
+            }
+            return mismatches;
+        }));
+
+    auto bufferManager = BufferManager::create(4096, 1000);
+    ChainedHashMap lookupIndex(0, sizeof(uint64_t), numberOfEntries, 4096);
+    const auto mismatches = predictionCacheCallableFunction(
+        reinterpret_cast<int8_t*>(cacheMemory.data()), operations.data(), &lookupIndex, bufferManager.get());
+    EXPECT_EQ(mismatches, 0) << "Prediction cache updateKeys result mismatch in policy " << magic_enum::enum_name(cacheType);
 }
 
 INSTANTIATE_TEST_CASE_P(

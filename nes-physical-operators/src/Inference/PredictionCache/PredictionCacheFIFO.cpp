@@ -45,6 +45,7 @@ void PredictionCacheFIFO::setReplacementPos(nautilus::val<uint64_t> pos)
 void PredictionCacheFIFO::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCacheUpdate& updateFunction)
 {
     updateFunction(startOfEntries + pos * sizeOfEntry, pos);
+    addLookupIndexEntry(getRecord(pos), pos);
 }
 
 nautilus::val<uint64_t>
@@ -58,7 +59,6 @@ PredictionCacheFIFO::updateKeys(const nautilus::val<std::byte*>& record, const P
 
     incrementNumberOfMisses();
     updateFunction(startOfEntries + localReplacementIndex * sizeOfEntry, localReplacementIndex);
-    addLookupIndexEntry(record, localReplacementIndex);
     replacementIndex = localReplacementIndex;
     localReplacementIndex = (localReplacementIndex + 1) % numberOfEntries;
     return nautilus::val<uint64_t>(NOT_FOUND);

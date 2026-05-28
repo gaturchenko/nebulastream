@@ -51,6 +51,7 @@ nautilus::val<bool*> PredictionCacheSecondChance::getSecondChanceBit(const nauti
 void PredictionCacheSecondChance::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCacheUpdate& updateFunction)
 {
     updateFunction(startOfEntries + pos * sizeOfEntry, pos);
+    addLookupIndexEntry(getRecord(pos), pos);
 }
 
 nautilus::val<uint64_t>
@@ -73,7 +74,6 @@ PredictionCacheSecondChance::updateKeys(const nautilus::val<std::byte*>& record,
     }
 
     updateFunction(startOfEntries + localReplacementIndex * sizeOfEntry, localReplacementIndex);
-    addLookupIndexEntry(record, localReplacementIndex);
     replacementIndex = localReplacementIndex;
     *secondChanceBit = true;
     return nautilus::val<uint64_t>(NOT_FOUND);

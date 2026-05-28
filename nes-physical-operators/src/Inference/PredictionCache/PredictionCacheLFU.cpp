@@ -76,6 +76,7 @@ nautilus::val<uint64_t> PredictionCacheLFU::getReplacementPos()
 void PredictionCacheLFU::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCacheUpdate& updateFunction)
 {
     updateFunction(startOfEntries + pos * sizeOfEntry, pos);
+    addLookupIndexEntry(getRecord(pos), pos);
 }
 
 nautilus::val<uint64_t> PredictionCacheLFU::updateKeys(const nautilus::val<std::byte*>& record, const PredictionCacheUpdate& updateFunction)
@@ -95,7 +96,6 @@ nautilus::val<uint64_t> PredictionCacheLFU::updateKeys(const nautilus::val<std::
     incrementNumberOfMisses();
     const auto replacementPos = getReplacementPos();
     updateFunction(startOfEntries + replacementPos * sizeOfEntry, replacementPos);
-    addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
     *getFrequency(replacementPos) = 1;
     if (nextEmptyPos >= numberOfEntries)
