@@ -22,6 +22,15 @@ add_nes_physical_operator_test(SliceAssignerTest SliceAssignerTest.cpp)
 add_nes_physical_operator_test(SliceCacheTest SliceCacheTest.cpp)
 add_nes_physical_operator_test(PredictionCacheTest PredictionCacheTest.cpp)
 
+add_executable(PredictionCacheMicrobenchmark microbenchmark/PredictionCacheMicrobenchmark.cpp)
+target_include_directories(PredictionCacheMicrobenchmark PRIVATE
+        microbenchmark/)
+target_link_libraries(PredictionCacheMicrobenchmark PRIVATE
+        nes-data-types
+        nes-physical-operators
+        nes-memory-test-utils
+        nes-test-util)
+
 if (ENABLE_IREE_TESTS)
     add_definitions(-DINFERENCE_TEST_DATA="${CMAKE_SOURCE_DIR}/nes-inference/tests/testdata")
 
