@@ -22,6 +22,10 @@ namespace NES
 struct PredictionCacheEntryLFU : PredictionCacheEntry
 {
     uint64_t frequency = 0;
+    uint64_t previousPos = UINT64_MAX;
+    uint64_t nextPos = UINT64_MAX;
+    uint64_t bucketHead = UINT64_MAX;
+    uint64_t bucketTail = UINT64_MAX;
     ~PredictionCacheEntryLFU() override = default;
 };
 
@@ -47,10 +51,18 @@ public:
 
 private:
     nautilus::val<uint64_t*> getFrequency(const nautilus::val<uint64_t>& pos);
-    void recomputeMinFrequencyIndex();
+    nautilus::val<uint64_t*> getPreviousPos(const nautilus::val<uint64_t>& pos);
+    nautilus::val<uint64_t*> getNextPos(const nautilus::val<uint64_t>& pos);
+    nautilus::val<uint64_t*> getBucketHeadByIndex(const nautilus::val<uint64_t>& bucketIndex);
+    nautilus::val<uint64_t*> getBucketTailByIndex(const nautilus::val<uint64_t>& bucketIndex);
+    nautilus::val<uint64_t> getBucketIndex(const nautilus::val<uint64_t>& frequency);
+    void initializeBuckets();
+    void appendToBucket(const nautilus::val<uint64_t>& pos, const nautilus::val<uint64_t>& frequency);
+    void removeFromBucket(const nautilus::val<uint64_t>& pos);
+    void touch(const nautilus::val<uint64_t>& pos);
+    void insertWithFrequencyOne(const nautilus::val<uint64_t>& pos);
 
     nautilus::val<uint64_t> nextEmptyPos;
-    nautilus::val<uint64_t> minFrequencyIndex;
-    nautilus::val<bool> minFrequencyDirty;
+    nautilus::val<uint64_t> minFrequency;
 };
 }

@@ -29,11 +29,9 @@ PredictionCacheLFU::PredictionCacheLFU(
     nautilus::val<uint64_t*> hitsRef,
     nautilus::val<uint64_t*> missesRef,
     nautilus::val<size_t> inputSize)
-    : PredictionCache(numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize)
-    , nextEmptyPos(0)
-    , minFrequencyIndex(0)
-    , minFrequencyDirty(true)
+    : PredictionCache(numberOfEntries, sizeOfEntry, startOfEntries, hitsRef, missesRef, inputSize), nextEmptyPos(0), minFrequency(NOT_FOUND)
 {
+    initializeBuckets();
 }
 
 nautilus::val<uint64_t*> PredictionCacheLFU::getFrequency(const nautilus::val<uint64_t>& pos)
@@ -41,21 +39,149 @@ nautilus::val<uint64_t*> PredictionCacheLFU::getFrequency(const nautilus::val<ui
     return getMemberRef(startOfEntries + pos * sizeOfEntry, &PredictionCacheEntryLFU::frequency);
 }
 
-void PredictionCacheLFU::recomputeMinFrequencyIndex()
+nautilus::val<uint64_t*> PredictionCacheLFU::getPreviousPos(const nautilus::val<uint64_t>& pos)
 {
-    nautilus::val<uint64_t> minFrequency = UINT64_MAX;
-    nautilus::val<uint64_t> minFrequencyPos = 0;
+    return getMemberRef(startOfEntries + pos * sizeOfEntry, &PredictionCacheEntryLFU::previousPos);
+}
+
+nautilus::val<uint64_t*> PredictionCacheLFU::getNextPos(const nautilus::val<uint64_t>& pos)
+{
+    return getMemberRef(startOfEntries + pos * sizeOfEntry, &PredictionCacheEntryLFU::nextPos);
+}
+
+nautilus::val<uint64_t*> PredictionCacheLFU::getBucketHeadByIndex(const nautilus::val<uint64_t>& bucketIndex)
+{
+    return getMemberRef(startOfEntries + bucketIndex * sizeOfEntry, &PredictionCacheEntryLFU::bucketHead);
+}
+
+nautilus::val<uint64_t*> PredictionCacheLFU::getBucketTailByIndex(const nautilus::val<uint64_t>& bucketIndex)
+{
+    return getMemberRef(startOfEntries + bucketIndex * sizeOfEntry, &PredictionCacheEntryLFU::bucketTail);
+}
+
+nautilus::val<uint64_t> PredictionCacheLFU::getBucketIndex(const nautilus::val<uint64_t>& frequency)
+{
+    if (frequency < numberOfEntries)
+    {
+        return frequency - nautilus::val<uint64_t>(1);
+    }
+    return numberOfEntries - nautilus::val<uint64_t>(1);
+}
+
+void PredictionCacheLFU::initializeBuckets()
+{
+    nextEmptyPos = 0;
+    minFrequency = NOT_FOUND;
+
     for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
     {
-        nautilus::val<uint64_t> frequency{*getFrequency(i)};
-        if (frequency < minFrequency)
+        *getPreviousPos(i) = NOT_FOUND;
+        *getNextPos(i) = NOT_FOUND;
+        *getBucketHeadByIndex(i) = NOT_FOUND;
+        *getBucketTailByIndex(i) = NOT_FOUND;
+    }
+
+    for (nautilus::val<uint64_t> i = 0; i < numberOfEntries; ++i)
+    {
+        if (getRecord(i) != nullptr)
         {
-            minFrequency = frequency;
-            minFrequencyPos = i;
+            nautilus::val<uint64_t> frequency{*getFrequency(i)};
+            if (frequency == 0)
+            {
+                frequency = 1;
+                *getFrequency(i) = frequency;
+            }
+            appendToBucket(i, frequency);
+            nextEmptyPos = nextEmptyPos + 1;
+            if (minFrequency == NOT_FOUND || frequency < minFrequency)
+            {
+                minFrequency = frequency;
+            }
         }
     }
-    minFrequencyIndex = minFrequencyPos;
-    minFrequencyDirty = false;
+}
+
+void PredictionCacheLFU::appendToBucket(const nautilus::val<uint64_t>& pos, const nautilus::val<uint64_t>& frequency)
+{
+    const auto bucketIndex = getBucketIndex(frequency);
+    auto bucketHead = getBucketHeadByIndex(bucketIndex);
+    auto bucketTail = getBucketTailByIndex(bucketIndex);
+    nautilus::val<uint64_t> tail{*bucketTail};
+
+    *getPreviousPos(pos) = tail;
+    *getNextPos(pos) = NOT_FOUND;
+    if (tail != NOT_FOUND)
+    {
+        *getNextPos(tail) = pos;
+    }
+    else
+    {
+        *bucketHead = pos;
+    }
+    *bucketTail = pos;
+}
+
+void PredictionCacheLFU::removeFromBucket(const nautilus::val<uint64_t>& pos)
+{
+    nautilus::val<uint64_t> frequency{*getFrequency(pos)};
+    const auto bucketIndex = getBucketIndex(frequency);
+    auto bucketHead = getBucketHeadByIndex(bucketIndex);
+    auto bucketTail = getBucketTailByIndex(bucketIndex);
+    nautilus::val<uint64_t> previousPos{*getPreviousPos(pos)};
+    nautilus::val<uint64_t> nextPos{*getNextPos(pos)};
+
+    if (previousPos != NOT_FOUND)
+    {
+        *getNextPos(previousPos) = nextPos;
+    }
+    else
+    {
+        *bucketHead = nextPos;
+    }
+    if (nextPos != NOT_FOUND)
+    {
+        *getPreviousPos(nextPos) = previousPos;
+    }
+    else
+    {
+        *bucketTail = previousPos;
+    }
+
+    *getPreviousPos(pos) = NOT_FOUND;
+    *getNextPos(pos) = NOT_FOUND;
+}
+
+void PredictionCacheLFU::touch(const nautilus::val<uint64_t>& pos)
+{
+    nautilus::val<uint64_t> oldFrequency{*getFrequency(pos)};
+    if (oldFrequency >= numberOfEntries)
+    {
+        return;
+    }
+
+    auto newFrequency = oldFrequency;
+    newFrequency = oldFrequency + nautilus::val<uint64_t>(1);
+
+    removeFromBucket(pos);
+    *getFrequency(pos) = newFrequency;
+    appendToBucket(pos, newFrequency);
+
+    if (oldFrequency == minFrequency && *getBucketHeadByIndex(getBucketIndex(oldFrequency)) == NOT_FOUND)
+    {
+        minFrequency = newFrequency;
+    }
+}
+
+void PredictionCacheLFU::insertWithFrequencyOne(const nautilus::val<uint64_t>& pos)
+{
+    if (nautilus::val<uint64_t>(*getFrequency(pos)) != 0)
+    {
+        removeFromBucket(pos);
+    }
+
+    *getFrequency(pos) = 1;
+    appendToBucket(pos, 1);
+    minFrequency = 1;
 }
 
 nautilus::val<uint64_t> PredictionCacheLFU::getReplacementPos()
@@ -66,11 +192,7 @@ nautilus::val<uint64_t> PredictionCacheLFU::getReplacementPos()
         nextEmptyPos = nextEmptyPos + 1;
         return replacementPos;
     }
-    if (minFrequencyDirty)
-    {
-        recomputeMinFrequencyIndex();
-    }
-    return minFrequencyIndex;
+    return *getBucketHeadByIndex(getBucketIndex(minFrequency));
 }
 
 void PredictionCacheLFU::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCacheUpdate& updateFunction)
@@ -84,12 +206,7 @@ nautilus::val<uint64_t> PredictionCacheLFU::updateKeys(const nautilus::val<std::
     if (const auto dataStructurePos = searchInCache(record); dataStructurePos != NOT_FOUND)
     {
         incrementNumberOfHits();
-        auto frequency = getFrequency(dataStructurePos);
-        *frequency = nautilus::val<uint64_t>(*frequency) + nautilus::val<uint64_t>(1);
-        if (dataStructurePos == minFrequencyIndex)
-        {
-            minFrequencyDirty = true;
-        }
+        touch(dataStructurePos);
         return dataStructurePos;
     }
 
@@ -97,12 +214,7 @@ nautilus::val<uint64_t> PredictionCacheLFU::updateKeys(const nautilus::val<std::
     const auto replacementPos = getReplacementPos();
     updateFunction(startOfEntries + replacementPos * sizeOfEntry, replacementPos);
     replacementIndex = replacementPos;
-    *getFrequency(replacementPos) = 1;
-    if (nextEmptyPos >= numberOfEntries)
-    {
-        minFrequencyIndex = replacementPos;
-        minFrequencyDirty = false;
-    }
+    insertWithFrequencyOne(replacementPos);
     return nautilus::val<uint64_t>(NOT_FOUND);
 }
 
@@ -112,12 +224,7 @@ PredictionCacheLFU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     if (const auto dataStructurePos = searchInCache(record); dataStructurePos != NOT_FOUND)
     {
         incrementNumberOfHits();
-        auto frequency = getFrequency(dataStructurePos);
-        *frequency = nautilus::val<uint64_t>(*frequency) + nautilus::val<uint64_t>(1);
-        if (dataStructurePos == minFrequencyIndex)
-        {
-            minFrequencyDirty = true;
-        }
+        touch(dataStructurePos);
         return getDataStructure(dataStructurePos);
     }
 
@@ -126,12 +233,7 @@ PredictionCacheLFU::getDataStructureRef(const nautilus::val<std::byte*>& record,
     const auto dataStructure = replacementFunction(startOfEntries + replacementPos * sizeOfEntry, replacementPos);
     addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
-    *getFrequency(replacementPos) = 1;
-    if (nextEmptyPos >= numberOfEntries)
-    {
-        minFrequencyIndex = replacementPos;
-        minFrequencyDirty = false;
-    }
+    insertWithFrequencyOne(replacementPos);
     return dataStructure;
 }
 

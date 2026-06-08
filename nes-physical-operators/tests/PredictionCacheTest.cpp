@@ -87,7 +87,7 @@ class ReferencePredictionCache
 {
 public:
     ReferencePredictionCache(const PredictionCacheType cacheType, const uint64_t numberOfEntries)
-        : cacheType(cacheType), entries(numberOfEntries)
+        : cacheType(cacheType), entries(numberOfEntries), lfuBuckets(numberOfEntries + 1)
     {
     }
 
@@ -142,30 +142,43 @@ private:
         return {.hit = false, .value = newValue, .position = replacementPos};
     }
 
-    void recomputeMinFrequencyIndex()
+    uint64_t saturateFrequency(const uint64_t frequency) const { return std::min<uint64_t>(frequency, entries.size()); }
+
+    void removeFromLfuBucket(const uint64_t pos)
     {
-        uint64_t minFrequency = std::numeric_limits<uint64_t>::max();
-        uint64_t minFrequencyPos = 0;
-        for (uint64_t i = 0; i < entries.size(); ++i)
+        auto& bucket = lfuBuckets[entries[pos].frequency];
+        bucket.erase(std::ranges::remove(bucket, pos).begin(), bucket.end());
+    }
+
+    void addToLfuBucket(const uint64_t pos, const uint64_t frequency)
+    {
+        entries[pos].frequency = saturateFrequency(frequency);
+        lfuBuckets[entries[pos].frequency].push_back(pos);
+    }
+
+    void updateMinFrequencyAfterRemoving(const uint64_t oldFrequency)
+    {
+        if (oldFrequency != minFrequency || !lfuBuckets[minFrequency].empty())
         {
-            if (entries[i].frequency < minFrequency)
-            {
-                minFrequency = entries[i].frequency;
-                minFrequencyPos = i;
-            }
+            return;
         }
-        minFrequencyIndex = minFrequencyPos;
-        minFrequencyDirty = false;
+
+        while (minFrequency < lfuBuckets.size() && lfuBuckets[minFrequency].empty())
+        {
+            minFrequency++;
+        }
     }
 
     LookupResult lookupLfu(const uint64_t key, const uint64_t newValue)
     {
         if (const auto pos = findKey(key); pos != notFound)
         {
-            entries[pos].frequency++;
-            if (pos == minFrequencyIndex)
+            const auto oldFrequency = entries[pos].frequency;
+            if (oldFrequency < entries.size())
             {
-                minFrequencyDirty = true;
+                removeFromLfuBucket(pos);
+                addToLfuBucket(pos, oldFrequency + 1);
+                updateMinFrequencyAfterRemoving(oldFrequency);
             }
             return {.hit = true, .value = entries[pos].value, .position = pos};
         }
@@ -177,20 +190,13 @@ private:
         }
         else
         {
-            if (minFrequencyDirty)
-            {
-                recomputeMinFrequencyIndex();
-            }
-            replacementPos = minFrequencyIndex;
+            replacementPos = lfuBuckets[minFrequency].front();
+            lfuBuckets[minFrequency].erase(lfuBuckets[minFrequency].begin());
         }
 
         replaceEntry(replacementPos, key, newValue);
-        entries[replacementPos].frequency = 1;
-        if (nextEmptyLfuPos >= entries.size())
-        {
-            minFrequencyIndex = replacementPos;
-            minFrequencyDirty = false;
-        }
+        addToLfuBucket(replacementPos, 1);
+        minFrequency = 1;
         return {.hit = false, .value = newValue, .position = replacementPos};
     }
 
@@ -247,8 +253,8 @@ private:
     std::vector<ReferenceCacheEntry> entries;
     uint64_t fifoReplacementIndex = 0;
     uint64_t nextEmptyLfuPos = 0;
-    uint64_t minFrequencyIndex = 0;
-    bool minFrequencyDirty = true;
+    uint64_t minFrequency = 1;
+    std::vector<std::vector<uint64_t>> lfuBuckets;
     uint64_t nextEmptyLruPos = 0;
     std::vector<uint64_t> lruOrder;
     uint64_t secondChanceReplacementIndex = 0;
