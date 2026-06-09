@@ -1,0 +1,3 @@
+[submodule "scripts/benchmarking/e2e/baselines/flink-openvino-baseline"]
+	path = scripts/benchmarking/e2e/baselines/flink-openvino-baseline
+	url = git@github.com:gaturchenko/flink-openvino-baseline
