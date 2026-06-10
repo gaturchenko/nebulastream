@@ -114,5 +114,41 @@ python3 scripts/benchmarking/e2e/run_systests.py \
     inference/solar_power/threading/dlinear-96.test:08 \
     inference/solar_power/threading/dlinear-96.test:09 \
     inference/solar_power/threading/dlinear-96.test:10 \
+    inference/solar_power/threading/nbeats-1-24.test:01 \
+    inference/solar_power/threading/nbeats-1-24.test:02 \
+    inference/solar_power/threading/nbeats-1-24.test:03 \
+    inference/solar_power/threading/nbeats-1-24.test:04 \
+    inference/solar_power/threading/nbeats-1-24.test:05 \
+    inference/solar_power/threading/nbeats-1-24.test:06 \
+    inference/solar_power/threading/nbeats-1-24.test:07 \
+    inference/solar_power/threading/nbeats-1-24.test:08 \
+    inference/solar_power/threading/nbeats-32-24.test:01 \
+    inference/solar_power/threading/nbeats-32-24.test:02 \
+    inference/solar_power/threading/nbeats-32-24.test:03 \
+    inference/solar_power/threading/nbeats-32-24.test:04 \
+    inference/solar_power/threading/nbeats-32-24.test:05 \
+    inference/solar_power/threading/nbeats-32-24.test:06 \
+    inference/solar_power/threading/nbeats-32-24.test:07 \
+    inference/solar_power/threading/nbeats-32-24.test:08 \
+    inference/solar_power/threading/nbeats-1-48.test:01 \
+    inference/solar_power/threading/nbeats-1-48.test:02 \
+    inference/solar_power/threading/nbeats-1-48.test:03 \
+    inference/solar_power/threading/nbeats-1-48.test:04 \
+    inference/solar_power/threading/nbeats-1-48.test:05 \
+    inference/solar_power/threading/nbeats-1-48.test:06 \
+    inference/solar_power/threading/nbeats-1-48.test:07 \
+    inference/solar_power/threading/nbeats-1-48.test:08 \
+    inference/solar_power/threading/nbeats-1-48.test:09 \
+    inference/solar_power/threading/nbeats-1-48.test:10 \
+    inference/solar_power/threading/nbeats-32-48.test:01 \
+    inference/solar_power/threading/nbeats-32-48.test:02 \
+    inference/solar_power/threading/nbeats-32-48.test:03 \
+    inference/solar_power/threading/nbeats-32-48.test:04 \
+    inference/solar_power/threading/nbeats-32-48.test:05 \
+    inference/solar_power/threading/nbeats-32-48.test:06 \
+    inference/solar_power/threading/nbeats-32-48.test:07 \
+    inference/solar_power/threading/nbeats-32-48.test:08 \
+    inference/solar_power/threading/nbeats-32-48.test:09 \
+    inference/solar_power/threading/nbeats-32-48.test:10 \
     --inference-config scripts/benchmarking/e2e/config/inference_default.yaml \
     --repetitions 10
