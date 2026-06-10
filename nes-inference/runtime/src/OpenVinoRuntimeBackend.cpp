@@ -41,78 +41,6 @@
 
 namespace
 {
-std::string shapeToString(const ov::Shape& shape)
-{
-    std::ostringstream stream;
-    stream << "[";
-    for (size_t i = 0; i < shape.size(); ++i)
-    {
-        if (i > 0)
-        {
-            stream << ", ";
-        }
-        stream << shape.at(i);
-    }
-    stream << "]";
-    return stream.str();
-}
-
-template <typename T>
-void appendTensorValues(std::ostringstream& stream, const ov::Tensor& tensor)
-{
-    constexpr auto debugMargin = std::streamoff{64};
-    const auto* data = tensor.data<const T>();
-    const auto numberOfValues = tensor.get_size();
-    for (size_t i = 0; i < numberOfValues; ++i)
-    {
-        if (i > 0)
-        {
-            stream << ", ";
-        }
-
-        if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
-        {
-            stream << static_cast<int>(data[i]);
-        }
-        else if constexpr (std::is_same_v<T, bool>)
-        {
-            stream << (data[i] ? "true" : "false");
-        }
-        else if constexpr (std::is_same_v<T, ov::float16>)
-        {
-            stream << static_cast<float>(data[i]);
-        }
-        else
-        {
-            stream << data[i];
-        }
-
-        if (stream.tellp() >= static_cast<std::streamoff>(4096) - debugMargin)
-        {
-            stream << ", ...";
-            return;
-        }
-    }
-}
-
-std::string formatTensor(const ov::Tensor& tensor)
-{
-    std::ostringstream stream;
-    stream << "shape=" << shapeToString(tensor.get_shape()) << ", type=" << tensor.get_element_type().get_type_name() << ", values=[";
-
-    const auto elementType = tensor.get_element_type();
-    appendTensorValues<float>(stream, tensor);
-
-    stream << "]";
-    auto result = stream.str();
-    if (result.size() > 4096)
-    {
-        result.resize(4096 - 3);
-        result += "...";
-    }
-    return result;
-}
-
 ov::PartialShape makeDynamicBatchShape(const std::vector<size_t>& shape)
 {
     std::vector<ov::Dimension> dimensions;
@@ -208,8 +136,6 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
     const ov::Tensor inputTensor(inputElementType, currentInputShape, inputBuffer);
     inferRequest.set_input_tensor(inputTensor);
 
-    NES_DEBUG("Model input: {}", formatTensor(inferRequest.get_input_tensor()))
-
     const ov::Tensor outputTensor(outputElementType, currentOutputShape, outputBuffer);
     inferRequest.set_output_tensor(0, outputTensor);
 
@@ -221,6 +147,5 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
     }
 
     inferRequest.infer();
-    NES_DEBUG("Model output: {}", formatTensor(inferRequest.get_output_tensor(0)))
 }
 }
