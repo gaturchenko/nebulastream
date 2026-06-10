@@ -22,12 +22,14 @@ include(${CMAKE_SOURCE_DIR}/cmake/CodeCoverage.cmake)
 include(ExternalData)
 set(ExternalData_URL_TEMPLATES
         "https://tubcloud.tu-berlin.de/s/28Tr2wTd73Ggeed/download?files=%(algo)_%(hash)"
+        "https://tubcloud.tu-berlin.de/s/ZkAMpxFBEeNAnzS/download?files=%(algo)_%(hash)"
+        "https://tubcloud.tu-berlin.de/s/aQnjYag7mxxjJaM/download?files=%(algo)_%(hash)"
 )
 if (ENABLE_LARGE_TESTS)
     set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:.*})
 else ()
-    # By default this only includes small files located in testdata/small
-    set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:small.*})
+    # By default this includes small files plus inference datasets and models.
+    set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:small.*|otcbvs_osu_rgb[.]csv|otcbvs_osu_thermal[.]csv|solar-power[.]csv|wind-power[.]csv|.*[.]onnx})
 endif ()
 set(ExternalData_TIMEOUT_ABSOLUTE 1200)
 ExternalData_Expand_Arguments(
