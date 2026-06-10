@@ -7,9 +7,9 @@ cd ./scripts/benchmarking/e2e/baselines/flink-openvino-baseline
   osu/pretrained/nanodet/nanodet.xml \
   osu_rgb/otcbvs_osu_rgb.csv \
   CPU \
-  1 \
+  3 \
+  0 \
   16 \
-  4 \
   0 \
   false \
   320 \
