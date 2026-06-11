@@ -35,6 +35,15 @@ FROM MODEL_INFERENCE(nBeats10min, (
 INTO solarPowerVarsizedDiscard2min;
 ----
 
+SELECT NBEATS_SIZE_600_STRIDE_60_UDF(value_10_min) AS powerProdNext2Min
+FROM (
+    SELECT ARRAY_AGG(value) AS value_10_min
+    FROM solarPowerSource
+    WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+)
+INTO solarPowerVarsizedDiscard2min;
+----
+
 SELECT powerProdNext1Min
 FROM MODEL_INFERENCE(nBeats5min,(
         SELECT ARRAY_AGG(value) AS value_5_min
@@ -45,12 +54,30 @@ FROM MODEL_INFERENCE(nBeats5min,(
 INTO solarPowerVarsizedDiscard1min;
 ----
 
+SELECT NBEATS_SIZE_300_STRIDE_30_UDF(value_5_min) AS powerProdNext2Min
+FROM (
+    SELECT ARRAY_AGG(value) AS value_5_min
+    FROM solarPowerSource
+    WINDOW SLIDING(timestamp, SIZE 300000 ms, ADVANCE BY 30000 ms)
+)
+INTO solarPowerVarsizedDiscard1min;
+----
+
 SELECT powerProdNext24Sec
 FROM MODEL_INFERENCE(nBeats2min, (
         SELECT ARRAY_AGG(value) AS value_2_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 120000 ms, ADVANCE BY 12000 ms)
     )
+)
+INTO solarPowerVarsizedDiscard24sec;
+----
+
+SELECT NBEATS_SIZE_120_STRIDE_12_UDF(value_2_min) AS powerProdNext2Min
+FROM (
+    SELECT ARRAY_AGG(value) AS value_2_min
+    FROM solarPowerSource
+    WINDOW SLIDING(timestamp, SIZE 120000 ms, ADVANCE BY 12000 ms)
 )
 INTO solarPowerVarsizedDiscard24sec;
 ----
