@@ -25,6 +25,7 @@
 #include <vector>
 #include <Identifiers/Identifiers.hpp>
 #include <Iterators/BFSIterator.hpp>
+#include <Operators/InferModelLogicalOperator.hpp>
 #include <Operators/LogicalOperator.hpp>
 #include <Operators/SequenceLogicalOperator.hpp>
 #include <Operators/Sinks/SinkLogicalOperator.hpp>
@@ -201,15 +202,22 @@ bool isAggregationSequence(const LogicalOperator& op)
     return sequence.has_value() && sequence->get().getSequenceSource() == SequenceLogicalOperator::SequenceSource::AGGREGATION;
 }
 
+bool isInferenceSequence(const LogicalOperator& op)
+{
+    const auto sequence = op.tryGetAs<SequenceLogicalOperator>();
+    return sequence.has_value() && sequence->get().getSequenceSource() == SequenceLogicalOperator::SequenceSource::INFERENCE;
+}
+
 LogicalOperator assignOperator(DecompositionContext& context, const LogicalOperator& op, const LogicalOperator& child)
 {
     const auto opNode = getPlacementFor(op);
     const auto childNode = getPlacementFor(child);
 
-    if (op.tryGetAs<WindowedAggregationLogicalOperator>().has_value() && isAggregationSequence(child))
+    if ((op.tryGetAs<WindowedAggregationLogicalOperator>().has_value() && isAggregationSequence(child))
+        || (op.tryGetAs<InferModelLogicalOperator>().has_value() && isInferenceSequence(child)))
     {
         const auto sequenceChildren = child.getChildren();
-        PRECONDITION(sequenceChildren.size() == 1, "Aggregation Sequence should have exactly one child");
+        PRECONDITION(sequenceChildren.size() == 1, "Sequence should have exactly one child");
 
         const auto& sequenceInput = sequenceChildren.front();
         auto assignedSequenceInput = decomposePlanRecursive(context, sequenceInput);
