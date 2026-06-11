@@ -22,4 +22,8 @@ target_include_directories(nanodet-udf PRIVATE
         ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
         ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
 
+target_compile_definitions(nanodet-udf PRIVATE
+        NES_NANODET_UDF_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+        NES_NANODET_UDF_BINARY_DIR="${PROJECT_BINARY_DIR}")
+
 target_link_libraries(nanodet-udf PRIVATE nes-inference-runtime)

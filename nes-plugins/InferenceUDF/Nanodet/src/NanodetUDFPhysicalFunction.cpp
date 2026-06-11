@@ -37,6 +37,14 @@
 #include <PhysicalFunctionRegistry.hpp>
 #include <val_arith.hpp>
 
+#ifndef NES_NANODET_UDF_SOURCE_DIR
+#define NES_NANODET_UDF_SOURCE_DIR ""
+#endif
+
+#ifndef NES_NANODET_UDF_BINARY_DIR
+#define NES_NANODET_UDF_BINARY_DIR ""
+#endif
+
 namespace NES
 {
 
@@ -54,25 +62,43 @@ constexpr auto NanodetModelRelWithDebInfoBuildPath
 
 std::filesystem::path nanodetModelPath()
 {
+    const auto toAbsolutePath = [](const std::filesystem::path& path)
+    {
+        std::error_code error;
+        const auto absolutePath = std::filesystem::absolute(path, error);
+        if (error)
+        {
+            return path;
+        }
+
+        const auto canonicalPath = std::filesystem::weakly_canonical(absolutePath, error);
+        return error ? absolutePath : canonicalPath;
+    };
+
     if (const auto* path = std::getenv(NanodetModelEnv); path != nullptr && std::strlen(path) > 0)
     {
-        return path;
+        return toAbsolutePath(path);
     }
 
-    const std::array<std::filesystem::path, 5> candidates{
+    const auto sourceDir = std::filesystem::path{NES_NANODET_UDF_SOURCE_DIR};
+    const auto binaryDir = std::filesystem::path{NES_NANODET_UDF_BINARY_DIR};
+    const std::array<std::filesystem::path, 8> candidates{
+        binaryDir / NanodetModelRepoPath,
+        sourceDir / NanodetModelRepoPath,
+        sourceDir / NanodetModelReleaseBuildPath,
+        sourceDir / NanodetModelDebugBuildPath,
+        sourceDir / NanodetModelRelWithDebInfoBuildPath,
         NanodetModelRelativePath,
         NanodetModelRepoPath,
-        NanodetModelReleaseBuildPath,
-        NanodetModelDebugBuildPath,
         NanodetModelRelWithDebInfoBuildPath};
     for (const auto& candidate : candidates)
     {
         if (std::filesystem::exists(candidate))
         {
-            return candidate;
+            return toAbsolutePath(candidate);
         }
     }
-    return NanodetModelRepoPath;
+    return toAbsolutePath(NanodetModelRepoPath);
 }
 
 const CompiledModel& nanodetCompiledModel()
