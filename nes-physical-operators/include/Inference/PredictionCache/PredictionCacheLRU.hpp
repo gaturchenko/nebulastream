@@ -44,7 +44,7 @@ public:
     void updateValues(const nautilus::val<uint64_t>& pos, const PredictionCacheUpdate& updateFunction) override;
     nautilus::val<uint64_t> getReplacementPos() override;
 
-    void setReplacementPos(nautilus::val<uint64_t>) override { }
+    void setReplacementPos(nautilus::val<uint64_t>) override;
 
 private:
     nautilus::val<uint64_t*> getPreviousPos(const nautilus::val<uint64_t>& pos);

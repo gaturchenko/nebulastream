@@ -110,6 +110,25 @@ nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
     return replacementPos;
 }
 
+void PredictionCacheLRU::setReplacementPos(nautilus::val<uint64_t>)
+{
+    /// Cache entries outlive this wrapper, but the LRU head/tail state does not.
+    nextEmptyPos = 0;
+    lruHead = NOT_FOUND;
+    lruTail = NOT_FOUND;
+
+    for (nautilus::val<uint64_t> pos = 0; pos < numberOfEntries; pos = pos + 1)
+    {
+        *getPreviousPos(pos) = NOT_FOUND;
+        *getNextPos(pos) = NOT_FOUND;
+        if (getRecord(pos) != nullptr)
+        {
+            appendToTail(pos);
+            nextEmptyPos = pos + 1;
+        }
+    }
+}
+
 void PredictionCacheLRU::updateValues(const nautilus::val<uint64_t>& pos, const PredictionCacheUpdate& updateFunction)
 {
     updateFunction(startOfEntries + pos * sizeOfEntry, pos);
