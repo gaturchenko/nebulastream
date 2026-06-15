@@ -254,9 +254,14 @@ std::expected<ImportedModel, ImportError> OpenVinoImporter::importModel(const st
             std::memcpy(weightsTensor.data<std::uint8_t>(), weights.data(), weights.size());
         }
         auto model = core.read_model(xmlContent, weightsTensor);
-        if (model->inputs().size() != 1 || model->outputs().size() != 1)
+        if (model->inputs().size() != 1)
         {
-            return std::unexpected(ImportError{"OpenVINO inference supports exactly one model input and one model output"});
+            return std::unexpected(ImportError{"OpenVINO inference supports exactly one model input"});
+        }
+
+        if (model->outputs().size() != 1)
+        {
+            NES_WARNING("OpenVINO inference supports exactly one model output; Tensor with index 0 will be selected as the output");
         }
 
         const auto input = model->input(0);
