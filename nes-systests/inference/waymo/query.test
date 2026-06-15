@@ -1,0 +1,65 @@
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [10]
+
+CREATE LOGICAL SOURCE camera1(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR camera1 TYPE File;
+ATTACH FILE large/waymo/camera_1.csv
+
+CREATE LOGICAL SOURCE camera2(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR camera2 TYPE File;
+ATTACH FILE large/waymo/camera_2.csv
+
+CREATE LOGICAL SOURCE camera3(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR camera3 TYPE File;
+ATTACH FILE large/waymo/camera_3.csv
+
+CREATE LOGICAL SOURCE camera4(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR camera4 TYPE File;
+ATTACH FILE large/waymo/camera_4.csv
+
+CREATE LOGICAL SOURCE camera5(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR camera5 TYPE File;
+ATTACH FILE large/waymo/camera_5.csv
+
+CREATE MODEL deeplabv3 ('model/waymo/pretrained/deeplabv3/deeplabv3.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (segmentationOutput VARSIZED);
+
+CREATE SINK waymoSegmentationVarsizedDiscard(segmentationOutput VARSIZED NOT NULL) TYPE Void;
+
+SELECT segmentationOutput FROM MODEL_INFERENCE(deeplabv3, (
+        SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(450), UINT32(300)) AS framePreprocessed
+        FROM camera1
+    )
+)
+INTO waymoSegmentationVarsizedDiscard;
+----
+
+CREATE SINK waymoJoinedDiscard(
+    camera1camera2camera3camera4camera5.start UINT64 NOT NULL,
+    camera1camera2camera3camera4camera5.end UINT64 NOT NULL,
+    camera1camera2camera3camera4.start UINT64 NOT NULL,
+    camera1camera2camera3camera4.end UINT64 NOT NULL,
+    camera1camera2camera3.start UINT64 NOT NULL,
+    camera1camera2camera3.end UINT64 NOT NULL,
+    camera1camera2.start UINT64 NOT NULL,
+    camera1camera2.end UINT64 NOT NULL,
+    camera1.timestamp UINT64 NOT NULL,
+    camera1.frameBase64 VARSIZED NOT NULL,
+    camera2.timestamp UINT64 NOT NULL,
+    camera2.frameBase64 VARSIZED NOT NULL,
+    camera3.timestamp UINT64 NOT NULL,
+    camera3.frameBase64 VARSIZED NOT NULL,
+    camera4.timestamp UINT64 NOT NULL,
+    camera4.frameBase64 VARSIZED NOT NULL,
+    camera5.timestamp UINT64 NOT NULL,
+    camera5.frameBase64 VARSIZED NOT NULL
+) TYPE Void;
+
+SELECT * FROM (SELECT * FROM camera1)
+    INNER JOIN (SELECT * FROM camera2) ON `CAMERA1$TIMESTAMP` = `CAMERA2$TIMESTAMP` WINDOW TUMBLING (timestamp, SIZE 100 ms)
+    INNER JOIN (SELECT * FROM camera3) ON `CAMERA1$TIMESTAMP` = `CAMERA3$TIMESTAMP` WINDOW TUMBLING (timestamp, SIZE 100 ms)
+    INNER JOIN (SELECT * FROM camera4) ON `CAMERA1$TIMESTAMP` = `CAMERA4$TIMESTAMP` WINDOW TUMBLING (timestamp, SIZE 100 ms)
+    INNER JOIN (SELECT * FROM camera5) ON `CAMERA1$TIMESTAMP` = `CAMERA5$TIMESTAMP` WINDOW TUMBLING (timestamp, SIZE 100 ms)
+INTO waymoJoinedDiscard;
+----
