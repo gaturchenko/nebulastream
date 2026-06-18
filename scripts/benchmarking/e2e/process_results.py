@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
         default=default_results,
         help=f"Results directory (default: {default_results}).",
     )
-    default_output = default_results / "results"
+    default_output = default_results / "results.csv"
     parser.add_argument(
         "--output-csv",
         type=Path,

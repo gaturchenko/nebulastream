@@ -9,7 +9,7 @@ ATTACH FILE large/solar_power/solar-power.csv
 
 CREATE SINK solarPowerVarsizedDiscard2min(powerProdNext2Min VARSIZED NOT NULL) TYPE Void;
 
-CREATE MODEL nbeats ('model/solar_power/pretrained/nbeats/nbeats_solar_size_600_stride_60.onnx')
+CREATE MODEL nbeats ('model/power/pretrained/nbeats/nbeats_solar_size_600_stride_60_1.onnx')
 INPUT (value_10_min VARSIZED)
 OUTPUT (powerProdNext2Min VARSIZED);
 
