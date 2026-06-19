@@ -9,13 +9,13 @@ ATTACH FILE large/solar_power/solar-power.csv
 
 CREATE SINK solarPowerVarsizedDiscard2min(powerProdNext2Min VARSIZED NOT NULL) TYPE Void;
 
-CREATE MODEL dlinear ('model/solar_power/pretrained/dlinear/dlinear_solar_size_600_stride_60.onnx')
+CREATE MODEL nbeats ('model/power/pretrained/nbeats/nbeats_solar_size_600_stride_60_32.onnx')
 INPUT (value_10_min VARSIZED)
 OUTPUT (powerProdNext2Min VARSIZED);
 
 Configuration worker.query_engine.number_of_worker_threads: [24]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [1]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
@@ -26,7 +26,7 @@ INTO solarPowerVarsizedDiscard2min;
 
 Configuration worker.query_engine.number_of_worker_threads: [12]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [2]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
@@ -37,7 +37,7 @@ INTO solarPowerVarsizedDiscard2min;
 
 Configuration worker.query_engine.number_of_worker_threads: [8]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [3]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
@@ -48,7 +48,7 @@ INTO solarPowerVarsizedDiscard2min;
 
 Configuration worker.query_engine.number_of_worker_threads: [6]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
@@ -59,7 +59,7 @@ INTO solarPowerVarsizedDiscard2min;
 
 Configuration worker.query_engine.number_of_worker_threads: [4]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [6]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
@@ -70,7 +70,7 @@ INTO solarPowerVarsizedDiscard2min;
 
 Configuration worker.query_engine.number_of_worker_threads: [3]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [8]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
@@ -81,7 +81,7 @@ INTO solarPowerVarsizedDiscard2min;
 
 Configuration worker.query_engine.number_of_worker_threads: [2]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [12]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
@@ -92,7 +92,7 @@ INTO solarPowerVarsizedDiscard2min;
 
 Configuration worker.query_engine.number_of_worker_threads: [1]
 Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [24]
-SELECT powerProdNext2Min FROM MODEL_INFERENCE(dlinear, (
+SELECT powerProdNext2Min FROM MODEL_INFERENCE(nbeats, (
         SELECT ARRAY_AGG(value) AS value_10_min
         FROM solarPowerSource
         WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
