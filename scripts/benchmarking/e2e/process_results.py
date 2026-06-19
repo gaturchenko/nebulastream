@@ -1,5 +1,42 @@
 #!/usr/bin/env python3
-"""Process systest results and compute throughput and latency statistics."""
+"""Process systest results and compute throughput and latency statistics.
+
+Pipeline-level metrics are computed from Chrome trace events with
+``cat == "pipeline"``. Throughput uses each pipeline completion event's tuple
+count and event duration:
+
+    pipeline throughput = event["tuples"] * 1_000_000 / event["dur"]
+
+The multiplier converts from microseconds to seconds, so throughput is in
+tuples per second. Pipeline latency uses completion events that expose
+``task_span_us`` and ``tuples``:
+
+    pipeline latency = event["task_span_us"] / event["tuples"]
+
+End-to-end metrics are computed per inference configuration, query, and
+repetition by combining all trace files in that group. The preferred
+end-to-end duration comes from the ``systest-performance.json`` sidecar written
+by ``run_systests.py`` from systest's ``--show-query-performance`` output. That
+runtime follows systest's query-status metric:
+
+    end-to-end duration = coalesced stop timestamp - coalesced running timestamp
+
+If the sidecar is missing, the script falls back to the sum of the query
+durations from the trace files; a trace query duration is the largest matching
+``cat == "query"`` begin/end span in one trace. The end-to-end tuple count is
+the largest pipeline completion tuple count seen in the group. End-to-end
+throughput is then:
+
+    end-to-end throughput = end_to_end_tuples * 1_000_000 / end_to_end_duration_us
+
+End-to-end latency is the sum of the pipeline latencies in the group when
+pipeline latency data is available. If not, it falls back to:
+
+    end-to-end latency = end_to_end_duration_us / end_to_end_tuples
+
+With ``--aggregate``, the script reports means and standard deviations of these
+per-repetition values.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +57,7 @@ DEFAULT_INFERENCE_PARAMS = {
     "use_batch_deduplication": "false",
 }
 SOURCE_NAME_PATTERN = re.compile(r"LogicalSource\(name:\s*([^,\s)]+)")
+SYSTEST_PERFORMANCE_FILE = "systest-performance.json"
 TASK_METRIC_COLUMNS = [
     "pipeline_tuples",
     "pipeline_task_count",
@@ -74,6 +112,19 @@ def parse_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def parse_systest_performance_duration_us(payload: object) -> Optional[float]:
+    if not isinstance(payload, dict):
+        return None
+    duration_us = parse_float(payload.get("end_to_end_duration_us"))
+    if duration_us is not None and duration_us > 0:
+        return duration_us
+
+    duration_s = parse_float(payload.get("end_to_end_duration_s"))
+    if duration_s is not None and duration_s > 0:
+        return duration_s * 1_000_000.0
+    return None
 
 
 def parse_event_throughput(event: Dict[str, object]) -> Optional[float]:
@@ -191,10 +242,13 @@ def parse_end_to_end_metrics(events: List[object]) -> Optional[Dict[str, float]]
 
 
 def parse_combined_end_to_end_metrics(
-        trace_events: Iterable[List[object]]
+        trace_events: Iterable[List[object]],
+        duration_us_override: Optional[float] = None,
 ) -> Optional[Dict[str, float]]:
     event_lists = list(trace_events)
-    duration_us = parse_combined_query_duration_us(event_lists)
+    duration_us = duration_us_override
+    if duration_us is None:
+        duration_us = parse_combined_query_duration_us(event_lists)
     tuple_counts = [
         tuples
         for tuples in (parse_end_to_end_tuple_count(events) for events in event_lists)
@@ -516,6 +570,7 @@ def iter_task_metric_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
 
 def iter_end_to_end_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
     traces_by_context: Dict[Tuple[str, str, str], List[List[object]]] = {}
+    duration_by_context: Dict[Tuple[str, str, str], float] = {}
 
     for json_path in results_dir.rglob("*.json"):
         context = infer_context(results_dir, json_path)
@@ -528,20 +583,27 @@ def iter_end_to_end_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
             print(f"Skipping invalid JSON: {json_path}", file=sys.stderr)
             continue
 
-        events = payload.get("traceEvents")
-        if not isinstance(events, list):
-            continue
-
         context_key = (
             context["inference_config"],
             context["query_name"],
             context["repetition"],
         )
+        if json_path.name == SYSTEST_PERFORMANCE_FILE:
+            duration_us = parse_systest_performance_duration_us(payload)
+            if duration_us is not None:
+                duration_by_context[context_key] = duration_us
+            continue
+
+        events = payload.get("traceEvents")
+        if not isinstance(events, list):
+            continue
+
         traces_by_context.setdefault(context_key, []).append(events)
 
     for inference_config, query_name, repetition in sorted(traces_by_context):
         metrics = parse_combined_end_to_end_metrics(
-            traces_by_context[(inference_config, query_name, repetition)]
+            traces_by_context[(inference_config, query_name, repetition)],
+            duration_by_context.get((inference_config, query_name, repetition)),
         )
         if metrics is None:
             continue

@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +32,11 @@ PREDICTION_CACHE_TYPE_KEY = f"{INFERENCE_CONFIG_PREFIX}prediction_cache_type"
 PREDICTION_CACHE_ENTRIES_KEY = f"{INFERENCE_CONFIG_PREFIX}number_of_entries_prediction_cache"
 PREDICTION_CACHE_NONE = "NONE"
 DEFAULT_USE_BATCH_DEDUPLICATION = False
+SYSTEST_PERFORMANCE_FILE = "systest-performance.json"
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+QUERY_PERFORMANCE_PATTERN = re.compile(
+    r"\bPASSED\s+in\s+([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)s\b"
+)
 
 
 def repo_root() -> Path:
@@ -169,7 +176,7 @@ def build_command(
         else:
             worker_params[key] = value
 
-    cmd = [str(systest_path), "-t", query, "-n", "1"]
+    cmd = [str(systest_path), "-t", query, "-n", "1", "--show-query-performance"]
     for key, value in optimizer_params.items():
         cmd.extend(["--optimizer", f"{key}={format_value(value)}"])
 
@@ -177,6 +184,23 @@ def build_command(
     for key, value in worker_params.items():
         cmd.append(f"--{key}={format_value(value)}")
     return cmd
+
+
+def parse_query_performance_duration_us(output: str) -> float | None:
+    normalized = ANSI_ESCAPE_PATTERN.sub("", output)
+    matches = QUERY_PERFORMANCE_PATTERN.findall(normalized)
+    if not matches:
+        return None
+    return sum(float(match) for match in matches) * 1_000_000.0
+
+
+def write_query_performance(rep_dir: Path, duration_us: float) -> None:
+    payload = {
+        "end_to_end_duration_us": duration_us,
+        "source": "--show-query-performance",
+    }
+    performance_path = rep_dir / SYSTEST_PERFORMANCE_FILE
+    performance_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def safe_move(src: Path, dest_dir: Path) -> None:
@@ -385,16 +409,27 @@ def main() -> int:
                     continue
 
                 total_attempts = QUERY_RETRIES + 1
-                result: subprocess.CompletedProcess[List[str]] | None = None
+                result: subprocess.CompletedProcess[str] | None = None
                 run_snapshots: Tuple[Dict[Path, float], Dict[Path, float], Dict[Path, float]] | None = None
+                duration_us: float | None = None
                 for attempt in range(1, total_attempts + 1):
                     json_before = snapshot_files(systest_dir, "*.json")
                     log_before_build = snapshot_files(build_dir, "*.log")
                     log_before_systest = snapshot_files(systest_dir, "*.log")
 
-                    result = subprocess.run(cmd, check=False, cwd=systest_dir)
+                    result = subprocess.run(
+                        cmd,
+                        check=False,
+                        cwd=systest_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    if result.stdout:
+                        print(result.stdout, end="")
                     if result.returncode == 0:
                         run_snapshots = (json_before, log_before_build, log_before_systest)
+                        duration_us = parse_query_performance_duration_us(result.stdout)
                         break
 
                     if attempt < total_attempts:
@@ -433,6 +468,14 @@ def main() -> int:
                     run_snapshots[1],
                     run_snapshots[2],
                 )
+                if duration_us is None:
+                    print(
+                        "Could not parse --show-query-performance runtime from systest output; "
+                        f"no {SYSTEST_PERFORMANCE_FILE} written for {rep_dir}.",
+                        file=sys.stderr,
+                    )
+                else:
+                    write_query_performance(rep_dir, duration_us)
 
     return 0
 
