@@ -1,0 +1,28 @@
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1048576]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [10000]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [12]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [2]
+
+CREATE LOGICAL SOURCE osuRgbSource(frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource TYPE File;
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+CREATE SINK osuRgbVarsizedDiscard(segmentationOutput VARSIZED NOT NULL) TYPE Void;
+
+CREATE MODEL deeplabv3 ('model/waymo/pretrained/deeplabv3/deeplabv3.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (segmentationOutput VARSIZED);
+
+SELECT segmentationOutput FROM MODEL_INFERENCE(deeplabv3, (
+        SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(450), UINT32(300)) AS framePreprocessed
+        FROM osuRgbSource
+    )
+)
+INTO osuRgbVarsizedDiscard;
+----
+
+SELECT NANODET_UDF(RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(320), UINT32(320))) AS detectedObjects
+FROM osuRgbSource
+INTO osuRgbVarsizedDiscard;
+----

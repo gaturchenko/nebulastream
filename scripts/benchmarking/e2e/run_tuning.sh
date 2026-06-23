@@ -7,3 +7,6 @@ python3 scripts/benchmarking/e2e/run_systests.py --inference-config scripts/benc
   inference/wind_power/ablation_wind.test:01 \
   inference/wind_power/ablation_wind.test:03 \
   --repetitions 3
+
+#python3 scripts/benchmarking/e2e/run_systests.py --inference-config scripts/benchmarking/e2e/config/batch_sizes.yaml \
+#  --queries inference/osu_rgb/ablation_osu_rgb.test:01 --repetitions 3
