@@ -1,0 +1,51 @@
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [24]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [16384]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [524288]
+
+CREATE LOGICAL SOURCE musanSource(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+CREATE PHYSICAL SOURCE FOR musanSource TYPE File;
+ATTACH FILE large/musan/musan-us-gov-0096.csv
+
+CREATE SINK musanVarsizedDiscard(
+    p1 FLOAT32 NOT NULL,
+    p2 FLOAT32 NOT NULL,
+    p3 FLOAT32 NOT NULL,
+    p4 FLOAT32 NOT NULL,
+    p5 FLOAT32 NOT NULL,
+    p6 FLOAT32 NOT NULL,
+    p7 FLOAT32 NOT NULL,
+    p8 FLOAT32 NOT NULL,
+    p9 FLOAT32 NOT NULL,
+    p10 FLOAT32 NOT NULL,
+    p11 FLOAT32 NOT NULL,
+    p12 FLOAT32 NOT NULL
+) TYPE Void;
+
+CREATE MODEL kwt ('model/musan/pretrained/kwt/saved_model')
+INPUT (audio1sec VARSIZED)
+OUTPUT (
+        p1 FLOAT32,
+        p2 FLOAT32,
+        p3 FLOAT32,
+        p4 FLOAT32,
+        p5 FLOAT32,
+        p6 FLOAT32,
+        p7 FLOAT32,
+        p8 FLOAT32,
+        p9 FLOAT32,
+        p10 FLOAT32,
+        p11 FLOAT32,
+        p12 FLOAT32
+);
+
+SELECT p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12
+FROM MODEL_INFERENCE(kwt, (
+        SELECT ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec
+        FROM musanSource
+        WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 10 ms)
+    )
+)
+INTO musanVarsizedDiscard;
+----

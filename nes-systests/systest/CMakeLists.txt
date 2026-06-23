@@ -29,7 +29,7 @@ if (ENABLE_LARGE_TESTS)
     set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:.*})
 else ()
     # By default this includes small files plus inference datasets and models.
-    set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:small.*|otcbvs_osu_rgb[.]csv|otcbvs_osu_thermal[.]csv|solar-power[.]csv|wind-power[.]csv|camera_[1-5][.]csv|.*[.]onnx})
+    set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:small.*|otcbvs_osu_rgb[.]csv|otcbvs_osu_thermal[.]csv|solar-power[.]csv|wind-power[.]csv|musan-us-gov-0096[.]csv|camera_[1-5][.]csv|.*[.]onnx|saved_model[.]tar})
 endif ()
 set(ExternalData_TIMEOUT_ABSOLUTE 1200)
 ExternalData_Expand_Arguments(
@@ -37,6 +37,27 @@ ExternalData_Expand_Arguments(
         EXPANDED_TEST_DATA_PATH
         ${TEST_DATA_PATH}
 )
+ExternalData_Expand_Arguments(
+        test-data
+        EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE
+        DATA{../testdata/model/musan/pretrained/kwt/saved_model.tar}
+)
+set(MUSAN_SAVED_MODEL_DIR "${EXPANDED_TEST_DATA_PATH}/model/musan/pretrained/kwt/saved_model")
+set(MUSAN_SAVED_MODEL_STAMP "${MUSAN_SAVED_MODEL_DIR}.extract-stamp")
+add_custom_command(
+        OUTPUT "${MUSAN_SAVED_MODEL_STAMP}"
+        COMMAND ${CMAKE_COMMAND}
+        -DARCHIVE=${EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE}
+        -DDESTINATION=${MUSAN_SAVED_MODEL_DIR}
+        -DSTAMP=${MUSAN_SAVED_MODEL_STAMP}
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExtractExternalDataArchive.cmake"
+        DEPENDS
+        "${EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE}"
+        "${CMAKE_SOURCE_DIR}/cmake/ExtractExternalDataArchive.cmake"
+        COMMENT "Extracting MUSAN TensorFlow SavedModel"
+        VERBATIM
+)
+add_custom_target(musan-saved-model-data DEPENDS "${MUSAN_SAVED_MODEL_STAMP}")
 message(STATUS "Systest testdata is located at ${EXPANDED_TEST_DATA_PATH}")
 
 get_source(nes-systest-lib SLT_SOURCE_FILES)
@@ -163,6 +184,7 @@ endif (NOT CODE_COVERAGE)
 
 # Adding dependency for the nes-systest-lib so that the data is downloaded before the tests are run
 ExternalData_Add_Target(test-data)
+add_dependencies(test-data musan-saved-model-data)
 add_dependencies(nes-systest-lib test-data)
 
 add_tests_if_enabled(tests)

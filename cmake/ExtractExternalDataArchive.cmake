@@ -1,0 +1,52 @@
+if (NOT DEFINED ARCHIVE)
+    message(FATAL_ERROR "ARCHIVE is required")
+endif ()
+if (NOT DEFINED DESTINATION)
+    message(FATAL_ERROR "DESTINATION is required")
+endif ()
+if (NOT DEFINED STAMP)
+    message(FATAL_ERROR "STAMP is required")
+endif ()
+
+if (NOT EXISTS "${ARCHIVE}")
+    message(FATAL_ERROR "Archive does not exist: ${ARCHIVE}")
+endif ()
+
+set(staging "${DESTINATION}.extracting")
+file(REMOVE_RECURSE "${staging}" "${DESTINATION}")
+file(MAKE_DIRECTORY "${staging}")
+
+execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E tar xf "${ARCHIVE}"
+        WORKING_DIRECTORY "${staging}"
+        RESULT_VARIABLE extract_result
+)
+if (NOT extract_result EQUAL 0)
+    message(FATAL_ERROR "Failed to extract archive: ${ARCHIVE}")
+endif ()
+
+if (IS_DIRECTORY "${staging}/saved_model")
+    file(RENAME "${staging}/saved_model" "${DESTINATION}")
+else ()
+    file(GLOB extracted_entries LIST_DIRECTORIES true "${staging}/*")
+    list(LENGTH extracted_entries extracted_entry_count)
+    if (extracted_entry_count EQUAL 1)
+        list(GET extracted_entries 0 extracted_entry)
+        if (IS_DIRECTORY "${extracted_entry}")
+            file(RENAME "${extracted_entry}" "${DESTINATION}")
+        else ()
+            file(MAKE_DIRECTORY "${DESTINATION}")
+            get_filename_component(entry_name "${extracted_entry}" NAME)
+            file(RENAME "${extracted_entry}" "${DESTINATION}/${entry_name}")
+        endif ()
+    else ()
+        file(MAKE_DIRECTORY "${DESTINATION}")
+        foreach (extracted_entry IN LISTS extracted_entries)
+            get_filename_component(entry_name "${extracted_entry}" NAME)
+            file(RENAME "${extracted_entry}" "${DESTINATION}/${entry_name}")
+        endforeach ()
+    endif ()
+endif ()
+
+file(REMOVE_RECURSE "${staging}")
+file(WRITE "${STAMP}" "Extracted ${ARCHIVE}\n")
