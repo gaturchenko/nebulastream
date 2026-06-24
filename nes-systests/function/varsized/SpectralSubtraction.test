@@ -1,0 +1,15 @@
+# name: function/varsized/SpectralSubtraction.test
+# description: SPECTRAL_SUBTRACTION varsized function for raw float32 PCM audio
+# groups: [Functions]
+
+CREATE LOGICAL SOURCE audioStream(encoded VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR audioStream TYPE File;
+ATTACH INLINE
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+CREATE SINK denoisedSink(encoded VARSIZED NOT NULL) TYPE File;
+
+SELECT TO_BASE64(SPECTRAL_SUBTRACTION(FROM_BASE64(encoded), FLOAT32(-60.0))) AS encoded
+FROM audioStream INTO denoisedSink;
+----
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=

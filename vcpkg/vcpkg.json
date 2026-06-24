@@ -61,6 +61,7 @@
     "nameof",
     "nautilus",
     "nlohmann-json",
+    "fftw3",
     {
       "name": "openvino",
       "default-features": false,
