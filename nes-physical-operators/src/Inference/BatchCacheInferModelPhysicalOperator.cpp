@@ -200,6 +200,20 @@ struct ThreadLocalBatchPredictionCacheWrapper
         return deduplicatedOutputRowIndicesScratch[thread.getRawValue() % deduplicatedOutputRowIndicesScratch.size()].data();
     }
 
+    [[nodiscard]] HitsAndMisses getAggregatedHitsAndMisses() const
+    {
+        HitsAndMisses total{.hits = 0, .misses = 0};
+
+        for (const auto& storage : cacheStorage)
+        {
+            const auto* stats = reinterpret_cast<const HitsAndMisses*>(storage.data());
+            total.hits += stats->hits;
+            total.misses += stats->misses;
+        }
+
+        return total;
+    }
+
     CompiledModel model;
     InferenceRuntimeOptions options;
     PredictionCacheType cacheType;
@@ -389,6 +403,12 @@ void garbageCollectBatches(OperatorHandler* ptrOpHandler)
     auto* opHandler = dynamic_cast<BatchInferenceOperatorHandler*>(ptrOpHandler);
     PRECONDITION(opHandler != nullptr, "operator handler should be a BatchInferenceOperatorHandler");
     opHandler->garbageCollectBatches();
+}
+
+void logBatchCacheHitsAndMisses(ThreadLocalBatchPredictionCacheWrapper* twl)
+{
+    const auto stats = twl->getAggregatedHitsAndMisses();
+    NES_INFO("BatchCacheInferModelPhysicalOperator cache hits={}, misses={}", stats.hits, stats.misses);
 }
 
 }
@@ -727,6 +747,7 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
 
 void BatchCacheInferModelPhysicalOperator::terminate(ExecutionContext& executionCtx) const
 {
+    nautilus::invoke(logBatchCacheHitsAndMisses, nautilus::val<ThreadLocalBatchPredictionCacheWrapper*>(threadLocal.get()));
     nautilus::invoke(garbageCollectBatches, executionCtx.getGlobalOperatorHandler(operatorHandlerId));
     terminateChild(executionCtx);
 }

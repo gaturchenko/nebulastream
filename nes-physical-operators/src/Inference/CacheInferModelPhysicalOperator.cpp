@@ -154,6 +154,20 @@ struct ThreadLocalPredictionCacheWrapper
         return entry->dataStructure;
     }
 
+    [[nodiscard]] HitsAndMisses getAggregatedHitsAndMisses() const
+    {
+        HitsAndMisses total{.hits = 0, .misses = 0};
+
+        for (const auto& storage : cacheStorage)
+        {
+            const auto* stats = reinterpret_cast<const HitsAndMisses*>(storage.data());
+            total.hits += stats->hits;
+            total.misses += stats->misses;
+        }
+
+        return total;
+    }
+
     CompiledModel model;
     InferenceRuntimeOptions options;
     PredictionCacheType cacheType;
@@ -223,6 +237,12 @@ std::byte* replacePredictionCacheEntry(
     uint64_t inputRecordSize)
 {
     return twl->replaceEntry(thread, entry, replacementIndex, inputRecord, inputRecordSize);
+}
+
+void logCacheHitsAndMisses(ThreadLocalPredictionCacheWrapper* twl)
+{
+    const auto stats = twl->getAggregatedHitsAndMisses();
+    NES_INFO("CacheInferModelPhysicalOperator cache hits={}, misses={}", stats.hits, stats.misses);
 }
 
 }
@@ -352,6 +372,7 @@ void CacheInferModelPhysicalOperator::close(ExecutionContext& ctx, RecordBuffer&
 
 void CacheInferModelPhysicalOperator::terminate(ExecutionContext& executionCtx) const
 {
+    nautilus::invoke(logCacheHitsAndMisses, nautilus::val<ThreadLocalPredictionCacheWrapper*>(threadLocal.get()));
     terminateChild(executionCtx);
 }
 
