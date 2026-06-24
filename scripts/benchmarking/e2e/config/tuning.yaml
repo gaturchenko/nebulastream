@@ -1,4 +1,5 @@
-"worker.default_query_execution.inference.batch_size": [1, 128, 256, 512, 1024, 2048, 4096, 8192]
+#"worker.default_query_execution.inference.batch_size": [1, 128, 256, 512, 1024, 2048, 4096, 8192]
+"worker.default_query_execution.inference.batch_size": [1, 2, 4, 8, 16, 32, 64, 128]
 "worker.default_query_execution.inference.use_batch_deduplication": [false, true]
 "worker.default_query_execution.inference.prediction_cache_type": ["NONE", "FIFO", "LFU", "LRU", "SECOND_CHANCE"]
 "worker.default_query_execution.inference.number_of_entries_prediction_cache": [128, 256, 512, 1024, 2048]
