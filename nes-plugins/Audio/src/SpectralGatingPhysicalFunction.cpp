@@ -12,7 +12,7 @@
     limitations under the License.
 */
 
-#include "../include/SpectralSubtractionPhysicalFunction.hpp"
+#include "../include/SpectralGatingPhysicalFunction.hpp"
 
 #include "../include/AudioDenoising.hpp"
 
@@ -36,17 +36,17 @@ namespace
 uint64_t denoiseAudio(int8_t* inputData, uint64_t inputSize, double noiseRmsDbfs, int8_t* outputData, uint64_t outputCapacity)
 {
     return AudioDenoising::denoiseRawFloat32(
-        inputData, inputSize, noiseRmsDbfs, AudioDenoising::SpectralDenoisingMode::Subtraction, outputData, outputCapacity);
+        inputData, inputSize, noiseRmsDbfs, AudioDenoising::SpectralDenoisingMode::HardGate, outputData, outputCapacity);
 }
 }
 
-SpectralSubtractionPhysicalFunction::SpectralSubtractionPhysicalFunction(
+SpectralGatingPhysicalFunction::SpectralGatingPhysicalFunction(
     PhysicalFunction audioPhysicalFunction, PhysicalFunction noiseDbfsPhysicalFunction)
     : audioPhysicalFunction(std::move(audioPhysicalFunction)), noiseDbfsPhysicalFunction(std::move(noiseDbfsPhysicalFunction))
 {
 }
 
-VarVal SpectralSubtractionPhysicalFunction::execute(const Record& record, ArenaRef& arena) const
+VarVal SpectralGatingPhysicalFunction::execute(const Record& record, ArenaRef& arena) const
 {
     const auto inputValue = audioPhysicalFunction.execute(record, arena);
     const auto inputAudio = inputValue.getRawValueAs<VariableSizedData>();
@@ -70,20 +70,18 @@ VarVal SpectralSubtractionPhysicalFunction::execute(const Record& record, ArenaR
 }
 
 PhysicalFunctionRegistryReturnType
-PhysicalFunctionGeneratedRegistrar::RegisterSPECTRAL_SUBTRACTIONPhysicalFunction(PhysicalFunctionRegistryArguments arguments)
+PhysicalFunctionGeneratedRegistrar::RegisterSPECTRAL_GATINGPhysicalFunction(PhysicalFunctionRegistryArguments arguments)
 {
-    PRECONDITION(arguments.childFunctions.size() == 2, "SPECTRAL_SUBTRACTION function must have exactly two child functions");
-    PRECONDITION(arguments.inputTypes.size() == 2, "SPECTRAL_SUBTRACTION function expects exactly two input type descriptors");
+    PRECONDITION(arguments.childFunctions.size() == 2, "SPECTRAL_GATING function must have exactly two child functions");
+    PRECONDITION(arguments.inputTypes.size() == 2, "SPECTRAL_GATING function expects exactly two input type descriptors");
     PRECONDITION(
         arguments.inputTypes[0].isType(DataType::Type::VARSIZED),
-        "SPECTRAL_SUBTRACTION first argument must be VARSIZED, but got {}",
+        "SPECTRAL_GATING first argument must be VARSIZED, but got {}",
         arguments.inputTypes[0]);
     PRECONDITION(
-        arguments.inputTypes[1].isFloat(),
-        "SPECTRAL_SUBTRACTION second argument must be FLOAT32/FLOAT64, but got {}",
-        arguments.inputTypes[1]);
+        arguments.inputTypes[1].isFloat(), "SPECTRAL_GATING second argument must be FLOAT32/FLOAT64, but got {}", arguments.inputTypes[1]);
 
-    return SpectralSubtractionPhysicalFunction(arguments.childFunctions[0], arguments.childFunctions[1]);
+    return SpectralGatingPhysicalFunction(arguments.childFunctions[0], arguments.childFunctions[1]);
 }
 
 }

@@ -18,9 +18,22 @@ add_plugin_as_library(
         spectral-subtraction
         src/SpectralSubtractionPhysicalFunction.cpp)
 
+add_plugin(SPECTRAL_GATING LogicalFunction nes-logical-operators src/SpectralGatingLogicalFunction.cpp)
+add_plugin_as_library(
+        SPECTRAL_GATING
+        PhysicalFunction
+        nes-physical-operators
+        spectral-gating
+        src/SpectralGatingPhysicalFunction.cpp)
+
 find_package(FFTW3 CONFIG REQUIRED)
 
-target_include_directories(spectral-subtraction PRIVATE
-        ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
-        ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
-target_link_libraries(spectral-subtraction PRIVATE FFTW3::fftw3)
+add_library(audio-denoising STATIC src/AudioDenoising.cpp)
+target_link_libraries(audio-denoising PRIVATE FFTW3::fftw3)
+
+foreach(audio_physical_plugin spectral-subtraction spectral-gating)
+    target_include_directories(${audio_physical_plugin} PRIVATE
+            ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
+            ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
+    target_link_libraries(${audio_physical_plugin} PRIVATE audio-denoising)
+endforeach()
