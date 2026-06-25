@@ -38,16 +38,28 @@ namespace NES
 
 RoundLogicalFunction::RoundLogicalFunction(const LogicalFunction& child) : dataType(child.getDataType()), child(child) { };
 
+RoundLogicalFunction::RoundLogicalFunction(const LogicalFunction& child, const LogicalFunction& decimalPlaces)
+    : dataType(child.getDataType()), child(child), decimalPlaces(decimalPlaces) { };
+
 bool RoundLogicalFunction::operator==(const RoundLogicalFunction& rhs) const
 {
-    return child == rhs.getChildren()[0];
+    return child == rhs.child and decimalPlaces == rhs.decimalPlaces;
 }
 
 std::string RoundLogicalFunction::explain(ExplainVerbosity verbosity) const
 {
     if (verbosity == ExplainVerbosity::Debug)
     {
+        if (decimalPlaces.has_value())
+        {
+            return fmt::format(
+                "RoundLogicalFunction({}, {} : {})", child.explain(verbosity), decimalPlaces->explain(verbosity), dataType);
+        }
         return fmt::format("RoundLogicalFunction({} : {})", child.explain(verbosity), dataType);
+    }
+    if (decimalPlaces.has_value())
+    {
+        return fmt::format("ROUND({}, {})", child.explain(verbosity), decimalPlaces->explain(verbosity));
     }
     return fmt::format("ROUND({})", child.explain(verbosity));
 }
@@ -68,7 +80,27 @@ LogicalFunction RoundLogicalFunction::withInferredDataType(const Schema& schema)
 {
     const auto newChildren = getChildren() | std::views::transform([&schema](auto& child) { return child.withInferredDataType(schema); })
         | std::ranges::to<std::vector>();
-    INVARIANT(newChildren.size() == 1, "RoundLogicalFunction expects exactly one child function but has {}", newChildren.size());
+    INVARIANT(
+        newChildren.size() == 1 or newChildren.size() == 2,
+        "RoundLogicalFunction expects one or two child functions but has {}",
+        newChildren.size());
+    if (not newChildren[0].getDataType().isNumeric())
+    {
+        throw DifferentFieldTypeExpected("ROUND expects a numeric input but got {}", newChildren[0].getDataType());
+    }
+    if (newChildren.size() == 2)
+    {
+        if (not newChildren[0].getDataType().isFloat())
+        {
+            throw DifferentFieldTypeExpected(
+                "ROUND with decimal places expects a FLOAT32/FLOAT64 input but got {}", newChildren[0].getDataType());
+        }
+        if (not newChildren[1].getDataType().isInteger())
+        {
+            throw DifferentFieldTypeExpected(
+                "ROUND decimal places argument expects an integer input but got {}", newChildren[1].getDataType());
+        }
+    }
     auto newDataType = newChildren[0].getDataType();
     newDataType.nullable = std::ranges::any_of(newChildren, [](const auto& child) { return child.getDataType().nullable; });
     return withDataType(newDataType).withChildren(newChildren);
@@ -76,14 +108,20 @@ LogicalFunction RoundLogicalFunction::withInferredDataType(const Schema& schema)
 
 std::vector<LogicalFunction> RoundLogicalFunction::getChildren() const
 {
+    if (decimalPlaces.has_value())
+    {
+        return {child, decimalPlaces.value()};
+    }
     return {child};
 };
 
 RoundLogicalFunction RoundLogicalFunction::withChildren(const std::vector<LogicalFunction>& children) const
 {
-    PRECONDITION(children.size() == 1, "RoundLogicalFunction requires exactly one child, but got {}", children.size());
+    PRECONDITION(
+        children.size() == 1 or children.size() == 2, "RoundLogicalFunction requires one or two children, but got {}", children.size());
     auto copy = *this;
     copy.child = children[0];
+    copy.decimalPlaces = children.size() == 2 ? std::optional<LogicalFunction>{children[1]} : std::nullopt;
     return copy;
 };
 
@@ -94,15 +132,19 @@ std::string_view RoundLogicalFunction::getType() const
 
 Reflected Reflector<RoundLogicalFunction>::operator()(const RoundLogicalFunction& function) const
 {
-    return reflect(detail::ReflectedRoundLogicalFunction{.child = function.child});
+    return reflect(detail::ReflectedRoundLogicalFunction{.child = function.child, .decimalPlaces = function.decimalPlaces});
 }
 
 RoundLogicalFunction Unreflector<RoundLogicalFunction>::operator()(const Reflected& reflected) const
 {
-    auto [child] = unreflect<detail::ReflectedRoundLogicalFunction>(reflected);
+    auto [child, decimalPlaces] = unreflect<detail::ReflectedRoundLogicalFunction>(reflected);
     if (!child.has_value())
     {
         throw CannotDeserialize("Missing child function");
+    }
+    if (decimalPlaces.has_value())
+    {
+        return RoundLogicalFunction(child.value(), decimalPlaces.value());
     }
     return RoundLogicalFunction(child.value());
 }
@@ -114,9 +156,13 @@ LogicalFunctionGeneratedRegistrar::RegisterRoundLogicalFunction(LogicalFunctionR
     {
         return unreflect<RoundLogicalFunction>(arguments.reflected);
     }
-    if (arguments.children.size() != 1)
+    if (arguments.children.size() != 1 and arguments.children.size() != 2)
     {
-        throw CannotDeserialize("Function requires exactly one child, but got {}", arguments.children.size());
+        throw CannotDeserialize("Function requires one or two children, but got {}", arguments.children.size());
+    }
+    if (arguments.children.size() == 2)
+    {
+        return RoundLogicalFunction(arguments.children[0], arguments.children[1]);
     }
     return RoundLogicalFunction(arguments.children[0]);
 }

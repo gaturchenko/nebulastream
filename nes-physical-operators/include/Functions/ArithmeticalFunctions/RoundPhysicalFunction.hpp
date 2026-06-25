@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <optional>
 #include <DataTypes/DataType.hpp>
 #include <Functions/PhysicalFunction.hpp>
 #include <Nautilus/DataTypes/VarVal.hpp>
@@ -26,10 +27,13 @@ class RoundPhysicalFunction final
 {
 public:
     explicit RoundPhysicalFunction(PhysicalFunction childFunction, DataType inputType, DataType outputType);
+    explicit RoundPhysicalFunction(
+        PhysicalFunction childFunction, PhysicalFunction decimalPlacesFunction, DataType inputType, DataType outputType);
     [[nodiscard]] VarVal execute(const Record& record, ArenaRef& arena) const;
 
 private:
     PhysicalFunction childFunction;
+    std::optional<PhysicalFunction> decimalPlacesFunction;
     DataType inputType;
     DataType outputType;
 };

@@ -34,6 +34,7 @@ public:
     static constexpr std::string_view NAME = "Round";
 
     explicit RoundLogicalFunction(const LogicalFunction& child);
+    explicit RoundLogicalFunction(const LogicalFunction& child, const LogicalFunction& decimalPlaces);
 
     [[nodiscard]] bool operator==(const RoundLogicalFunction& rhs) const;
 
@@ -50,6 +51,7 @@ public:
 private:
     DataType dataType;
     LogicalFunction child;
+    std::optional<LogicalFunction> decimalPlaces;
 
     friend Reflector<RoundLogicalFunction>;
 };
@@ -75,6 +77,7 @@ namespace NES::detail
 struct ReflectedRoundLogicalFunction
 {
     std::optional<LogicalFunction> child;
+    std::optional<LogicalFunction> decimalPlaces;
 };
 }
 

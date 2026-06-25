@@ -32,6 +32,15 @@ RoundPhysicalFunction::RoundPhysicalFunction(PhysicalFunction childFunction, Dat
 {
 }
 
+RoundPhysicalFunction::RoundPhysicalFunction(
+    PhysicalFunction childFunction, PhysicalFunction decimalPlacesFunction, DataType inputType, DataType outputType)
+    : childFunction(std::move(childFunction))
+    , decimalPlacesFunction(std::move(decimalPlacesFunction))
+    , inputType(std::move(inputType))
+    , outputType(std::move(outputType))
+{
+}
+
 VarVal RoundPhysicalFunction::execute(const Record& record, ArenaRef& arena) const
 {
     const auto value = childFunction.execute(record, arena);
@@ -39,7 +48,16 @@ VarVal RoundPhysicalFunction::execute(const Record& record, ArenaRef& arena) con
     /// If the input type is an integer, we only need to cast to the output type.
     if (inputType.isFloat())
     {
-        const auto roundedValue = nautilus::round(value.getRawValueAs<nautilus::val<double>>());
+        const auto inputValue = value.getRawValueAs<nautilus::val<double>>();
+        if (decimalPlacesFunction.has_value())
+        {
+            const auto decimalPlaces
+                = decimalPlacesFunction->execute(record, arena).castToType(DataType::Type::FLOAT64).getRawValueAs<nautilus::val<double>>();
+            const auto scale = nautilus::pow(nautilus::val<double>(10.0), decimalPlaces);
+            const auto roundedValue = nautilus::round(inputValue * scale) / scale;
+            return VarVal{roundedValue}.castToType(outputType.type);
+        }
+        const auto roundedValue = nautilus::round(inputValue);
         return VarVal{roundedValue}.castToType(outputType.type);
     }
     return value.castToType(outputType.type);
@@ -48,8 +66,20 @@ VarVal RoundPhysicalFunction::execute(const Record& record, ArenaRef& arena) con
 PhysicalFunctionRegistryReturnType
 PhysicalFunctionGeneratedRegistrar::RegisterRoundPhysicalFunction(PhysicalFunctionRegistryArguments physicalFunctionRegistryArguments)
 {
-    PRECONDITION(physicalFunctionRegistryArguments.childFunctions.size() == 1, "Round function must have exactly one child function");
-    PRECONDITION(physicalFunctionRegistryArguments.inputTypes.size() == 1, "Round function must have exactly one input type");
+    PRECONDITION(
+        physicalFunctionRegistryArguments.childFunctions.size() == 1 or physicalFunctionRegistryArguments.childFunctions.size() == 2,
+        "Round function must have one or two child functions");
+    PRECONDITION(
+        physicalFunctionRegistryArguments.inputTypes.size() == 1 or physicalFunctionRegistryArguments.inputTypes.size() == 2,
+        "Round function must have one or two input types");
+    if (physicalFunctionRegistryArguments.childFunctions.size() == 2)
+    {
+        return RoundPhysicalFunction(
+            physicalFunctionRegistryArguments.childFunctions[0],
+            physicalFunctionRegistryArguments.childFunctions[1],
+            physicalFunctionRegistryArguments.inputTypes[0],
+            physicalFunctionRegistryArguments.outputType);
+    }
     return RoundPhysicalFunction(
         physicalFunctionRegistryArguments.childFunctions[0],
         physicalFunctionRegistryArguments.inputTypes[0],
