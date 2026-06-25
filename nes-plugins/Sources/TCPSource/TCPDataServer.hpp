@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -37,8 +38,8 @@ class TCPDataServer
     using DataProvider = std::function<void(tcp::socket&)>;
 
 public:
-    explicit TCPDataServer(std::vector<std::string> tuples);
-    explicit TCPDataServer(std::filesystem::path filePath);
+    explicit TCPDataServer(std::vector<std::string> tuples, std::optional<double> tuplesPerSecond = std::nullopt);
+    explicit TCPDataServer(std::filesystem::path filePath, std::optional<double> tuplesPerSecond = std::nullopt);
 
     TCPDataServer(const TCPDataServer&) = delete;
     TCPDataServer operator=(const TCPDataServer&) = delete;

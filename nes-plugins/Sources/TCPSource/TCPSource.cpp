@@ -25,6 +25,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 #include <sys/select.h>
 
@@ -51,6 +52,24 @@
 
 namespace NES
 {
+namespace
+{
+std::optional<double> getMockTupleRate(const std::unordered_map<std::string, std::string>& sourceConfig)
+{
+    const auto validatedRate = ConfigParametersTCP::MOCK_TUPLE_RATE.validate(sourceConfig);
+    if (not validatedRate.has_value())
+    {
+        throw InvalidConfigParameter("Failed validation of config parameter: {}", ConfigParametersTCP::MOCK_TUPLE_RATE.name);
+    }
+
+    const auto tupleRate = std::get<double>(validatedRate.value());
+    if (tupleRate == 0.0)
+    {
+        return std::nullopt;
+    }
+    return tupleRate;
+}
+}
 
 TCPSource::TCPSource(const SourceDescriptor& sourceDescriptor)
     : errBuffer{}
@@ -310,7 +329,8 @@ InlineDataRegistryReturnType InlineDataGeneratedRegistrar::RegisterTCPInlineData
         throw InvalidConfigParameter("Cannot use mock implementation if config already contains a host");
     }
 
-    auto mockTCPServer = std::make_unique<TCPDataServer>(std::move(systestAdaptorArguments.tuples));
+    auto mockTCPServer = std::make_unique<TCPDataServer>(
+        std::move(systestAdaptorArguments.tuples), getMockTupleRate(systestAdaptorArguments.physicalSourceConfig.sourceConfig));
 
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::PORT, std::to_string(mockTCPServer->getPort()));
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::HOST, "localhost");
@@ -335,8 +355,8 @@ FileDataRegistryReturnType FileDataGeneratedRegistrar::RegisterTCPFileData(FileD
         throw InvalidConfigParameter("Cannot use mock implementation if config already contains a host");
     }
 
-
-    auto mockTCPServer = std::make_unique<TCPDataServer>(systestAdaptorArguments.testFilePath);
+    auto mockTCPServer = std::make_unique<TCPDataServer>(
+        systestAdaptorArguments.testFilePath, getMockTupleRate(systestAdaptorArguments.physicalSourceConfig.sourceConfig));
 
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::PORT, std::to_string(mockTCPServer->getPort()));
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::HOST, "localhost");

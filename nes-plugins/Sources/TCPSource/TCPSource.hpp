@@ -16,6 +16,7 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -139,6 +140,19 @@ struct ConfigParametersTCP
         "connect_timeout_seconds",
         10,
         [](const std::unordered_map<std::string, std::string>& config) { return DescriptorConfig::tryGet(CONNECT_TIMEOUT, config); }};
+    static inline const DescriptorConfig::ConfigParameter<double> MOCK_TUPLE_RATE{
+        "mock_tuple_rate",
+        0.0,
+        [](const std::unordered_map<std::string, std::string>& config) -> std::optional<double>
+        {
+            const auto tupleRate = DescriptorConfig::tryGet(MOCK_TUPLE_RATE, config);
+            if (tupleRate.has_value() and (not std::isfinite(tupleRate.value()) or tupleRate.value() < 0.0))
+            {
+                NES_ERROR("TCPSource: mock tuple rate is: {}, but the value must be finite and greater than or equal to 0", tupleRate.value());
+                return std::nullopt;
+            }
+            return tupleRate;
+        }};
 
     static inline std::unordered_map<std::string, DescriptorConfig::ConfigParameterContainer> parameterMap
         = DescriptorConfig::createConfigParameterContainerMap(
@@ -151,7 +165,8 @@ struct ConfigParametersTCP
             FLUSH_INTERVAL_MS,
             SOCKET_BUFFER_SIZE,
             SOCKET_BUFFER_TRANSFER_SIZE,
-            CONNECT_TIMEOUT);
+            CONNECT_TIMEOUT,
+            MOCK_TUPLE_RATE);
 };
 
 class TCPSource : public Source
