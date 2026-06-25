@@ -1,0 +1,25 @@
+# name: function/arithmetical/FunctionQuantize.test
+# description: Quantize FLOAT32 values to lower precision formats and de-quantize back to FLOAT32
+# groups: [Function, FunctionQuantize]
+
+CREATE LOGICAL SOURCE stream(value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR stream TYPE File;
+ATTACH INLINE
+1.6
+-1.6
+2.25
+42.45
+
+CREATE SINK sinkStream(bf16 FLOAT32 NOT NULL, f8 FLOAT32 NOT NULL, f4 FLOAT32 NOT NULL, u8 FLOAT32 NOT NULL) TYPE File;
+
+SELECT
+    QUANTIZE(value, VARSIZED('bfloat16')) AS bf16,
+    QUANTIZE(value, VARSIZED('float8')) AS f8,
+    QUANTIZE(value, VARSIZED('float4')) AS f4,
+    QUANTIZE(value, VARSIZED('uint8')) AS u8
+FROM stream INTO sinkStream;
+----
+1.59375,1.625,1.5,2.0
+-1.59375,-1.625,-1.5,0.0
+2.25,2.25,2.0,2.0
+42.5,44.0,6.0,42.0

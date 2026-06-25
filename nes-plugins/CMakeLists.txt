@@ -23,6 +23,7 @@ activate_optional_plugin("InputFormatters/JSONInputFormatter" ON)
 activate_optional_plugin("OutputFormatters/JSONOutputFormatter" ON)
 activate_optional_plugin("ImageManip" ON)
 activate_optional_plugin("Audio" ON)
+activate_optional_plugin("Quantization" ON)
 activate_optional_plugin("InferenceUDF/Nanodet" ON)
 activate_optional_plugin("InferenceUDF/Nbeats" ON)
 
