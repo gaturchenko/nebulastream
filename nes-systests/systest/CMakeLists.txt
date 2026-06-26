@@ -29,7 +29,7 @@ if (ENABLE_LARGE_TESTS)
     set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:.*})
 else ()
     # By default this includes small files plus inference datasets and models.
-    set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:small.*|otcbvs_osu_rgb[.]csv|otcbvs_osu_thermal[.]csv|solar-power[.]csv|wind-power[.]csv|musan-us-gov-0096[.]csv|musan-us-gov-0242[.]csv|patient023-s0080lre[.]csv|camera_[1-5][.]csv|.*[.]onnx|saved_model[.]tar})
+    set(TEST_DATA_PATH DATA{../testdata/,RECURSE:,REGEX:small.*|otcbvs_osu_rgb[.]csv|otcbvs_osu_thermal[.]csv|solar-power[.]csv|wind-power[.]csv|musan-us-gov-0096[.]csv|musan-us-gov-0242[.]csv|patient023-s0080lre[.]csv|camera_[1-5][.]csv|X229_DE_time[.]csv|.*[.]onnx|saved_model[.]tar})
 endif ()
 set(ExternalData_TIMEOUT_ABSOLUTE 1200)
 ExternalData_Expand_Arguments(
