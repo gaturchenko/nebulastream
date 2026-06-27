@@ -27,6 +27,8 @@ INFERENCE_CONFIG_LABEL_PREFIX = "inference."
 BATCH_SIZE_KEY = f"{INFERENCE_CONFIG_PREFIX}batch_size"
 OPTIMIZER_BATCH_SIZE_KEY = "optimizer.inference_batch_size"
 OPTIMIZER_BATCH_SIZE_ARG = "inference_batch_size"
+OPTIMIZER_REWRITE_POST_JOIN_BATCH_INFERENCE_KEY = "optimizer.rewrite_post_join_batch_inference"
+OPTIMIZER_REWRITE_POST_JOIN_BATCH_INFERENCE_ARG = "rewrite_post_join_batch_inference"
 USE_BATCH_DEDUPLICATION_KEY = f"{INFERENCE_CONFIG_PREFIX}use_batch_deduplication"
 PREDICTION_CACHE_TYPE_KEY = f"{INFERENCE_CONFIG_PREFIX}prediction_cache_type"
 PREDICTION_CACHE_ENTRIES_KEY = f"{INFERENCE_CONFIG_PREFIX}number_of_entries_prediction_cache"
@@ -85,6 +87,11 @@ def normalize_inference_config(config: Dict[str, object]) -> Dict[str, object]:
     for key, value in config.items():
         if key in ("batch_size", OPTIMIZER_BATCH_SIZE_ARG, OPTIMIZER_BATCH_SIZE_KEY):
             key = BATCH_SIZE_KEY
+        elif key in (
+                OPTIMIZER_REWRITE_POST_JOIN_BATCH_INFERENCE_ARG,
+                OPTIMIZER_REWRITE_POST_JOIN_BATCH_INFERENCE_KEY,
+        ):
+            key = OPTIMIZER_REWRITE_POST_JOIN_BATCH_INFERENCE_KEY
         elif key == "use_batch_deduplication":
             key = USE_BATCH_DEDUPLICATION_KEY
         normalized[key] = value
@@ -173,6 +180,8 @@ def build_command(
             optimizer_params[OPTIMIZER_BATCH_SIZE_ARG] = value
         elif key == OPTIMIZER_BATCH_SIZE_KEY:
             optimizer_params[OPTIMIZER_BATCH_SIZE_ARG] = value
+        elif key == OPTIMIZER_REWRITE_POST_JOIN_BATCH_INFERENCE_KEY:
+            optimizer_params[OPTIMIZER_REWRITE_POST_JOIN_BATCH_INFERENCE_ARG] = value
         else:
             worker_params[key] = value
 

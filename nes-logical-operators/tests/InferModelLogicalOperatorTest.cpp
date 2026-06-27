@@ -288,6 +288,39 @@ TEST_F(InferModelLogicalOperatorTest, VarsizedInputAccepted)
     validateOutputSchema(inferred.getOutputSchema(), {"embedding"});
 }
 
+/// A single VARSIZED model input with multiple joined candidates is left for the optimizer rule to resolve.
+TEST_F(InferModelLogicalOperatorTest, VarsizedInputDefersAmbiguousJoinedFields)
+{
+    const InferModelLogicalOperator op{
+        loadModel(
+            "tiny_1_to_1.onnx",
+            Schema{}.addField("payload", DataType::Type::VARSIZED),
+            Schema{}.addField("embedding", DataType::Type::FLOAT32)),
+        {"payload"}};
+    auto schema = Schema{}.addField("left$payload", DataType::Type::VARSIZED).addField("right$payload", DataType::Type::VARSIZED);
+
+    auto inferred = op.withInferredSchema({schema});
+
+    EXPECT_EQ(inferred.getInputFieldNames(), (std::vector<std::string>{"payload"}));
+    validateOutputSchema(inferred.getOutputSchema(), {"embedding"});
+}
+
+TEST_F(InferModelLogicalOperatorTest, VarsizedInputWithResolvedJoinedFieldsQualifiesOutputs)
+{
+    const InferModelLogicalOperator op{
+        loadModel(
+            "tiny_1_to_2.onnx",
+            Schema{}.addField("payload", DataType::Type::VARSIZED),
+            Schema{}.addField("out_a", DataType::Type::FLOAT32).addField("out_b", DataType::Type::FLOAT32)),
+        {"left$payload", "right$payload"}};
+    auto schema = Schema{}.addField("left$payload", DataType::Type::VARSIZED).addField("right$payload", DataType::Type::VARSIZED);
+
+    auto inferred = op.withInferredSchema({schema});
+
+    EXPECT_EQ(inferred.getInputFieldNames(), (std::vector<std::string>{"left$payload", "right$payload"}));
+    validateOutputSchema(inferred.getOutputSchema(), {"left$out_a", "left$out_b", "right$out_a", "right$out_b"});
+}
+
 /// VARSIZED both sides: passes bytes through verbatim.
 TEST_F(InferModelLogicalOperatorTest, VarsizedOutputAccepted)
 {

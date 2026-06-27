@@ -18,6 +18,7 @@ add_source_files(nes-physical-operators
         CacheInferModelPhysicalOperator.cpp
         InferModelPhysicalOperator.cpp
         InterBufferBatchingPhysicalOperator.cpp
+        PostJoinBatchingPhysicalOperator.cpp
 )
 
 add_subdirectory(PredictionCache)

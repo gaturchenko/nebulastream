@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <ranges>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,7 @@
 #include <Inference/CacheInferModelPhysicalOperator.hpp>
 #include <Inference/InferModelPhysicalOperator.hpp>
 #include <Inference/InterBufferBatchingPhysicalOperator.hpp>
+#include <Inference/PostJoinBatchingPhysicalOperator.hpp>
 #include <LoweringRules/AbstractLoweringRule.hpp>
 #include <Nautilus/Interface/BufferRef/LowerSchemaProvider.hpp>
 #include <Nautilus/Interface/Hash/MurMur3HashFunction.hpp>
@@ -37,6 +39,7 @@
 #include <Operators/InferModelLogicalOperator.hpp>
 #include <Operators/LogicalOperator.hpp>
 #include <Operators/SequenceLogicalOperator.hpp>
+#include <Operators/Windows/JoinLogicalOperator.hpp>
 #include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
 #include <Traits/MemoryLayoutTypeTrait.hpp>
@@ -66,6 +69,31 @@ bool containsWindowedAggregation(const LogicalOperator& logicalOperator)
     return std::ranges::any_of(logicalOperator.getChildren(), [](const auto& child) { return containsWindowedAggregation(child); });
 }
 
+bool containsJoin(const LogicalOperator& logicalOperator)
+{
+    if (logicalOperator.tryGetAs<JoinLogicalOperator>().has_value())
+    {
+        return true;
+    }
+    return std::ranges::any_of(logicalOperator.getChildren(), [](const auto& child) { return containsJoin(child); });
+}
+
+LogicalOperator getInferenceInputChild(const LogicalOperator& inferModelOperator)
+{
+    const auto children = inferModelOperator.getChildren();
+    PRECONDITION(children.size() == 1, "Expected InferModelLogicalOperator to have exactly one child");
+
+    const auto sequenceOperator = children.front().tryGetAs<SequenceLogicalOperator>();
+    if (sequenceOperator.has_value()
+        && sequenceOperator.value().get().getSequenceSource() == SequenceLogicalOperator::SequenceSource::INFERENCE)
+    {
+        const auto sequenceChildren = sequenceOperator.value().get().getChildren();
+        PRECONDITION(sequenceChildren.size() == 1, "Expected inference SequenceLogicalOperator to have exactly one child");
+        return sequenceChildren.front();
+    }
+    return children.front();
+}
+
 uint64_t getInferenceBatchSize(const LogicalOperator& inferModelOperator)
 {
     const auto children = inferModelOperator.getChildren();
@@ -82,6 +110,91 @@ uint64_t getInferenceBatchSize(const LogicalOperator& inferModelOperator)
     }
 
     return sequenceOperator.value().get().getBatchSize();
+}
+
+std::string makeSyntheticModelInputFieldName(const Schema& inputSchema)
+{
+    constexpr std::string_view baseName = "__nes_post_join_inference_input";
+    std::string candidate{baseName};
+    uint64_t suffix = 0;
+    while (inputSchema.getFieldByName(candidate).has_value())
+    {
+        candidate = fmt::format("{}_{}", baseName, ++suffix);
+    }
+    return candidate;
+}
+
+std::string getQualifierPrefix(const std::string& fieldName)
+{
+    const auto separatorPosition = fieldName.find(Schema::ATTRIBUTE_NAME_SEPARATOR);
+    if (separatorPosition == std::string::npos)
+    {
+        return "";
+    }
+    return fieldName.substr(0, separatorPosition + std::string_view{Schema::ATTRIBUTE_NAME_SEPARATOR}.size());
+}
+
+std::vector<std::string>
+makePostJoinOutputFieldNames(const std::vector<std::string>& payloadFieldNames, const std::vector<std::string>& modelOutputFieldNames)
+{
+    std::vector<std::string> outputFieldNames;
+    outputFieldNames.reserve(payloadFieldNames.size() * modelOutputFieldNames.size());
+    for (const auto& payloadFieldName : payloadFieldNames)
+    {
+        const auto qualifierPrefix = getQualifierPrefix(payloadFieldName);
+        for (const auto& modelOutputFieldName : modelOutputFieldNames)
+        {
+            outputFieldNames.push_back(qualifierPrefix + modelOutputFieldName);
+        }
+    }
+    return outputFieldNames;
+}
+
+struct PostJoinBatchingInfo
+{
+    std::vector<std::string> payloadFieldNames;
+    std::vector<std::string> outputFieldNames;
+    std::string syntheticModelInputFieldName;
+    Schema batchInputSchema;
+};
+
+std::optional<PostJoinBatchingInfo>
+getPostJoinBatchingInfo(const LogicalOperator& logicalOperator, const InferModelLogicalOperator& inferModelOp, const Schema& inputSchema)
+{
+    if (!inferModelOp.hasVarsizedInput() || inferModelOp.getInputFieldNames().size() <= 1)
+    {
+        return std::nullopt;
+    }
+
+    if (!containsJoin(getInferenceInputChild(logicalOperator)))
+    {
+        throw UnsupportedQuery(
+            "Multiple VARSIZED inference input fields are currently only supported for inference over a window join output");
+    }
+
+    for (const auto& payloadFieldName : inferModelOp.getInputFieldNames())
+    {
+        const auto payloadField = inputSchema.getFieldByName(payloadFieldName);
+        if (!payloadField.has_value())
+        {
+            throw UnsupportedQuery("Post-join inference payload field '{}' does not exist in input schema", payloadFieldName);
+        }
+        if (payloadField->dataType.type != DataType::Type::VARSIZED || payloadField->dataType.nullable)
+        {
+            throw UnsupportedQuery("Post-join inference payload field '{}' must be a non-nullable VARSIZED field", payloadFieldName);
+        }
+    }
+
+    auto batchInputSchema = inputSchema;
+    const auto syntheticModelInputFieldName = makeSyntheticModelInputFieldName(batchInputSchema);
+    batchInputSchema
+        = batchInputSchema.addField(syntheticModelInputFieldName, DataType{DataType::Type::VARSIZED, DataType::NULLABLE::NOT_NULLABLE});
+
+    return PostJoinBatchingInfo{
+        .payloadFieldNames = inferModelOp.getInputFieldNames(),
+        .outputFieldNames = makePostJoinOutputFieldNames(inferModelOp.getInputFieldNames(), inferModelOp.getOutputFieldNames()),
+        .syntheticModelInputFieldName = syntheticModelInputFieldName,
+        .batchInputSchema = std::move(batchInputSchema)};
 }
 
 InferenceRuntimeOptions getInferenceRuntimeOptions(const QueryExecutionConfiguration& conf)
@@ -155,10 +268,19 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     const auto batchSize = getInferenceBatchSize(logicalOperator);
     const auto runtimeOptions = getInferenceRuntimeOptions(conf);
     const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType.getValue();
+    const auto postJoinBatchingInfo = getPostJoinBatchingInfo(logicalOperator, inferModelOp.get(), logicalOperator.getInputSchemas().at(0));
 
-    if (batchSize > 1)
+    if (batchSize > 1 || postJoinBatchingInfo.has_value())
     {
-        const auto inputSchema = logicalOperator.getInputSchemas().at(0);
+        const auto inputSchema
+            = postJoinBatchingInfo.has_value() ? postJoinBatchingInfo->batchInputSchema : logicalOperator.getInputSchemas().at(0);
+        const auto projections = logicalOperator.getInputSchemas().at(0).getFieldNames();
+        const auto inferenceInputFieldNames = postJoinBatchingInfo.has_value()
+            ? std::vector<std::string>{postJoinBatchingInfo->syntheticModelInputFieldName}
+            : inferModelOp.get().getInputFieldNames();
+        const auto inferenceOutputFieldNames
+            = postJoinBatchingInfo.has_value() ? postJoinBatchingInfo->outputFieldNames : inferModelOp.get().getOutputFieldNames();
+        const auto runtimeBatchSize = postJoinBatchingInfo.has_value() ? postJoinBatchingInfo->payloadFieldNames.size() : batchSize;
         auto bufferRef = LowerSchemaProvider::lowerSchema(conf.operatorBufferSize.getValue(), inputSchema, memoryLayoutType);
         const auto handlerId = getNextOperatorHandlerId();
 
@@ -166,10 +288,19 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
         PRECONDITION(outputOriginIdsOpt.has_value(), "Expected the outputOriginIds trait to be set");
         const auto& outputOriginIds = outputOriginIdsOpt.value().get();
         PRECONDITION(outputOriginIds.size() == 1, "Expected one output origin id");
-        auto handler = std::make_shared<BatchInferenceOperatorHandler>(batchSize, outputOriginIds[0]);
+        auto handler = std::make_shared<BatchInferenceOperatorHandler>(runtimeBatchSize, outputOriginIds[0]);
 
         PhysicalOperator batchingOperator;
-        if (!logicalOperator.getChildren().empty() && containsWindowedAggregation(logicalOperator.getChildren().at(0)))
+        if (postJoinBatchingInfo.has_value())
+        {
+            batchingOperator = PostJoinBatchingPhysicalOperator(
+                handlerId,
+                bufferRef,
+                postJoinBatchingInfo->payloadFieldNames,
+                postJoinBatchingInfo->outputFieldNames,
+                postJoinBatchingInfo->syntheticModelInputFieldName);
+        }
+        else if (!logicalOperator.getChildren().empty() && containsWindowedAggregation(logicalOperator.getChildren().at(0)))
         {
             batchingOperator = InterBufferBatchingPhysicalOperator(handlerId, bufferRef);
         }
@@ -194,14 +325,14 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
             physicalOperator = BatchCacheInferModelPhysicalOperator(
                 std::move(model),
                 bufferRef,
-                inputSchema.getFieldNames(),
-                inferModelOp.get().getInputFieldNames(),
-                inferModelOp.get().getOutputFieldNames(),
-                batchSize,
+                projections,
+                inferenceInputFieldNames,
+                inferenceOutputFieldNames,
+                runtimeBatchSize,
                 runtimeOptions,
                 predictionCacheType,
                 conf.inferenceConfiguration.numberOfEntriesPredictionCache.getValue(),
-                createBatchDeduplicationHashMapOptions(inputSchema, inferModelOp.get().getInputFieldNames(), conf),
+                createBatchDeduplicationHashMapOptions(inputSchema, inferenceInputFieldNames, conf),
                 inferModelOp.get().hasVarsizedInput(),
                 inferModelOp.get().hasVarsizedOutput(),
                 conf.inferenceConfiguration.useBatchDeduplication.getValue(),
@@ -215,12 +346,12 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
             physicalOperator = BatchInferModelPhysicalOperator(
                 std::move(model),
                 bufferRef,
-                inputSchema.getFieldNames(),
-                inferModelOp.get().getInputFieldNames(),
-                inferModelOp.get().getOutputFieldNames(),
-                batchSize,
+                projections,
+                inferenceInputFieldNames,
+                inferenceOutputFieldNames,
+                runtimeBatchSize,
                 runtimeOptions,
-                createBatchDeduplicationHashMapOptions(inputSchema, inferModelOp.get().getInputFieldNames(), conf),
+                createBatchDeduplicationHashMapOptions(inputSchema, inferenceInputFieldNames, conf),
                 inferModelOp.get().hasVarsizedInput(),
                 inferModelOp.get().hasVarsizedOutput(),
                 conf.inferenceConfiguration.useBatchDeduplication.getValue(),

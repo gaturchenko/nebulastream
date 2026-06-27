@@ -79,6 +79,16 @@ void Batch::setState(const BatchState newState)
     state = newState;
 }
 
+void Batch::setPostJoinBatchMetadata(PostJoinBatchMetadata metadata)
+{
+    postJoinBatchMetadata = std::move(metadata);
+}
+
+bool Batch::hasPostJoinBatchMetadata() const
+{
+    return postJoinBatchMetadata.has_value();
+}
+
 BatchInferenceOperatorHandler::BatchInferenceOperatorHandler(const uint64_t batchSize, const OriginId outputOriginId)
     : outputOriginId(outputOriginId), batchSize(batchSize)
 {
@@ -150,6 +160,15 @@ Batch* BatchInferenceOperatorHandler::getOrCreateNewBatch()
         return batches.back().get();
     }
 
+    return batches.back().get();
+}
+
+Batch* BatchInferenceOperatorHandler::createNewPostJoinBatch(PostJoinBatchMetadata metadata)
+{
+    const std::scoped_lock lock(batchesMutex);
+    auto batch = createNewBatch();
+    batch->setPostJoinBatchMetadata(std::move(metadata));
+    batches.emplace_back(std::move(batch));
     return batches.back().get();
 }
 

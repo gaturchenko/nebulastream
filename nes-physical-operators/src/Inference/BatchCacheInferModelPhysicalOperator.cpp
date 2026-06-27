@@ -386,6 +386,12 @@ PagedVector* getBatchPagedVector(const Batch* batch)
     return batch->getPagedVectorRef();
 }
 
+bool hasPostJoinBatchMetadata(const Batch* batch)
+{
+    PRECONDITION(batch != nullptr, "batch context should not be null!");
+    return batch->hasPostJoinBatchMetadata();
+}
+
 void markBatchProcessed(OperatorHandler* ptrOpHandler, const EmittedBatch* currentBatch)
 {
     PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
@@ -716,6 +722,52 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
             }
         };
 
+        const auto emitRestoredPostJoinOutput
+            = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
+        {
+            auto record = batchPagedVectorRef.readRecord(currentBatchStart, projections);
+
+            auto varsizedOutputBatchBuffer = nautilus::invoke(+[]() { return static_cast<int8_t*>(nullptr); });
+            if (varsizedOutput)
+            {
+                varsizedOutputBatchBuffer = ctx.pipelineMemoryProvider.arena.allocateMemory(recordsInBatch * outputTupleSizeVal);
+            }
+
+            for (nautilus::static_val<size_t> outputFieldIndex = 0; outputFieldIndex < outputFieldNames.size(); ++outputFieldIndex)
+            {
+                const auto payloadIndex = nautilus::val<uint64_t>(outputFieldIndex / static_cast<size_t>(outputFieldNames.size() / batchSize));
+                auto outputRowIndex = payloadIndex;
+                if (useBatchDeduplication)
+                {
+                    outputRowIndex = *(deduplicatedOutputRowIndices + payloadIndex);
+                }
+                auto outputTupleBuffer = outputBuffer + (outputRowIndex * outputTupleSizeVal);
+                const auto cachedPrediction = nautilus::invoke(getPrediction, cachedPredictions, outputRowIndex);
+                if (cachedPrediction != nautilus::val<std::byte*>(nullptr))
+                {
+                    outputTupleBuffer = static_cast<nautilus::val<int8_t*>>(cachedPrediction);
+                }
+
+                if (varsizedOutput)
+                {
+                    auto outputContent = varsizedOutputBatchBuffer + (payloadIndex * outputTupleSizeVal);
+                    nautilus::memcpy(outputContent, outputTupleBuffer, outputTupleSizeVal);
+                    VariableSizedData output(outputContent, outputTupleSizeVal);
+                    record.write(outputFieldNames.at(outputFieldIndex), VarVal(output));
+                }
+                else
+                {
+                    const DataType floatType{DataType::Type::FLOAT32, DataType::NULLABLE::NOT_NULLABLE};
+                    const auto outputFieldOffset = nautilus::val<uint64_t>(outputFieldIndex % static_cast<size_t>(outputFieldNames.size() / batchSize));
+                    const auto memPos = outputTupleBuffer + (outputFieldOffset * nautilus::val<uint64_t>(sizeof(float)));
+                    const auto result = VarVal::readNonNullableVarValFromMemory(memPos, floatType);
+                    record.write(outputFieldNames.at(outputFieldIndex), result);
+                }
+            }
+
+            executeChild(ctx, record);
+        };
+
         const auto commitBatchCache = [&](const nautilus::val<uint64_t> numberOfMisses)
         {
             for (nautilus::val<uint64_t> missOffset = 0_u64; missOffset < numberOfMisses; missOffset = missOffset + 1_u64)
@@ -728,14 +780,28 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
         for (; batchStart + configuredBatchSize <= numberOfRecords; batchStart = batchStart + configuredBatchSize)
         {
             const auto numberOfMisses = processBatch(batchStart, configuredBatchSize);
-            emitBatchOutputs(batchStart, configuredBatchSize);
+            if (nautilus::invoke(hasPostJoinBatchMetadata, batchRef))
+            {
+                emitRestoredPostJoinOutput(batchStart, configuredBatchSize);
+            }
+            else
+            {
+                emitBatchOutputs(batchStart, configuredBatchSize);
+            }
             commitBatchCache(numberOfMisses);
         }
         if (batchStart < numberOfRecords)
         {
             const auto recordsInTailBatch = numberOfRecords - batchStart;
             const auto numberOfMisses = processBatch(batchStart, recordsInTailBatch);
-            emitBatchOutputs(batchStart, recordsInTailBatch);
+            if (nautilus::invoke(hasPostJoinBatchMetadata, batchRef))
+            {
+                emitRestoredPostJoinOutput(batchStart, recordsInTailBatch);
+            }
+            else
+            {
+                emitBatchOutputs(batchStart, recordsInTailBatch);
+            }
             commitBatchCache(numberOfMisses);
         }
 

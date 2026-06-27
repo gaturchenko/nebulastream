@@ -55,8 +55,16 @@ public:
         "Inference Batch Size",
         {std::make_shared<NonZeroValidation>()}};
 
+    BoolOption rewritePostJoinBatchInference = {
+        "rewrite_post_join_batch_inference",
+        "true",
+        "Rewrite compatible inference operators over joins into post-join batched inference operators."};
+
 private:
-    std::vector<BaseOption*> getOptions() override { return {&joinStrategy, &network, &inferenceBatchSize}; }
+    std::vector<BaseOption*> getOptions() override
+    {
+        return {&joinStrategy, &network, &inferenceBatchSize, &rewritePostJoinBatchInference};
+    }
 };
 
 }

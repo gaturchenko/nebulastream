@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include <Identifiers/Identifiers.hpp>
@@ -38,6 +40,12 @@ enum class BatchState : uint8_t
     MARKED_AS_PROCESSED
 };
 
+struct PostJoinBatchMetadata
+{
+    std::vector<std::string> payloadFieldNames;
+    std::vector<std::string> outputFieldNames;
+};
+
 class Batch
 {
 public:
@@ -48,9 +56,12 @@ public:
     [[nodiscard]] uint64_t getNumberOfTuples() const;
     [[nodiscard]] size_t getNumberOfPagedVectors() const;
     void setState(BatchState newState);
+    void setPostJoinBatchMetadata(PostJoinBatchMetadata metadata);
+    [[nodiscard]] bool hasPostJoinBatchMetadata() const;
 
     uint64_t batchId;
     mutable BatchState state = BatchState::MARKED_AS_CREATED;
+    std::optional<PostJoinBatchMetadata> postJoinBatchMetadata;
 
 private:
     mutable std::mutex batchMutex;
@@ -76,6 +87,7 @@ public:
     void clearHashMap(WorkerThreadId workerThreadId);
 
     [[nodiscard]] Batch* getOrCreateNewBatch();
+    [[nodiscard]] Batch* createNewPostJoinBatch(PostJoinBatchMetadata metadata);
     [[nodiscard]] std::shared_ptr<Batch> getBatch(uint64_t requestedBatchId) const;
     [[nodiscard]] std::vector<std::shared_ptr<Batch>> getCreatedBatches(bool fullBatchesOnly) const;
     void garbageCollectBatches();

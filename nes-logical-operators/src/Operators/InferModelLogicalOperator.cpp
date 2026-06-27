@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -37,6 +38,108 @@
 
 namespace NES
 {
+
+namespace
+{
+
+void validateModelInputField(const Schema::Field& field, const DataType& expectedType, const std::string& requestedFieldName)
+{
+    if (field.dataType.nullable)
+    {
+        throw CannotInferSchema("Field '{}' is nullable, but model inputs must not be nullable", requestedFieldName);
+    }
+    if (field.dataType.type != expectedType.type)
+    {
+        throw CannotInferSchema("Type mismatch for field '{}': schema has a different type than model expects", requestedFieldName);
+    }
+}
+
+std::vector<std::string> resolveOrDeferSingleVarsizedInputFields(const Schema& inputSchema, const std::vector<std::string>& inputFieldNames)
+{
+    PRECONDITION(!inputFieldNames.empty(), "Expected at least one input field name for varsized model input resolution");
+    if (inputFieldNames.size() > 1)
+    {
+        std::vector<std::string> resolvedInputFields;
+        resolvedInputFields.reserve(inputFieldNames.size());
+        for (const auto& inputFieldName : inputFieldNames)
+        {
+            const auto field = inputSchema.getFieldByName(inputFieldName);
+            if (!field.has_value())
+            {
+                throw CannotInferSchema("Field '{}' not found in input schema", inputFieldName);
+            }
+            validateModelInputField(field.value(), DataType{DataType::Type::VARSIZED, DataType::NULLABLE::NOT_NULLABLE}, inputFieldName);
+            resolvedInputFields.push_back(field->name);
+        }
+        return resolvedInputFields;
+    }
+
+    const auto& inputFieldName = inputFieldNames.front();
+    const auto requestedFieldIsQualified = inputFieldName.find(Schema::ATTRIBUTE_NAME_SEPARATOR) != std::string::npos;
+    if (!requestedFieldIsQualified)
+    {
+        auto matchingVarsizedFields = inputSchema.getFields()
+            | std::views::filter(
+                                          [&inputFieldName](const auto& candidate)
+                                          {
+                                              return candidate.getUnqualifiedName() == inputFieldName
+                                                  && candidate.dataType.type == DataType::Type::VARSIZED && !candidate.dataType.nullable;
+                                          })
+            | std::views::transform([](const auto& candidate) { return candidate.name; }) | std::ranges::to<std::vector>();
+        if (matchingVarsizedFields.size() > 1)
+        {
+            return inputFieldNames;
+        }
+    }
+
+    const auto field = inputSchema.getFieldByName(inputFieldName);
+    if (field.has_value())
+    {
+        validateModelInputField(field.value(), DataType{DataType::Type::VARSIZED, DataType::NULLABLE::NOT_NULLABLE}, inputFieldName);
+        return {field->name};
+    }
+
+    auto varsizedFields = inputSchema.getFields()
+        | std::views::filter([](const auto& candidate)
+                             { return candidate.dataType.type == DataType::Type::VARSIZED && !candidate.dataType.nullable; })
+        | std::views::transform([](const auto& candidate) { return candidate.name; }) | std::ranges::to<std::vector>();
+
+    if (varsizedFields.size() < 2)
+    {
+        throw CannotInferSchema("Field '{}' not found in input schema", inputFieldName);
+    }
+    return inputFieldNames;
+}
+
+std::string getQualifierPrefix(const std::string& fieldName)
+{
+    const auto separatorPosition = fieldName.find(Schema::ATTRIBUTE_NAME_SEPARATOR);
+    if (separatorPosition == std::string::npos)
+    {
+        return "";
+    }
+    return fieldName.substr(0, separatorPosition + std::string_view{Schema::ATTRIBUTE_NAME_SEPARATOR}.size());
+}
+
+std::string makePostJoinOutputFieldName(const std::string& payloadFieldName, const std::string& modelOutputFieldName)
+{
+    return getQualifierPrefix(payloadFieldName) + modelOutputFieldName;
+}
+
+Schema appendOrReplaceModelOutputField(Schema schema, const std::string& fieldName, const DataType& dataType)
+{
+    if (schema.getFieldByName(fieldName).has_value())
+    {
+        [[maybe_unused]] const bool replaced = schema.replaceTypeOfField(fieldName, dataType);
+    }
+    else
+    {
+        schema = schema.addField(fieldName, dataType);
+    }
+    return schema;
+}
+
+}
 
 InferModelLogicalOperator::InferModelLogicalOperator(RegisteredModel model, std::vector<std::string> inputFieldNames)
     : model(std::move(model)), inputFieldNames(std::move(inputFieldNames))
@@ -105,48 +208,55 @@ InferModelLogicalOperator InferModelLogicalOperator::withInferredSchema(std::vec
 
     const auto& modelInputs = model.getSchema().inputs;
     const auto& modelOutputs = model.getSchema().outputs;
+    const auto hasSingleVarsizedModelInput
+        = modelInputs.getNumberOfFields() == 1 && modelInputs.getFieldAt(0).dataType.isType(DataType::Type::VARSIZED);
 
-    /// Check input field count matches model inputs
-    if (inputFieldNames.size() != modelInputs.getNumberOfFields())
+    if (hasSingleVarsizedModelInput)
     {
-        throw CannotInferSchema(
-            "Model expects {} inputs, but {} input field names were provided", modelInputs.getNumberOfFields(), inputFieldNames.size());
+        copy.inputFieldNames = resolveOrDeferSingleVarsizedInputFields(copy.inputSchema, inputFieldNames);
     }
-
-    /// Check type compatibility for each input field and resolve to its fully qualified
-    /// name (`source$field`) so the runtime record lookup, which matches strictly, can find it.
-    for (size_t i = 0; i < inputFieldNames.size(); ++i)
+    else
     {
-        const auto& fieldName = inputFieldNames[i];
-        const auto field = copy.inputSchema.getFieldByName(fieldName);
-        if (!field.has_value())
+        /// Check input field count matches model inputs
+        if (inputFieldNames.size() != modelInputs.getNumberOfFields())
         {
-            throw CannotInferSchema("Field '{}' not found in input schema", fieldName);
+            throw CannotInferSchema(
+                "Model expects {} inputs, but {} input field names were provided", modelInputs.getNumberOfFields(), inputFieldNames.size());
         }
-        if (field->dataType.nullable)
+
+        /// Check type compatibility for each input field and resolve to its fully qualified
+        /// name (`source$field`) so the runtime record lookup, which matches strictly, can find it.
+        for (size_t i = 0; i < inputFieldNames.size(); ++i)
         {
-            throw CannotInferSchema("Field '{}' is nullable, but model inputs must not be nullable", fieldName);
+            const auto& fieldName = inputFieldNames[i];
+            const auto field = copy.inputSchema.getFieldByName(fieldName);
+            if (!field.has_value())
+            {
+                throw CannotInferSchema("Field '{}' not found in input schema", fieldName);
+            }
+            validateModelInputField(field.value(), modelInputs.getFieldAt(i).dataType, fieldName);
+            copy.inputFieldNames[i] = field->name;
         }
-        if (field->dataType.type != modelInputs.getFieldAt(i).dataType.type)
-        {
-            throw CannotInferSchema("Type mismatch for field '{}': schema has a different type than model expects", fieldName);
-        }
-        copy.inputFieldNames[i] = field->name;
     }
 
     /// Build output schema: start from input schema, then append/replace model output fields
     copy.outputSchema = copy.inputSchema;
+    if (hasSingleVarsizedModelInput && copy.inputFieldNames.size() > 1)
+    {
+        for (const auto& inputFieldName : copy.inputFieldNames)
+        {
+            for (const auto& field : modelOutputs.getFields())
+            {
+                copy.outputSchema = appendOrReplaceModelOutputField(
+                    copy.outputSchema, makePostJoinOutputFieldName(inputFieldName, field.name), field.dataType);
+            }
+        }
+        return copy;
+    }
+
     for (const auto& field : modelOutputs.getFields())
     {
-        if (copy.outputSchema.getFieldByName(field.name).has_value())
-        {
-            /// Field already exists — replace its type in-place
-            [[maybe_unused]] const bool replaced = copy.outputSchema.replaceTypeOfField(field.name, field.dataType);
-        }
-        else
-        {
-            copy.outputSchema = copy.outputSchema.addField(field.name, field.dataType);
-        }
+        copy.outputSchema = appendOrReplaceModelOutputField(copy.outputSchema, field.name, field.dataType);
     }
     return copy;
 }

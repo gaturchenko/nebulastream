@@ -136,6 +136,12 @@ PagedVector* getBatchPagedVector(const Batch* batch)
     return batch->getPagedVectorRef();
 }
 
+bool hasPostJoinBatchMetadata(const Batch* batch)
+{
+    PRECONDITION(batch != nullptr, "batch context should not be null!");
+    return batch->hasPostJoinBatchMetadata();
+}
+
 void markBatchProcessed(OperatorHandler* ptrOpHandler, const EmittedBatch* currentBatch)
 {
     PRECONDITION(ptrOpHandler != nullptr, "opHandler context should not be null!");
@@ -380,6 +386,47 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
             }
         };
 
+        const auto emitRestoredPostJoinOutput
+            = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
+        {
+            const auto outputBuffer = nautilus::invoke(getOutputBuffer, batchRuntime, ctx.workerThreadId);
+            auto record = batchPagedVectorRef.readRecord(currentBatchStart, projections);
+            auto varsizedOutputBatchBuffer = nautilus::invoke(+[]() { return static_cast<int8_t*>(nullptr); });
+            if (varsizedOutput)
+            {
+                varsizedOutputBatchBuffer = ctx.pipelineMemoryProvider.arena.allocateMemory(recordsInBatch * outputTupleSizeVal);
+            }
+
+            for (nautilus::static_val<size_t> outputFieldIndex = 0; outputFieldIndex < outputFieldNames.size(); ++outputFieldIndex)
+            {
+                const auto payloadIndex = nautilus::val<uint64_t>(outputFieldIndex / static_cast<size_t>(outputFieldNames.size() / batchSize));
+                auto outputRowIndex = payloadIndex;
+                if (useBatchDeduplication)
+                {
+                    outputRowIndex = *(deduplicatedOutputRowIndices + payloadIndex);
+                }
+                const auto outputTupleBuffer = outputBuffer + (outputRowIndex * outputTupleSizeVal);
+
+                if (varsizedOutput)
+                {
+                    auto outputContent = varsizedOutputBatchBuffer + (payloadIndex * outputTupleSizeVal);
+                    nautilus::memcpy(outputContent, outputTupleBuffer, outputTupleSizeVal);
+                    VariableSizedData output(outputContent, outputTupleSizeVal);
+                    record.write(outputFieldNames.at(outputFieldIndex), VarVal(output));
+                }
+                else
+                {
+                    const DataType floatType{DataType::Type::FLOAT32, DataType::NULLABLE::NOT_NULLABLE};
+                    const auto outputFieldOffset = nautilus::val<uint64_t>(outputFieldIndex % static_cast<size_t>(outputFieldNames.size() / batchSize));
+                    const auto memPos = outputTupleBuffer + (outputFieldOffset * nautilus::val<uint64_t>(sizeof(float)));
+                    const auto result = VarVal::readNonNullableVarValFromMemory(memPos, floatType);
+                    record.write(outputFieldNames.at(outputFieldIndex), result);
+                }
+            }
+
+            executeChild(ctx, record);
+        };
+
         /// triggers the processing pipeline: input -> batch inference -> output
         const auto processBatch = [&](const nautilus::val<uint64_t> currentBatchStart, const nautilus::val<uint64_t> recordsInBatch)
         {
@@ -394,7 +441,14 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
             }
 
             nautilus::invoke(infer, batchRuntime, ctx.workerThreadId, recordsToInfer);
-            emitBatchOutputs(currentBatchStart, recordsInBatch);
+            if (nautilus::invoke(hasPostJoinBatchMetadata, batchRef))
+            {
+                emitRestoredPostJoinOutput(currentBatchStart, recordsInBatch);
+            }
+            else
+            {
+                emitBatchOutputs(currentBatchStart, recordsInBatch);
+            }
         };
 
         nautilus::val<uint64_t> batchStart = 0_u64;

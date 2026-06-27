@@ -1,0 +1,48 @@
+# name: inference/PostJoinBatchInference.test
+# description: ML model inference batches multiple VARSIZED fields from one joined record
+# groups: [Inference, Join]
+
+CREATE LOGICAL SOURCE stream1(id UINT64 NOT NULL, pixels VARSIZED NOT NULL, ts UINT64 NOT NULL);
+CREATE PHYSICAL SOURCE FOR stream1 TYPE File;
+ATTACH FILE small/inference/mnist_join_pixels.csv
+
+CREATE LOGICAL SOURCE stream2(id2 UINT64 NOT NULL, pixels VARSIZED NOT NULL, ts UINT64 NOT NULL);
+CREATE PHYSICAL SOURCE FOR stream2 TYPE File;
+ATTACH FILE small/inference/mnist_join_pixels.csv
+
+CREATE MODEL mnist ('model/mnist.onnx')
+INPUT (pixels VARSIZED)
+OUTPUT (c0 FLOAT32, c1 FLOAT32, c2 FLOAT32, c3 FLOAT32, c4 FLOAT32, c5 FLOAT32, c6 FLOAT32, c7 FLOAT32, c8 FLOAT32, c9 FLOAT32);
+
+CREATE SINK result(
+    S1_C0 FLOAT32 NOT NULL, S1_C1 FLOAT32 NOT NULL, S1_C2 FLOAT32 NOT NULL, S1_C3 FLOAT32 NOT NULL, S1_C4 FLOAT32 NOT NULL,
+    S1_C5 FLOAT32 NOT NULL, S1_C6 FLOAT32 NOT NULL, S1_C7 FLOAT32 NOT NULL, S1_C8 FLOAT32 NOT NULL, S1_C9 FLOAT32 NOT NULL,
+    S2_C0 FLOAT32 NOT NULL, S2_C1 FLOAT32 NOT NULL, S2_C2 FLOAT32 NOT NULL, S2_C3 FLOAT32 NOT NULL, S2_C4 FLOAT32 NOT NULL,
+    S2_C5 FLOAT32 NOT NULL, S2_C6 FLOAT32 NOT NULL, S2_C7 FLOAT32 NOT NULL, S2_C8 FLOAT32 NOT NULL, S2_C9 FLOAT32 NOT NULL
+) TYPE File;
+
+SELECT
+    stream1.c0 AS s1_c0, stream1.c1 AS s1_c1, stream1.c2 AS s1_c2, stream1.c3 AS s1_c3, stream1.c4 AS s1_c4,
+    stream1.c5 AS s1_c5, stream1.c6 AS s1_c6, stream1.c7 AS s1_c7, stream1.c8 AS s1_c8, stream1.c9 AS s1_c9,
+    stream2.c0 AS s2_c0, stream2.c1 AS s2_c1, stream2.c2 AS s2_c2, stream2.c3 AS s2_c3, stream2.c4 AS s2_c4,
+    stream2.c5 AS s2_c5, stream2.c6 AS s2_c6, stream2.c7 AS s2_c7, stream2.c8 AS s2_c8, stream2.c9 AS s2_c9
+FROM MODEL_INFERENCE(mnist, (
+    SELECT * FROM (SELECT * FROM stream1) JOIN (SELECT * FROM stream2) ON id = id2 WINDOW TUMBLING (ts, size 1 sec)
+))
+INTO result;
+----
+0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000
+
+# If inference is nested naively, a rewrite rule is applied
+# Then, the query is rewritten to the form in the previous test
+SELECT
+    stream1.c0 AS s1_c0, stream1.c1 AS s1_c1, stream1.c2 AS s1_c2, stream1.c3 AS s1_c3, stream1.c4 AS s1_c4,
+    stream1.c5 AS s1_c5, stream1.c6 AS s1_c6, stream1.c7 AS s1_c7, stream1.c8 AS s1_c8, stream1.c9 AS s1_c9,
+    stream2.c0 AS s2_c0, stream2.c1 AS s2_c1, stream2.c2 AS s2_c2, stream2.c3 AS s2_c3, stream2.c4 AS s2_c4,
+    stream2.c5 AS s2_c5, stream2.c6 AS s2_c6, stream2.c7 AS s2_c7, stream2.c8 AS s2_c8, stream2.c9 AS s2_c9
+FROM MODEL_INFERENCE(mnist, MODEL_INFERENCE(mnist, (
+    SELECT * FROM (SELECT * FROM stream1) JOIN (SELECT * FROM stream2) ON id = id2 WINDOW TUMBLING (ts, size 1 sec)
+)))
+INTO result;
+----
+0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000
