@@ -26,6 +26,7 @@
 #include <Rules/Semantic/InsertSequenceForWindowAggregationRule.hpp>
 #include <Rules/Semantic/LogicalSourceExpansionRule.hpp>
 #include <Rules/Semantic/OriginIdInferenceRule.hpp>
+#include <Rules/Semantic/ResolveChainedPostJoinInferenceRule.hpp>
 #include <Rules/Semantic/ResolvePostJoinBatchInferenceRule.hpp>
 #include <Rules/Semantic/RewriteChainedInferModelRule.hpp>
 #include <Rules/Semantic/SinkBindingRule.hpp>
@@ -61,6 +62,11 @@ SemanticAnalyzer::SemanticAnalyzer(
     ruleManager.addRule(TypeInferenceRule{});
     if (this->defaultQueryOptimization.rewritePostJoinBatchInference.getValue())
     {
+        ruleManager.addRule(ResolvePostJoinBatchInferenceRule{});
+    }
+    else
+    {
+        ruleManager.addRule(ResolveChainedPostJoinInferenceRule{});
         ruleManager.addRule(ResolvePostJoinBatchInferenceRule{});
     }
     ruleManager.addRule(OriginIdInferenceRule{});
