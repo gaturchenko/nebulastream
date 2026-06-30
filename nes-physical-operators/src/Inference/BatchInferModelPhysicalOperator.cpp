@@ -15,6 +15,7 @@
 #include <Inference/BatchInferModelPhysicalOperator.hpp>
 #include "ThreadLocalRuntimeWrapper.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -397,9 +398,10 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
                 varsizedOutputBatchBuffer = ctx.pipelineMemoryProvider.arena.allocateMemory(recordsInBatch * outputTupleSizeVal);
             }
 
+            const auto outputFieldsPerPayload = std::max<size_t>(1, outputFieldNames.size() / batchSize);
             for (nautilus::static_val<size_t> outputFieldIndex = 0; outputFieldIndex < outputFieldNames.size(); ++outputFieldIndex)
             {
-                const auto payloadIndex = nautilus::val<uint64_t>(outputFieldIndex / static_cast<size_t>(outputFieldNames.size() / batchSize));
+                const auto payloadIndex = nautilus::val<uint64_t>(outputFieldIndex / outputFieldsPerPayload);
                 auto outputRowIndex = payloadIndex;
                 if (useBatchDeduplication)
                 {
@@ -417,7 +419,7 @@ void BatchInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& 
                 else
                 {
                     const DataType floatType{DataType::Type::FLOAT32, DataType::NULLABLE::NOT_NULLABLE};
-                    const auto outputFieldOffset = nautilus::val<uint64_t>(outputFieldIndex % static_cast<size_t>(outputFieldNames.size() / batchSize));
+                    const auto outputFieldOffset = nautilus::val<uint64_t>(outputFieldIndex % outputFieldsPerPayload);
                     const auto memPos = outputTupleBuffer + (outputFieldOffset * nautilus::val<uint64_t>(sizeof(float)));
                     const auto result = VarVal::readNonNullableVarValFromMemory(memPos, floatType);
                     record.write(outputFieldNames.at(outputFieldIndex), result);
