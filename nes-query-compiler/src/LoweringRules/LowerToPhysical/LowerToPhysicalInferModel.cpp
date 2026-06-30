@@ -206,6 +206,12 @@ InferenceRuntimeOptions getInferenceRuntimeOptions(const QueryExecutionConfigura
         .openvinoEnableCpuPinning = inference.openvinoEnableCpuPinning.getValue()};
 }
 
+InferenceRuntimeOptions withOpenVinoDynamicBatch(InferenceRuntimeOptions options, const bool enabled)
+{
+    options.openvinoAllowDynamicBatch = enabled;
+    return options;
+}
+
 HashMapOptions createBatchDeduplicationHashMapOptions(
     const Schema& inputSchema, const std::vector<std::string>& inputFieldNames, const QueryExecutionConfiguration& conf)
 {
@@ -268,7 +274,9 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     const auto batchSize = getInferenceBatchSize(logicalOperator);
     const auto runtimeOptions = getInferenceRuntimeOptions(conf);
     const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType.getValue();
-    const auto postJoinBatchingInfo = getPostJoinBatchingInfo(logicalOperator, inferModelOp.get(), logicalOperator.getInputSchemas().at(0));
+    const auto useBatchDeduplication = conf.inferenceConfiguration.useBatchDeduplication.getValue();
+    const auto postJoinBatchingInfo
+        = getPostJoinBatchingInfo(logicalOperator, inferModelOp.get(), logicalOperator.getInputSchemas().at(0));
 
     if (batchSize > 1 || postJoinBatchingInfo.has_value())
     {
@@ -329,13 +337,13 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
                 inferenceInputFieldNames,
                 inferenceOutputFieldNames,
                 runtimeBatchSize,
-                runtimeOptions,
+                withOpenVinoDynamicBatch(runtimeOptions, true),
                 predictionCacheType,
                 conf.inferenceConfiguration.numberOfEntriesPredictionCache.getValue(),
                 createBatchDeduplicationHashMapOptions(inputSchema, inferenceInputFieldNames, conf),
                 inferModelOp.get().hasVarsizedInput(),
                 inferModelOp.get().hasVarsizedOutput(),
-                conf.inferenceConfiguration.useBatchDeduplication.getValue(),
+                useBatchDeduplication,
                 handlerId);
 
             NES_DEBUG(
@@ -350,11 +358,11 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
                 inferenceInputFieldNames,
                 inferenceOutputFieldNames,
                 runtimeBatchSize,
-                runtimeOptions,
+                withOpenVinoDynamicBatch(runtimeOptions, useBatchDeduplication),
                 createBatchDeduplicationHashMapOptions(inputSchema, inferenceInputFieldNames, conf),
                 inferModelOp.get().hasVarsizedInput(),
                 inferModelOp.get().hasVarsizedOutput(),
-                conf.inferenceConfiguration.useBatchDeduplication.getValue(),
+                useBatchDeduplication,
                 handlerId);
 
             NES_DEBUG("Lowering InferModel operator to physical BatchInferModelPhysicalOperator operator with batch size {}", batchSize)

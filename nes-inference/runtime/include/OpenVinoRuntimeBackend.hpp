@@ -19,6 +19,7 @@
 #include <openvino/core/shape.hpp>
 #include <openvino/core/type/element_type.hpp>
 #include <openvino/runtime/infer_request.hpp>
+#include <openvino/runtime/tensor.hpp>
 #include <Model.hpp>
 #include <RuntimeBackend.hpp>
 
@@ -29,16 +30,29 @@ class OpenVinoRuntimeBackend final : public RuntimeBackend
 public:
     RuntimeMetadata setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options) override;
 
-    [[nodiscard]] bool supportsActiveBatchSize() const override { return true; }
+    [[nodiscard]] bool supportsActiveBatchSize() const override { return dynamicBatchEnabled; }
 
     void infer(std::byte* inputBuffer, size_t, std::byte* outputBuffer, size_t outputBufferSize) override;
 
 private:
+    void prepareExternalTensors(
+        const ov::Shape& currentInputShape,
+        const ov::Shape& currentOutputShape,
+        std::byte* inputBuffer,
+        std::byte* outputBuffer);
+    void prepareOwnedTensors(const ov::Shape& currentInputShape, const ov::Shape& currentOutputShape);
+
     ov::InferRequest inferRequest;
     ov::element::Type inputElementType;
     ov::Shape inputShape;
     ov::element::Type outputElementType;
     ov::Shape outputShape;
+    ov::Tensor inputTensor;
+    ov::Tensor outputTensor;
+    std::byte* externalInputBuffer = nullptr;
+    std::byte* externalOutputBuffer = nullptr;
+    bool usingExternalTensors = false;
+    bool dynamicBatchEnabled = false;
     size_t inputTupleSize = 0;
     size_t outputTupleSize = 0;
 };

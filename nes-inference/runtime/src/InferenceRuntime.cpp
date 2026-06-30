@@ -106,6 +106,12 @@ void InferenceRuntime::infer(std::byte* inputBuffer, size_t inputBufferSize)
     PRECONDITION(inputBuffer != nullptr, "Cannot run inference with a null input buffer");
     PRECONDITION(inputBufferSize == inputSize, "Expected single-tuple input size {} B, but got {} B", inputSize, inputBufferSize);
 
+    if (inputBuffer != inputData.get())
+    {
+        std::memcpy(inputData.get(), inputBuffer, inputBufferSize);
+        inputBuffer = inputData.get();
+    }
+
     impl->backend->infer(inputBuffer, inputBufferSize, outputData.get(), outputSize);
 }
 

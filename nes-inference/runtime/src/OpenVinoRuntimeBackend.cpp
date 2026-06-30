@@ -82,7 +82,6 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
     static std::mutex coreMutex;
     auto runtimeInputShape = model.getInputShape();
     auto runtimeOutputShape = model.getOutputShape();
-    const auto modelInputShape = makeDynamicBatchShape(runtimeInputShape);
     const auto maxInputShape = makeRuntimeShape(runtimeInputShape, batchSize);
     const auto maxOutputShape = makeRuntimeShape(runtimeOutputShape, batchSize);
     ov::Tensor weights(ov::element::u8, {modelBin.size()});
@@ -93,15 +92,22 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
 
     const std::scoped_lock lock(coreMutex);
     auto openVinoModel = sharedCore.read_model(modelXml, weights);
-    openVinoModel->reshape(modelInputShape);
-    auto compiledModel = sharedCore.compile_model(
-        openVinoModel,
-        "CPU",
+    dynamicBatchEnabled = batchSize > 1 && options.openvinoAllowDynamicBatch;
+    if (dynamicBatchEnabled)
+    {
+        openVinoModel->reshape(makeDynamicBatchShape(runtimeInputShape));
+    }
+    else
+    {
+        openVinoModel->reshape(ov::PartialShape(maxInputShape));
+    }
+    ov::AnyMap compileOptions{
         ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY),
         ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY),
-        ov::num_streams(static_cast<int>(options.openvinoNumStreams)),
         ov::inference_num_threads(static_cast<int>(options.openvinoInferenceNumThreads)),
-        ov::hint::enable_cpu_pinning(options.openvinoEnableCpuPinning));
+        ov::num_streams(static_cast<int>(options.openvinoNumStreams)),
+        ov::hint::enable_cpu_pinning(options.openvinoEnableCpuPinning)};
+    auto compiledModel = sharedCore.compile_model(openVinoModel, "CPU", compileOptions);
 
     inferRequest = compiledModel.create_infer_request();
     inputElementType = compiledModel.input(0).get_element_type();
@@ -128,24 +134,86 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
     auto currentOutputShape = outputShape;
     if (!currentInputShape.empty())
     {
+        if (inputBufferSize % inputTupleSize != 0)
+        {
+            throw NES::InferenceRuntimeFailure(
+                "Model Execution failed. Input buffer size {} B is not a multiple of tuple size {} B",
+                inputBufferSize,
+                inputTupleSize);
+        }
         const auto currentBatchSize = inputBufferSize / inputTupleSize;
         currentInputShape.front() = currentBatchSize;
         currentOutputShape.front() = currentBatchSize;
     }
 
-    const ov::Tensor inputTensor(inputElementType, currentInputShape, inputBuffer);
-    inferRequest.set_input_tensor(inputTensor);
-
-    const ov::Tensor outputTensor(outputElementType, currentOutputShape, outputBuffer);
-    inferRequest.set_output_tensor(0, outputTensor);
-
-    const auto outputSizeBytes = outputTensor.get_byte_size();
+    const auto outputSizeBytes = currentOutputShape.empty() ? outputTupleSize : currentOutputShape.front() * outputTupleSize;
     if (outputSizeBytes > outputBufferSize)
     {
         throw NES::InferenceRuntimeFailure(
             "Model Execution failed. Model output size {} B exceeds buffer capacity {} B", outputSizeBytes, outputBufferSize);
     }
 
+    if (!dynamicBatchEnabled)
+    {
+        if (currentInputShape != inputShape || currentOutputShape != outputShape)
+        {
+            throw NES::InferenceRuntimeFailure("Model Execution failed. OpenVINO runtime was set up with static batch size {}", inputShape.front());
+        }
+        prepareExternalTensors(inputShape, outputShape, inputBuffer, outputBuffer);
+        inferRequest.infer();
+        return;
+    }
+
+    if (currentInputShape == inputShape && currentOutputShape == outputShape)
+    {
+        prepareExternalTensors(currentInputShape, currentOutputShape, inputBuffer, outputBuffer);
+        inferRequest.infer();
+        return;
+    }
+
+    prepareOwnedTensors(currentInputShape, currentOutputShape);
+    std::memcpy(inputTensor.data(), inputBuffer, inputBufferSize);
     inferRequest.infer();
+    std::memcpy(outputBuffer, outputTensor.data(), outputSizeBytes);
+}
+
+void OpenVinoRuntimeBackend::prepareExternalTensors(
+    const ov::Shape& currentInputShape,
+    const ov::Shape& currentOutputShape,
+    std::byte* inputBuffer,
+    std::byte* outputBuffer)
+{
+    if (!usingExternalTensors || externalInputBuffer != inputBuffer || inputTensor.get_shape() != currentInputShape)
+    {
+        inputTensor = ov::Tensor(inputElementType, currentInputShape, inputBuffer);
+        inferRequest.set_input_tensor(inputTensor);
+        externalInputBuffer = inputBuffer;
+    }
+
+    if (!usingExternalTensors || externalOutputBuffer != outputBuffer || outputTensor.get_shape() != currentOutputShape)
+    {
+        outputTensor = ov::Tensor(outputElementType, currentOutputShape, outputBuffer);
+        inferRequest.set_output_tensor(0, outputTensor);
+        externalOutputBuffer = outputBuffer;
+    }
+    usingExternalTensors = true;
+}
+
+void OpenVinoRuntimeBackend::prepareOwnedTensors(const ov::Shape& currentInputShape, const ov::Shape& currentOutputShape)
+{
+    if (usingExternalTensors || !inputTensor || inputTensor.get_shape() != currentInputShape)
+    {
+        inputTensor = ov::Tensor(inputElementType, currentInputShape);
+        inferRequest.set_input_tensor(inputTensor);
+        externalInputBuffer = nullptr;
+    }
+
+    if (usingExternalTensors || !outputTensor || outputTensor.get_shape() != currentOutputShape)
+    {
+        outputTensor = ov::Tensor(outputElementType, currentOutputShape);
+        inferRequest.set_output_tensor(0, outputTensor);
+        externalOutputBuffer = nullptr;
+    }
+    usingExternalTensors = false;
 }
 }

@@ -39,6 +39,7 @@ struct InferenceRuntimeOptions
     uint64_t openvinoInferenceNumThreads = 1;
     uint64_t openvinoNumStreams = 0;
     bool openvinoEnableCpuPinning = false;
+    bool openvinoAllowDynamicBatch = false;
 };
 
 /// Import a model from a file.
