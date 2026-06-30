@@ -14,6 +14,7 @@
 
 #include <TCPSource.hpp>
 
+#include <algorithm>
 #include <cerrno> /// For socket error
 #include <chrono>
 #include <cstring>
@@ -247,21 +248,58 @@ Source::FillTupleBufferResult TCPSource::fillTupleBuffer(TupleBuffer& tupleBuffe
 bool TCPSource::fillBuffer(TupleBuffer& tupleBuffer, size_t& numReceivedBytes)
 {
     const auto flushIntervalTimerStart = std::chrono::system_clock::now();
-    bool flushIntervalPassed = false;
     bool readWasValid = true;
-
     const size_t rawTBSize = tupleBuffer.getBufferSize();
-    while (not flushIntervalPassed and numReceivedBytes < rawTBSize)
+
+    auto flushIntervalPassed = [&]
     {
-        const ssize_t bufferSizeReceived
-            = read(sockfd, tupleBuffer.getAvailableMemoryArea().data() + numReceivedBytes, rawTBSize - numReceivedBytes);
-        numReceivedBytes += bufferSizeReceived;
+        return flushIntervalInMs > 0
+            && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - flushIntervalTimerStart)
+                   .count()
+            >= flushIntervalInMs;
+    };
+
+    auto copyCompleteTuples = [&]
+    {
+        auto* const output = tupleBuffer.getAvailableMemoryArea().data();
+        for (auto tupleEnd = socketReadRemainder.find(tupleDelimiter); tupleEnd != std::string::npos;
+             tupleEnd = socketReadRemainder.find(tupleDelimiter))
+        {
+            const auto tupleSize = tupleEnd + 1;
+            const auto remainingTupleBufferCapacity = rawTBSize - numReceivedBytes;
+            if (tupleSize > remainingTupleBufferCapacity)
+            {
+                if (numReceivedBytes == 0)
+                {
+                    throw CannotFormatSourceData(
+                        "TCP tuple of {} bytes does not fit into tuple buffer of {} bytes", tupleSize, rawTBSize);
+                }
+                return false;
+            }
+
+            std::memcpy(output + numReceivedBytes, socketReadRemainder.data(), tupleSize);
+            socketReadRemainder.erase(0, tupleSize);
+            numReceivedBytes += tupleSize;
+            ++generatedTuples;
+        }
+        return true;
+    };
+
+    std::vector<char> readBuffer(std::max(rawTBSize, socketBufferSize));
+    while (numReceivedBytes < rawTBSize)
+    {
+        const bool copiedAllCompleteTuples = copyCompleteTuples();
+        if (!copiedAllCompleteTuples || numReceivedBytes == rawTBSize || (numReceivedBytes > 0 && flushIntervalPassed()))
+        {
+            break;
+        }
+
+        const ssize_t bufferSizeReceived = read(sockfd, readBuffer.data(), readBuffer.size());
         if (bufferSizeReceived == INVALID_RECEIVED_BUFFER_SIZE)
         {
             /// if read method returned -1 an error occurred during read.
             NES_ERROR("An error occurred while reading from socket. Error: {}", strerror(errno));
             readWasValid = false;
-            numReceivedBytes = 0;
             break;
         }
         if (bufferSizeReceived == EOF_RECEIVED_BUFFER_SIZE)
@@ -270,19 +308,22 @@ bool TCPSource::fillBuffer(TupleBuffer& tupleBuffer, size_t& numReceivedBytes)
             if (numReceivedBytes == 0)
             {
                 NES_INFO("TCP Source detected EoS");
-                readWasValid = false;
-                break;
             }
+            readWasValid = false;
+            break;
         }
+        else
+        {
+            socketReadRemainder.append(readBuffer.data(), static_cast<size_t>(bufferSizeReceived));
+        }
+
         /// If bufferFlushIntervalMs was defined by the user (> 0), we check whether the time on receiving
         /// and writing data exceeds the user defined limit (bufferFlushIntervalMs).
         /// If so, we flush the current TupleBuffer(TB) and proceed with the next TB.
-        if ((flushIntervalInMs > 0
-             && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - flushIntervalTimerStart).count()
-                 >= flushIntervalInMs))
+        if (numReceivedBytes > 0 && flushIntervalPassed())
         {
             NES_DEBUG("Reached TupleBuffer flush interval. Finishing writing to current TupleBuffer.");
-            flushIntervalPassed = true;
+            break;
         }
     }
     ++generatedBuffers;

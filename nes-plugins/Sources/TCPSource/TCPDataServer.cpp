@@ -164,13 +164,20 @@ void TCPDataServer::handleConnection(const std::shared_ptr<tcp::socket>& socket,
                 /// Serve the data to the client
                 dataProvider(*socket);
 
-                socket->shutdown(tcp::socket::shutdown_send);
-                socket->close();
+                boost::system::error_code boostErrorCode;
+                socket->shutdown(tcp::socket::shutdown_send, boostErrorCode);
+                boostErrorCode.clear();
+                socket->close(boostErrorCode);
             }
-            catch (const std::exception&)
+            catch (const std::exception& exception)
             {
                 boost::system::error_code boostErrorCode;
-                INVARIANT(socket->close(boostErrorCode), "Failed to close socket of TCPDataServer: {}", boostErrorCode.message());
+                socket->close(boostErrorCode);
+                if (boostErrorCode)
+                {
+                    NES_WARNING("Failed to close socket of TCPDataServer: {}", boostErrorCode.message());
+                }
+                NES_DEBUG("Stopped TCPDataServer connection after exception: {}", exception.what());
             }
         });
 }

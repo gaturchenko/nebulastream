@@ -223,6 +223,7 @@ private:
     size_t socketBufferSize;
     size_t bytesUsedForSocketBufferSizeTransfer;
     float flushIntervalInMs;
+    std::string socketReadRemainder;
     uint64_t generatedTuples{0};
     uint64_t generatedBuffers{0};
     u_int32_t connectionTimeout;
