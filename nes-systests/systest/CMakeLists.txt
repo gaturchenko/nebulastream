@@ -37,27 +37,36 @@ ExternalData_Expand_Arguments(
         EXPANDED_TEST_DATA_PATH
         ${TEST_DATA_PATH}
 )
-ExternalData_Expand_Arguments(
-        test-data
-        EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE
-        DATA{../testdata/model/musan/pretrained/kwt/saved_model.tar}
+file(GLOB MUSAN_SAVED_MODEL_ARCHIVE_HASHES
+        RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/../testdata/model/musan/pretrained"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../testdata/model/musan/pretrained/*/saved_model.tar.md5"
 )
-set(MUSAN_SAVED_MODEL_DIR "${EXPANDED_TEST_DATA_PATH}/model/musan/pretrained/kwt/saved_model")
-set(MUSAN_SAVED_MODEL_STAMP "${MUSAN_SAVED_MODEL_DIR}.extract-stamp")
-add_custom_command(
-        OUTPUT "${MUSAN_SAVED_MODEL_STAMP}"
-        COMMAND ${CMAKE_COMMAND}
-        -DARCHIVE=${EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE}
-        -DDESTINATION=${MUSAN_SAVED_MODEL_DIR}
-        -DSTAMP=${MUSAN_SAVED_MODEL_STAMP}
-        -P "${CMAKE_SOURCE_DIR}/cmake/ExtractExternalDataArchive.cmake"
-        DEPENDS
-        "${EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE}"
-        "${CMAKE_SOURCE_DIR}/cmake/ExtractExternalDataArchive.cmake"
-        COMMENT "Extracting MUSAN TensorFlow SavedModel"
-        VERBATIM
-)
-add_custom_target(musan-saved-model-data DEPENDS "${MUSAN_SAVED_MODEL_STAMP}")
+set(MUSAN_SAVED_MODEL_STAMPS)
+foreach (MUSAN_SAVED_MODEL_ARCHIVE_HASH IN LISTS MUSAN_SAVED_MODEL_ARCHIVE_HASHES)
+    string(REGEX REPLACE "/saved_model[.]tar[.]md5$" "" MUSAN_SAVED_MODEL_NAME "${MUSAN_SAVED_MODEL_ARCHIVE_HASH}")
+    ExternalData_Expand_Arguments(
+            test-data
+            EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE
+            DATA{../testdata/model/musan/pretrained/${MUSAN_SAVED_MODEL_NAME}/saved_model.tar}
+    )
+    set(MUSAN_SAVED_MODEL_DIR "${EXPANDED_TEST_DATA_PATH}/model/musan/pretrained/${MUSAN_SAVED_MODEL_NAME}/saved_model")
+    set(MUSAN_SAVED_MODEL_STAMP "${MUSAN_SAVED_MODEL_DIR}.extract-stamp")
+    add_custom_command(
+            OUTPUT "${MUSAN_SAVED_MODEL_STAMP}"
+            COMMAND ${CMAKE_COMMAND}
+            -DARCHIVE=${EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE}
+            -DDESTINATION=${MUSAN_SAVED_MODEL_DIR}
+            -DSTAMP=${MUSAN_SAVED_MODEL_STAMP}
+            -P "${CMAKE_SOURCE_DIR}/cmake/ExtractExternalDataArchive.cmake"
+            DEPENDS
+            "${EXPANDED_MUSAN_SAVED_MODEL_ARCHIVE}"
+            "${CMAKE_SOURCE_DIR}/cmake/ExtractExternalDataArchive.cmake"
+            COMMENT "Extracting MUSAN TensorFlow SavedModel ${MUSAN_SAVED_MODEL_NAME}"
+            VERBATIM
+    )
+    list(APPEND MUSAN_SAVED_MODEL_STAMPS "${MUSAN_SAVED_MODEL_STAMP}")
+endforeach ()
+add_custom_target(musan-saved-model-data DEPENDS ${MUSAN_SAVED_MODEL_STAMPS})
 message(STATUS "Systest testdata is located at ${EXPANDED_TEST_DATA_PATH}")
 
 get_source(nes-systest-lib SLT_SOURCE_FILES)
