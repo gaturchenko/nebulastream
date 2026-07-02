@@ -9,6 +9,7 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
 CREATE SINK gatedSink(encoded VARSIZED NOT NULL) TYPE File;
 
+# Vary by +/- 6 for more aggressive/conservative denoising
 SELECT TO_BASE64(SPECTRAL_GATING(FROM_BASE64(encoded), FLOAT32(-60.0))) AS encoded
 FROM audioStream INTO gatedSink;
 ----

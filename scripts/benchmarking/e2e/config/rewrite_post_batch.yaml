@@ -1,0 +1,2 @@
+"optimizer.rewrite_post_join_batch_inference": [true]
+"optimizer.inference_batch_size": [2]

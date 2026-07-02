@@ -5,7 +5,10 @@ GlobalConfiguration worker.default_query_execution.page_size: [16384]
 GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [524288]
 
 CREATE LOGICAL SOURCE ecgSource(timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
-CREATE PHYSICAL SOURCE FOR ecgSource TYPE File;
+#CREATE PHYSICAL SOURCE FOR ecgSource TYPE File;
+CREATE PHYSICAL SOURCE FOR ecgSource TYPE TCP SET(
+  1000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
 ATTACH FILE large/ptb-diagnostic-ecg/patient023-s0080lre.csv
 
 CREATE SINK ecgVarsizedDiscard20ms(ecgNext20Ms VARSIZED NOT NULL) TYPE Void;
@@ -16,7 +19,9 @@ OUTPUT (ecgNext20Ms VARSIZED);
 
 SELECT ecgNext20Ms
 FROM MODEL_INFERENCE(nBeats100ms, (
-        SELECT ARRAY_AGG(value) AS value_100_ms
+        #SELECT ARRAY_AGG(value) AS value_100_ms
+        #SELECT ARRAY_AGG(ROUND(value, UINT8(1))) AS value_100_ms
+        SELECT ARRAY_AGG(QUANTIZE(value, VARSIZED('float4'))) AS value_100_ms
         FROM ecgSource
         WINDOW SLIDING(timestamp, SIZE 100 ms, ADVANCE BY 10 ms)
     )

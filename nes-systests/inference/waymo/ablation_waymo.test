@@ -1,0 +1,123 @@
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1048576]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [10000]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [1]
+
+CREATE LOGICAL SOURCE camera1(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+#CREATE PHYSICAL SOURCE FOR camera1 TYPE File;
+CREATE PHYSICAL SOURCE FOR camera1 TYPE TCP SET(
+    10 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/waymo/camera_1.csv
+
+CREATE LOGICAL SOURCE camera2(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+#CREATE PHYSICAL SOURCE FOR camera2 TYPE File;
+CREATE PHYSICAL SOURCE FOR camera2 TYPE TCP SET(
+    10 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/waymo/camera_2.csv
+
+CREATE LOGICAL SOURCE camera3(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+#CREATE PHYSICAL SOURCE FOR camera3 TYPE File;
+CREATE PHYSICAL SOURCE FOR camera3 TYPE TCP SET(
+    10 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/waymo/camera_3.csv
+
+CREATE LOGICAL SOURCE camera4(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+#CREATE PHYSICAL SOURCE FOR camera4 TYPE File;
+CREATE PHYSICAL SOURCE FOR camera4 TYPE TCP SET(
+    10 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/waymo/camera_4.csv
+
+CREATE LOGICAL SOURCE camera5(timestamp UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+#CREATE PHYSICAL SOURCE FOR camera5 TYPE File;
+CREATE PHYSICAL SOURCE FOR camera5 TYPE TCP SET(
+    10 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/waymo/camera_5.csv
+
+CREATE MODEL segmenter ('model/waymo/pretrained/segmenter/segmenter.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (segmentationOutput VARSIZED);
+
+CREATE SINK waymoSegmentationVarsizedDiscard(
+    camera1.timestamp UINT64 NOT NULL
+) TYPE Void;
+
+CREATE SINK waymoSegmentationDiscard(
+    segmentationOutput VARSIZED NOT NULL
+) TYPE Void;
+
+SELECT segmentationOutput FROM MODEL_INFERENCE(segmenter, (
+        SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS framePreprocessed
+        FROM camera1
+    )
+)
+INTO waymoSegmentationDiscard;
+----
+
+SELECT
+    `CAMERA1$TIMESTAMP`
+FROM MODEL_INFERENCE(segmenter,
+    MODEL_INFERENCE(segmenter,
+        MODEL_INFERENCE(segmenter,
+            MODEL_INFERENCE(segmenter,
+                MODEL_INFERENCE(segmenter, (
+                    SELECT *
+                    FROM (
+                        SELECT *
+                        FROM (
+                            SELECT *
+                            FROM (
+                                SELECT *
+                                FROM (
+                                    SELECT
+                                        timestamp AS `CAMERA1$TIMESTAMP`,
+                                        RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS `CAMERA1$FRAMEPREPROCESSED`
+                                    FROM camera1
+                                )
+                                INNER JOIN (
+                                    SELECT
+                                        timestamp AS `CAMERA2$TIMESTAMP`,
+                                        RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS `CAMERA2$FRAMEPREPROCESSED`
+                                    FROM camera2
+                                )
+                                ON `CAMERA1$TIMESTAMP` = `CAMERA2$TIMESTAMP`
+                                WINDOW TUMBLING(`TIMESTAMP`, SIZE 100 ms)
+                            )
+                            INNER JOIN (
+                                SELECT
+                                    timestamp AS `CAMERA3$TIMESTAMP`,
+                                    RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS `CAMERA3$FRAMEPREPROCESSED`
+                                FROM camera3
+                            )
+                            ON `CAMERA1$TIMESTAMP` = `CAMERA3$TIMESTAMP`
+                            WINDOW TUMBLING(`TIMESTAMP`, SIZE 100 ms)
+                        )
+                        INNER JOIN (
+                            SELECT
+                                timestamp AS `CAMERA4$TIMESTAMP`,
+                                RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS `CAMERA4$FRAMEPREPROCESSED`
+                            FROM camera4
+                        )
+                        ON `CAMERA1$TIMESTAMP` = `CAMERA4$TIMESTAMP`
+                        WINDOW TUMBLING(`TIMESTAMP`, SIZE 100 ms)
+                    )
+                    INNER JOIN (
+                        SELECT
+                            timestamp AS `CAMERA5$TIMESTAMP`,
+                            RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS `CAMERA5$FRAMEPREPROCESSED`
+                        FROM camera5
+                    )
+                    ON `CAMERA1$TIMESTAMP` = `CAMERA5$TIMESTAMP`
+                    WINDOW TUMBLING(`TIMESTAMP`, SIZE 100 ms)
+                ))
+            )
+        )
+    )
+)
+INTO waymoSegmentationVarsizedDiscard;
+----

@@ -1,29 +1,45 @@
 GlobalConfiguration enable_event_trace: [true]
-GlobalConfiguration worker.query_engine.number_of_worker_threads: [24]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
 GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
 GlobalConfiguration worker.default_query_execution.page_size: [16384]
-GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [524288]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [1048576]
 
-CREATE LOGICAL SOURCE musanSource(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
-CREATE PHYSICAL SOURCE FOR musanSource TYPE File;
+CREATE LOGICAL SOURCE musanSource0242(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+#CREATE PHYSICAL SOURCE FOR musanSource0242 TYPE File;
+CREATE PHYSICAL SOURCE FOR musanSource0242 TYPE TCP SET(
+  16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/musan/musan-us-gov-0242.csv
+
+CREATE LOGICAL SOURCE musanSource0096(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+#CREATE PHYSICAL SOURCE FOR musanSource0096 TYPE File;
+CREATE PHYSICAL SOURCE FOR musanSource0096 TYPE TCP SET(
+  16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
 ATTACH FILE large/musan/musan-us-gov-0096.csv
 
-CREATE SINK musanVarsizedDiscard(
-    p1 FLOAT32 NOT NULL,
-    p2 FLOAT32 NOT NULL,
-    p3 FLOAT32 NOT NULL,
-    p4 FLOAT32 NOT NULL,
-    p5 FLOAT32 NOT NULL,
-    p6 FLOAT32 NOT NULL,
-    p7 FLOAT32 NOT NULL,
-    p8 FLOAT32 NOT NULL,
-    p9 FLOAT32 NOT NULL,
-    p10 FLOAT32 NOT NULL,
-    p11 FLOAT32 NOT NULL,
-    p12 FLOAT32 NOT NULL
+CREATE LOGICAL SOURCE musanSource0021(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+#CREATE PHYSICAL SOURCE FOR musanSource0021 TYPE File;
+CREATE PHYSICAL SOURCE FOR musanSource0021 TYPE TCP SET(
+  16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/musan/musan-us-gov-0021.csv
+
+CREATE LOGICAL SOURCE musanSource0104(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+#CREATE PHYSICAL SOURCE FOR musanSource0104 TYPE File;
+CREATE PHYSICAL SOURCE FOR musanSource0104 TYPE TCP SET(
+  16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE large/musan/musan-us-gov-0104.csv
+
+CREATE SINK musanFloatDiscard(
+    s0242_p1 FLOAT32 NOT NULL,
+    s0096_p1 FLOAT32 NOT NULL,
+    s0021_p1 FLOAT32 NOT NULL,
+    s0104_p1 FLOAT32 NOT NULL
 ) TYPE Void;
 
-CREATE MODEL kwt ('model/musan/pretrained/kwt/saved_model')
+CREATE MODEL mhatt_rnn ('model/musan/pretrained/mhatt-rnn/saved_model')
 INPUT (audio1sec VARSIZED)
 OUTPUT (
         p1 FLOAT32,
@@ -40,12 +56,76 @@ OUTPUT (
         p12 FLOAT32
 );
 
-SELECT p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12
-FROM MODEL_INFERENCE(kwt, (
-        SELECT ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec
-        FROM musanSource
+CREATE SINK musanVarsizedDiscard(
+    s0242_p1 VARSIZED NOT NULL,
+    s0096_p1 VARSIZED NOT NULL,
+    s0021_p1 VARSIZED NOT NULL,
+    s0104_p1 VARSIZED NOT NULL
+) TYPE Void;
+
+#SELECT SPECTRAL_GATING(
+#    ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-54.0)
+#) AS audio1sec
+
+SELECT
+    musanSource0242.p1 AS s0242_p1,
+    musanSource0096.p1 AS s0096_p1,
+    musanSource0021.p1 AS s0021_p1,
+    musanSource0104.p1 AS s0104_p1
+FROM MODEL_INFERENCE(mhatt_rnn, MODEL_INFERENCE(mhatt_rnn, MODEL_INFERENCE(mhatt_rnn, MODEL_INFERENCE(mhatt_rnn, (
+    SELECT *
+    FROM (
+        SELECT *
+        FROM (
+            SELECT *
+            FROM (
+                SELECT
+                    start,
+                    UINT8(1) AS joinKey0242,
+                    SELECT SPECTRAL_GATING(
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-54.0)
+            ) AS audio1sec
+                FROM musanSource0242
+                WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 10 ms)
+            )
+            JOIN (
+                SELECT
+                    start,
+                    UINT8(1) AS joinKey0096,
+                    SELECT SPECTRAL_GATING(
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-54.0)
+            ) AS audio1sec
+                FROM musanSource0096
+                WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 10 ms)
+            )
+            ON joinKey0242 = joinKey0096
+            WINDOW TUMBLING(start, SIZE 10 ms)
+        )
+        JOIN (
+            SELECT
+                start,
+                UINT8(1) AS joinKey0021,
+                SELECT SPECTRAL_GATING(
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-54.0)
+            ) AS audio1sec
+            FROM musanSource0021
+            WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 10 ms)
+        )
+        ON joinKey0242 = joinKey0021
+        WINDOW TUMBLING(start, SIZE 10 ms)
+    )
+    JOIN (
+        SELECT
+            start,
+            UINT8(1) AS joinKey0104,
+            SELECT SPECTRAL_GATING(
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-54.0)
+            ) AS audio1sec
+        FROM musanSource0104
         WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 10 ms)
     )
-)
-INTO musanVarsizedDiscard;
+    ON joinKey0242 = joinKey0104
+    WINDOW TUMBLING(start, SIZE 10 ms)
+)))))
+INTO musanFloatDiscard;
 ----
