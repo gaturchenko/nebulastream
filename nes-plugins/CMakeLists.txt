@@ -26,6 +26,7 @@ activate_optional_plugin("Audio" ON)
 activate_optional_plugin("Quantization" ON)
 activate_optional_plugin("InferenceUDF/Nanodet" ON)
 activate_optional_plugin("InferenceUDF/Nbeats" ON)
+activate_optional_plugin("InferenceUDF/ModelZoo" ON)
 
 if (NES_ENABLES_TESTS)
   # ChecksumSink depends on Checksum.cpp from systest which is only added when tests are enabled.
