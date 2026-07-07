@@ -766,22 +766,28 @@ namespace NES
 {
 std::optional<std::string> checkResult(const Systest::RunningQuery& runningQuery)
 {
-    /// Void sinks discard all tuples and produce no result file, so there is nothing to check.
+    /// Some sinks discard all tuples / write no systest result file, so there is nothing to
+    /// compare: Void (discards) and Http (forwards records to an external service and only
+    /// writes a side-channel timing log). Skip the result check for those.
     if (runningQuery.systestQuery.planInfoOrException.has_value())
     {
         const auto sinkOperators
             = getOperatorByType<SinkLogicalOperator>(runningQuery.systestQuery.planInfoOrException.value().queryPlan.getGlobalPlan());
         if (not sinkOperators.empty())
         {
-            if (const auto sinkOp = sinkOperators.at(0).tryGetAs<SinkLogicalOperator>(); sinkOp.has_value()
-                and sinkOp.value()->getSinkDescriptor().has_value()
-                and toUpperCase(sinkOp.value()->getSinkDescriptor().value().getSinkType()) == "VOID")
+            if (const auto sinkOp = sinkOperators.at(0).tryGetAs<SinkLogicalOperator>();
+                sinkOp.has_value() and sinkOp.value()->getSinkDescriptor().has_value())
             {
-                NES_INFO(
-                    "Skipping result check for {}:{} because it writes to a Void sink.",
-                    runningQuery.systestQuery.testName,
-                    runningQuery.systestQuery.queryIdInFile);
-                return std::nullopt;
+                const auto sinkType = toUpperCase(sinkOp.value()->getSinkDescriptor().value().getSinkType());
+                if (sinkType == "VOID" or sinkType == "HTTP")
+                {
+                    NES_INFO(
+                        "Skipping result check for {}:{} because it writes to a {} sink.",
+                        runningQuery.systestQuery.testName,
+                        runningQuery.systestQuery.queryIdInFile,
+                        sinkType);
+                    return std::nullopt;
+                }
             }
         }
     }
