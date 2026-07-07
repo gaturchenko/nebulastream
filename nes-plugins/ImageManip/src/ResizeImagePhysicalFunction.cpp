@@ -38,91 +38,70 @@ namespace NES
 
 namespace
 {
-struct ResizeImageSizeCacheEntry
+/// Deterministic float-tensor output size: width * height * 3 channels * sizeof(float).
+/// (IMREAD_COLOR below always yields 3 channels, so the size does not depend on input content.)
+uint64_t floatOutputSize(int32_t width, int32_t height)
 {
-    int32_t width = 0;
-    int32_t height = 0;
-    uint64_t outputSize = 0;
-    bool initialized = false;
-};
+    if (width <= 0 || height <= 0)
+    {
+        return 0U;
+    }
+    return static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 3ULL * sizeof(float);
+}
 
-std::vector<uint8_t> resizeAndEncodePng(const int8_t* inputData, uint64_t inputSize, int32_t width, int32_t height)
+/// Decode the encoded input image, resize to width x height (INTER_LINEAR, as before) and
+/// write a CHW, BGR, float32 tensor with unscaled pixel values (range [0, 255]) into
+/// outputData. Channel-planar layout (all B, then all G, then all R) is what NCHW models
+/// expect for a batch of one. Returns the number of bytes written, or 0 on failure.
+uint64_t writeResizedFloat(
+    int8_t* inputData, uint64_t inputSize, int32_t width, int32_t height, int8_t* outputData, uint64_t outputCapacity)
 {
+    PRECONDITION(outputData != nullptr, "output buffer must not be null");
     if (inputData == nullptr || inputSize == 0 || inputSize > static_cast<uint64_t>(std::numeric_limits<int>::max()) || width <= 0
         || height <= 0)
     {
-        return {};
+        return 0U;
+    }
+
+    const auto requiredBytes = floatOutputSize(width, height);
+    if (requiredBytes > outputCapacity)
+    {
+        return 0U;
     }
 
     try
     {
         const auto inputSizeInt = static_cast<int>(inputSize);
         cv::Mat encodedBytes(1, inputSizeInt, CV_8U, const_cast<int8_t*>(inputData)); /// NOLINT(cppcoreguidelines-pro-type-const-cast)
-        cv::Mat inputImage = cv::imdecode(encodedBytes, cv::IMREAD_UNCHANGED);
+        /// IMREAD_COLOR forces a 3-channel BGR image, keeping the output size deterministic.
+        cv::Mat inputImage = cv::imdecode(encodedBytes, cv::IMREAD_COLOR);
         if (inputImage.empty())
         {
-            return {};
+            return 0U;
         }
 
         cv::Mat resizedImage;
         cv::resize(inputImage, resizedImage, cv::Size(width, height), 0.0, 0.0, cv::INTER_LINEAR);
 
-        std::vector<uint8_t> encodedOutput;
-        if (!cv::imencode(".png", resizedImage, encodedOutput))
+        cv::Mat floatImage;
+        resizedImage.convertTo(floatImage, CV_32FC3);
+
+        /// Write channel-planar (CHW): B plane, then G, then R. cv::split yields continuous
+        /// single-channel planes, so each is a straight memcpy.
+        std::vector<cv::Mat> channelPlanes;
+        cv::split(floatImage, channelPlanes);
+        auto* out = reinterpret_cast<float*>(outputData); /// NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+        const auto planeElements = static_cast<size_t>(width) * static_cast<size_t>(height);
+        for (size_t c = 0; c < channelPlanes.size(); ++c)
         {
-            return {};
+            std::memcpy(out + (c * planeElements), channelPlanes[c].ptr<float>(), planeElements * sizeof(float));
         }
-        return encodedOutput;
+        return requiredBytes;
     }
     catch (const cv::Exception&)
     {
-        return {};
-    }
-}
-
-ResizeImageSizeCacheEntry& getResizedImageSizeCache()
-{
-    thread_local ResizeImageSizeCacheEntry cache;
-    return cache;
-}
-
-uint64_t getCachedResizedImageSize(int32_t width, int32_t height)
-{
-    auto& cache = getResizedImageSizeCache();
-    if (cache.initialized && cache.width == width && cache.height == height)
-    {
-        return cache.outputSize;
-    }
-    return 0U;
-}
-
-void updateCachedResizedImageSize(int32_t width, int32_t height, uint64_t outputSize)
-{
-    auto& cache = getResizedImageSizeCache();
-    cache.width = width;
-    cache.height = height;
-    cache.outputSize = outputSize;
-    cache.initialized = true;
-}
-
-uint64_t
-writeResizedImage(int8_t* inputData, uint64_t inputSize, int32_t width, int32_t height, int8_t* outputData, uint64_t outputCapacity)
-{
-    PRECONDITION(outputData != nullptr, "output buffer must not be null");
-    const auto encodedOutput = resizeAndEncodePng(inputData, inputSize, width, height);
-    if (encodedOutput.empty())
-    {
         return 0U;
     }
-
-    if (encodedOutput.size() > outputCapacity)
-    {
-        /// Caller can retry with the returned required size.
-        return encodedOutput.size();
-    }
-
-    std::memcpy(outputData, encodedOutput.data(), encodedOutput.size());
-    return encodedOutput.size();
 }
 }
 
@@ -144,42 +123,23 @@ VarVal ResizeImagePhysicalFunction::execute(const Record& record, ArenaRef& aren
     const auto height
         = heightPhysicalFunction.execute(record, arena).castToType(DataType::Type::INT32).getRawValueAs<nautilus::val<int32_t>>();
 
-    nautilus::val<uint64_t> outputCapacity = nautilus::invoke(getCachedResizedImageSize, width, height);
-    if (outputCapacity == 0U)
-    {
-        /// Best-effort first guess if no cached size exists for these dimensions.
-        /// This avoids a dedicated size pass in the common case.
-        outputCapacity = inputImageSize;
-    }
-
-    if (outputCapacity == 0U)
+    /// The float-tensor output size is fully determined by width/height (3 channels,
+    /// float32), so allocate it directly — no size-probe or retry needed.
+    const nautilus::val<uint64_t> outputSize = nautilus::invoke(floatOutputSize, width, height);
+    if (outputSize == 0U)
     {
         return inputValue;
     }
 
-    auto outputImage = arena.allocateVariableSizedData(outputCapacity);
-    nautilus::val<uint64_t> writtenSize = nautilus::invoke(
-        writeResizedImage, inputImage.getContent(), inputImageSize, width, height, outputImage.getContent(), outputCapacity);
+    auto outputImage = arena.allocateVariableSizedData(outputSize);
+    const nautilus::val<uint64_t> writtenSize = nautilus::invoke(
+        writeResizedFloat, inputImage.getContent(), inputImageSize, width, height, outputImage.getContent(), outputSize);
 
     if (writtenSize == 0U)
     {
         return inputValue;
     }
 
-    if (writtenSize > outputCapacity)
-    {
-        outputCapacity = writtenSize;
-        outputImage = arena.allocateVariableSizedData(outputCapacity);
-        writtenSize = nautilus::invoke(
-            writeResizedImage, inputImage.getContent(), inputImageSize, width, height, outputImage.getContent(), outputCapacity);
-
-        if (writtenSize == 0U || writtenSize > outputCapacity)
-        {
-            return inputValue;
-        }
-    }
-
-    nautilus::invoke(updateCachedResizedImageSize, width, height, writtenSize);
     return VariableSizedData(outputImage.getContent(), writtenSize);
 }
 
