@@ -40,6 +40,10 @@ struct InferenceRuntimeOptions
     uint64_t openvinoNumStreams = 0;
     bool openvinoEnableCpuPinning = false;
     bool openvinoAllowDynamicBatch = false;
+    /// When set, worker-thread sessions reuse a single cached ov::CompiledModel
+    /// (one weight copy) and rely on OpenVINO streams for concurrency instead of
+    /// compiling a private per-thread copy. See openvino_share_compiled_model.
+    bool openvinoShareCompiledModel = false;
 };
 
 /// Import a model from a file.

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -38,10 +39,26 @@ struct ThreadLocalRuntimeWrapper
         deduplicatedOutputRowIndices.clear();
         wrappers.reserve(numThreads);
         deduplicatedOutputRowIndices.reserve(numThreads);
+
+        /// When sharing the compiled model, all sessions reuse one ov::CompiledModel
+        /// (one weight copy). To keep the per-thread parallelism the old per-session
+        /// compilation gave for free, that single model must have enough streams for
+        /// every worker thread AND enough total threads to feed those streams (streams
+        /// share one inference_num_threads budget, unlike the old N private models that
+        /// each grabbed their own thread). Only override "auto" (0) streams so an
+        /// explicit ablation value still wins; raise the thread budget to at least one
+        /// per stream so the streams can actually run concurrently.
+        auto effectiveOptions = options;
+        if (effectiveOptions.openvinoShareCompiledModel && effectiveOptions.openvinoNumStreams == 0)
+        {
+            effectiveOptions.openvinoNumStreams = numThreads;
+            effectiveOptions.openvinoInferenceNumThreads = std::max(effectiveOptions.openvinoInferenceNumThreads, numThreads);
+        }
+
         for (size_t i = 0; i < numThreads; ++i)
         {
             wrappers.emplace_back();
-            wrappers.back().setup(model, batchSize, options);
+            wrappers.back().setup(model, batchSize, effectiveOptions);
             deduplicatedOutputRowIndices.emplace_back(batchSize);
         }
     }

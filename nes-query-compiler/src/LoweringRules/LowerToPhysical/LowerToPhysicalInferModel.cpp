@@ -203,7 +203,8 @@ InferenceRuntimeOptions getInferenceRuntimeOptions(const QueryExecutionConfigura
     return {
         .openvinoInferenceNumThreads = inference.openvinoInferenceNumThreads.getValue(),
         .openvinoNumStreams = inference.openvinoNumStreams.getValue(),
-        .openvinoEnableCpuPinning = inference.openvinoEnableCpuPinning.getValue()};
+        .openvinoEnableCpuPinning = inference.openvinoEnableCpuPinning.getValue(),
+        .openvinoShareCompiledModel = inference.openvinoShareCompiledModel.getValue()};
 }
 
 InferenceRuntimeOptions withOpenVinoDynamicBatch(InferenceRuntimeOptions options, const bool enabled)

@@ -62,6 +62,14 @@ public:
     UIntOption openvinoNumStreams = {"openvino_num_streams", "0", "OpenVINO ov::num_streams"};
     BoolOption openvinoEnableCpuPinning
         = {"openvino_enable_cpu_pinning", "false", "OpenVINO ov::hint::enable_cpu_pinning", {std::make_shared<BooleanValidation>()}};
+    BoolOption openvinoShareCompiledModel
+        = {"openvino_share_compiled_model",
+           "false",
+           "Share one ov::CompiledModel across worker-thread sessions (and across inference operators using the same "
+           "model+options) instead of compiling a private copy per session. Collapses N-fold weight duplication to a single "
+           "copy; the shared model is compiled with num_streams=worker_threads (THROUGHPUT mode) so per-thread parallelism is "
+           "preserved. Changes OpenVINO deployment from LATENCY/one-stream-per-model to THROUGHPUT/N-streams-one-model.",
+           {std::make_shared<BooleanValidation>()}};
 
 private:
     std::vector<BaseOption*> getOptions() override
@@ -72,7 +80,8 @@ private:
             &numberOfEntriesPredictionCache,
             &openvinoInferenceNumThreads,
             &openvinoNumStreams,
-            &openvinoEnableCpuPinning};
+            &openvinoEnableCpuPinning,
+            &openvinoShareCompiledModel};
     }
 };
 
