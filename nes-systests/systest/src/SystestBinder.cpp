@@ -91,14 +91,17 @@ public:
         const std::string& sinkType,
         const std::string_view sinkNameInFile,
         const Schema& schema,
-        const std::unordered_map<std::string, std::string>& /*config*/)
+        const std::unordered_map<std::string, std::string>& declaredConfig)
     {
         auto [_, success] = sinkProviders.emplace(
             sinkNameInFile,
-            [this, schema, sinkType](
+            [this, schema, sinkType, declaredConfig](
                 const std::string_view assignedSinkName, std::filesystem::path filePath) -> std::expected<SinkDescriptor, Exception>
             {
-                std::unordered_map<std::string, std::string> config{};
+                /// Preserve the config declared in CREATE SINK ... SET(...) so custom sinks
+                /// (e.g. Http) receive their parameters; File/Checksum then layer the
+                /// harness-managed result file and format on top.
+                std::unordered_map<std::string, std::string> config = declaredConfig;
                 std::unordered_map<std::string, std::string> formatConfig{};
                 if (sinkType == "File")
                 {
