@@ -160,7 +160,10 @@ void LatencySink::execute(const TupleBuffer& inputTupleBuffer, PipelineExecution
                   << ',' << creationTsMs << '\n';
         ++recordsSeen;
     }
-    logStream.flush();
+    /// Deliberately NOT flushing per buffer: a per-buffer flush turns this measurement sink into a
+    /// throughput bottleneck (especially on SD-backed storage), which inflates the very latency it is
+    /// meant to observe. The ofstream buffers in memory and is flushed once in stop(). Records are
+    /// lost only if the query is killed mid-run, which is acceptable for benchmarking.
 }
 
 DescriptorConfig::Config LatencySink::validateAndFormat(std::unordered_map<std::string, std::string> config)
