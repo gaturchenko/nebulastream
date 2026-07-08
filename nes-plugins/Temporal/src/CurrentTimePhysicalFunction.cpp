@@ -47,7 +47,7 @@ VarVal CurrentTimePhysicalFunction::execute(const Record&, ArenaRef&) const
 }
 
 PhysicalFunctionRegistryReturnType
-PhysicalFunctionGeneratedRegistrar::RegisterCURRENT_TIMEPhysicalFunction(PhysicalFunctionRegistryArguments arguments)
+PhysicalFunctionGeneratedRegistrar::RegisterCURRENT_TIMEPhysicalFunction([[maybe_unused]] PhysicalFunctionRegistryArguments arguments)
 {
     PRECONDITION(
         arguments.childFunctions.empty(), "CURRENT_TIME function takes no child functions, but got {}", arguments.childFunctions.size());

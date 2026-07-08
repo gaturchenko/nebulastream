@@ -69,7 +69,7 @@ std::vector<LogicalFunction> CurrentTimeLogicalFunction::getChildren() const
     return {};
 }
 
-CurrentTimeLogicalFunction CurrentTimeLogicalFunction::withChildren(const std::vector<LogicalFunction>& children) const
+CurrentTimeLogicalFunction CurrentTimeLogicalFunction::withChildren([[maybe_unused]] const std::vector<LogicalFunction>& children) const
 {
     PRECONDITION(children.empty(), "CURRENT_TIME function takes no children, but got {}", children.size());
     return *this;
