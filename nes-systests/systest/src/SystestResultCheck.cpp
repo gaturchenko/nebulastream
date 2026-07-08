@@ -767,8 +767,9 @@ namespace NES
 std::optional<std::string> checkResult(const Systest::RunningQuery& runningQuery)
 {
     /// Some sinks discard all tuples / write no systest result file, so there is nothing to
-    /// compare: Void (discards) and Http (forwards records to an external service and only
-    /// writes a side-channel timing log). Skip the result check for those.
+    /// compare: Void (discards), Http (forwards records to an external service and only writes a
+    /// side-channel timing log) and Latency (discards the payload, writes only a per-record latency
+    /// CSV). Skip the result check for those.
     if (runningQuery.systestQuery.planInfoOrException.has_value())
     {
         const auto sinkOperators
@@ -779,7 +780,7 @@ std::optional<std::string> checkResult(const Systest::RunningQuery& runningQuery
                 sinkOp.has_value() and sinkOp.value()->getSinkDescriptor().has_value())
             {
                 const auto sinkType = toUpperCase(sinkOp.value()->getSinkDescriptor().value().getSinkType());
-                if (sinkType == "VOID" or sinkType == "HTTP")
+                if (sinkType == "VOID" or sinkType == "HTTP" or sinkType == "LATENCY")
                 {
                     NES_INFO(
                         "Skipping result check for {}:{} because it writes to a {} sink.",
