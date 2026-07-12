@@ -39,6 +39,12 @@ enum class PredictionCacheType : uint8_t
     SECOND_CHANCE
 };
 
+enum class PredictionCacheScope : uint8_t
+{
+    THREAD_LOCAL,
+    GLOBAL
+};
+
 class InferenceConfiguration final : public BaseConfiguration
 {
 public:
@@ -55,6 +61,13 @@ public:
         = {"prediction_cache_type",
            PredictionCacheType::NONE,
            fmt::format("Type of prediction cache {}", fmt::join(magic_enum::enum_names<PredictionCacheType>(), ", "))};
+    EnumOption<PredictionCacheScope> predictionCacheScope
+        = {"prediction_cache_scope",
+           PredictionCacheScope::THREAD_LOCAL,
+           fmt::format(
+               "Scope of the prediction cache: THREAD_LOCAL keeps one cache per worker thread, GLOBAL shares a single "
+               "mutex-protected cache across all worker threads ({})",
+               fmt::join(magic_enum::enum_names<PredictionCacheScope>(), ", "))};
     UIntOption numberOfEntriesPredictionCache
         = {"number_of_entries_prediction_cache", "1", "Size of the prediction cache", {std::make_shared<NonZeroValidation>()}};
     UIntOption openvinoInferenceNumThreads
@@ -77,6 +90,7 @@ private:
         return {
             &useBatchDeduplication,
             &predictionCacheType,
+            &predictionCacheScope,
             &numberOfEntriesPredictionCache,
             &openvinoInferenceNumThreads,
             &openvinoNumStreams,

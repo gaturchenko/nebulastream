@@ -37,7 +37,8 @@ namespace detail
 struct ThreadLocalPredictionCacheWrapper;
 }
 
-/// @brief Physical operator that runs single-tuple model inference with a per-worker prediction cache.
+/// @brief Physical operator that runs single-tuple model inference with a prediction cache
+/// that is either per-worker (THREAD_LOCAL) or shared across all workers (GLOBAL).
 class CacheInferModelPhysicalOperator final : public PhysicalOperatorConcept
 {
 public:
@@ -47,6 +48,7 @@ public:
         std::vector<std::string> outputFieldNames,
         InferenceRuntimeOptions runtimeOptions,
         PredictionCacheType predictionCacheType,
+        PredictionCacheScope predictionCacheScope,
         size_t numberOfCacheEntries,
         bool varsizedInput,
         bool varsizedOutput);

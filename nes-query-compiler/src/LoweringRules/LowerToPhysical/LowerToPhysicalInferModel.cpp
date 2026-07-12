@@ -275,6 +275,7 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     const auto batchSize = getInferenceBatchSize(logicalOperator);
     const auto runtimeOptions = getInferenceRuntimeOptions(conf);
     const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType.getValue();
+    const auto predictionCacheScope = conf.inferenceConfiguration.predictionCacheScope.getValue();
     const auto useBatchDeduplication = conf.inferenceConfiguration.useBatchDeduplication.getValue();
     const auto postJoinBatchingInfo
         = getPostJoinBatchingInfo(logicalOperator, inferModelOp.get(), logicalOperator.getInputSchemas().at(0));
@@ -331,6 +332,11 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
         PhysicalOperator physicalOperator;
         if (predictionCacheType != PredictionCacheType::NONE)
         {
+            if (predictionCacheScope == PredictionCacheScope::GLOBAL)
+            {
+                throw UnsupportedQuery(
+                    "The global prediction cache is only supported for non-batched inference; use prediction_cache_scope THREAD_LOCAL");
+            }
             physicalOperator = BatchCacheInferModelPhysicalOperator(
                 std::move(model),
                 bufferRef,
@@ -392,6 +398,7 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
             inferModelOp.get().getOutputFieldNames(),
             runtimeOptions,
             predictionCacheType,
+            predictionCacheScope,
             conf.inferenceConfiguration.numberOfEntriesPredictionCache.getValue(),
             inferModelOp.get().hasVarsizedInput(),
             inferModelOp.get().hasVarsizedOutput());

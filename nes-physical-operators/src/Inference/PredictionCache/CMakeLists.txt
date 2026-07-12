@@ -11,6 +11,7 @@
 # limitations under the License.
 
 add_source_files(nes-physical-operators
+        GlobalPredictionCache.cpp
         PredictionCache.cpp
         PredictionCacheFIFO.cpp
         PredictionCacheLFU.cpp

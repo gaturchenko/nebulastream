@@ -25,6 +25,7 @@
 
 #include <DataTypes/DataType.hpp>
 #include <Identifiers/Identifiers.hpp>
+#include <Inference/PredictionCache/GlobalPredictionCache.hpp>
 #include <Inference/PredictionCache/PredictionCache.hpp>
 #include <Inference/PredictionCache/PredictionCacheEntry.hpp>
 #include <Inference/PredictionCache/PredictionCacheUtil.hpp>
@@ -72,8 +73,12 @@ uint64_t getPredictionCacheLookupIndexPageSize()
 struct ThreadLocalPredictionCacheWrapper
 {
     ThreadLocalPredictionCacheWrapper(
-        CompiledModel model, InferenceRuntimeOptions options, PredictionCacheType cacheType, size_t numberOfCacheEntries)
-        : model(std::move(model)), options(options), cacheType(cacheType), numberOfCacheEntries(numberOfCacheEntries)
+        CompiledModel model,
+        InferenceRuntimeOptions options,
+        PredictionCacheType cacheType,
+        PredictionCacheScope cacheScope,
+        size_t numberOfCacheEntries)
+        : model(std::move(model)), options(options), cacheType(cacheType), cacheScope(cacheScope), numberOfCacheEntries(numberOfCacheEntries)
     {
     }
 
@@ -85,7 +90,26 @@ struct ThreadLocalPredictionCacheWrapper
         replacementPositions.clear();
         recordStorage.clear();
         outputStorage.clear();
+        hitOutputScratch.clear();
+        globalCache.reset();
         wrappers.reserve(numThreads);
+        for (size_t i = 0; i < numThreads; ++i)
+        {
+            wrappers.emplace_back();
+            wrappers.back().setup(model, 1, options);
+        }
+
+        if (cacheScope == PredictionCacheScope::GLOBAL)
+        {
+            globalCache = std::make_unique<GlobalPredictionCache>(cacheType, numberOfCacheEntries, model.inputSize(), model.outputSize());
+            hitOutputScratch.reserve(numThreads);
+            for (size_t i = 0; i < numThreads; ++i)
+            {
+                hitOutputScratch.emplace_back(model.outputSize());
+            }
+            return;
+        }
+
         cacheStorage.reserve(numThreads);
         lookupIndexes.reserve(numThreads);
         replacementPositions.reserve(numThreads);
@@ -96,8 +120,6 @@ struct ThreadLocalPredictionCacheWrapper
         const auto lookupIndexPageSize = getPredictionCacheLookupIndexPageSize();
         for (size_t i = 0; i < numThreads; ++i)
         {
-            wrappers.emplace_back();
-            wrappers.back().setup(model, 1, options);
             cacheStorage.emplace_back(cacheMemorySize);
             std::ranges::fill(cacheStorage.back(), std::byte{0});
             recordStorage.emplace_back(numberOfCacheEntries * model.inputSize());
@@ -154,8 +176,30 @@ struct ThreadLocalPredictionCacheWrapper
         return entry->dataStructure;
     }
 
+    /// Global-cache path: probe the shared cache and run inference on this thread's
+    /// runtime on a miss. Inference happens outside the cache lock, so misses on
+    /// different threads still run in parallel.
+    [[nodiscard]] std::byte* lookupOrInfer(const WorkerThreadId thread, std::byte* inputRecord, const size_t inputRecordSize)
+    {
+        auto* const hitOutput = hitOutputScratch[thread.getRawValue() % hitOutputScratch.size()].data();
+        if (globalCache->lookup(inputRecord, hitOutput))
+        {
+            return hitOutput;
+        }
+
+        auto& runtime = getHandle(thread);
+        runtime.infer(inputRecord, inputRecordSize);
+        globalCache->insert(inputRecord, runtime.getOutputData());
+        return runtime.getOutputData();
+    }
+
     [[nodiscard]] HitsAndMisses getAggregatedHitsAndMisses() const
     {
+        if (globalCache)
+        {
+            return globalCache->getHitsAndMisses();
+        }
+
         HitsAndMisses total{.hits = 0, .misses = 0};
 
         for (const auto& storage : cacheStorage)
@@ -171,6 +215,7 @@ struct ThreadLocalPredictionCacheWrapper
     CompiledModel model;
     InferenceRuntimeOptions options;
     PredictionCacheType cacheType;
+    PredictionCacheScope cacheScope;
     size_t numberOfCacheEntries;
     std::vector<InferenceRuntime> wrappers;
     std::vector<std::vector<std::byte>> cacheStorage;
@@ -178,6 +223,8 @@ struct ThreadLocalPredictionCacheWrapper
     std::vector<std::vector<std::byte>> outputStorage;
     std::vector<std::unique_ptr<ChainedHashMap>> lookupIndexes;
     std::vector<uint64_t> replacementPositions;
+    std::unique_ptr<GlobalPredictionCache> globalCache;
+    std::vector<std::vector<std::byte>> hitOutputScratch;
 };
 
 }
@@ -239,6 +286,12 @@ std::byte* replacePredictionCacheEntry(
     return twl->replaceEntry(thread, entry, replacementIndex, inputRecord, inputRecordSize);
 }
 
+std::byte* globalPredictionCacheLookupOrInfer(
+    ThreadLocalPredictionCacheWrapper* twl, WorkerThreadId thread, std::byte* inputRecord, uint64_t inputRecordSize)
+{
+    return twl->lookupOrInfer(thread, inputRecord, inputRecordSize);
+}
+
 void logCacheHitsAndMisses(ThreadLocalPredictionCacheWrapper* twl)
 {
     const auto stats = twl->getAggregatedHitsAndMisses();
@@ -253,10 +306,12 @@ CacheInferModelPhysicalOperator::CacheInferModelPhysicalOperator(
     std::vector<std::string> outputFieldNames,
     InferenceRuntimeOptions runtimeOptions,
     PredictionCacheType predictionCacheType,
+    PredictionCacheScope predictionCacheScope,
     size_t numberOfCacheEntries,
     bool varsizedInput,
     bool varsizedOutput)
-    : threadLocal(std::make_shared<ThreadLocalPredictionCacheWrapper>(model, runtimeOptions, predictionCacheType, numberOfCacheEntries))
+    : threadLocal(std::make_shared<ThreadLocalPredictionCacheWrapper>(
+          model, runtimeOptions, predictionCacheType, predictionCacheScope, numberOfCacheEntries))
     , inputFieldNames(std::move(inputFieldNames))
     , outputFieldNames(std::move(outputFieldNames))
     , inputSize(model.inputSize())
@@ -275,6 +330,14 @@ void CacheInferModelPhysicalOperator::setup(ExecutionContext& executionCtx, Comp
 
 void CacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuffer& recordBuffer) const
 {
+    if (threadLocal->cacheScope == PredictionCacheScope::GLOBAL)
+    {
+        /// The global cache is a shared runtime object; there is no per-task traced
+        /// cache state to set up or restore.
+        openChild(ctx, recordBuffer);
+        return;
+    }
+
     const auto runtime = nautilus::val<ThreadLocalPredictionCacheWrapper*>(threadLocal.get());
     const auto startOfEntries = nautilus::invoke(getPredictionCacheStart, runtime, ctx.workerThreadId);
     auto predictionCache = Util::createPredictionCache(
@@ -321,21 +384,30 @@ void CacheInferModelPhysicalOperator::execute(ExecutionContext& ctx, Record& rec
         }
     }
 
-    auto* localState = dynamic_cast<CachedInferenceLocalState*>(ctx.getLocalState(id));
-    auto* predictionCache = localState->getPredictionCache();
-    const auto outputBuffer = predictionCache->getDataStructureRef(
-        cacheInputBuffer,
-        [&](const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>& replacementIndex)
+    const auto outputBuffer = [&]() -> nautilus::val<std::byte*>
+    {
+        if (threadLocal->cacheScope == PredictionCacheScope::GLOBAL)
         {
             return nautilus::invoke(
-                replacePredictionCacheEntry,
-                runtime,
-                ctx.workerThreadId,
-                predictionCacheEntryToReplace,
-                replacementIndex,
-                cacheInputBuffer,
-                nautilus::val<uint64_t>(inputSize));
-        });
+                globalPredictionCacheLookupOrInfer, runtime, ctx.workerThreadId, cacheInputBuffer, nautilus::val<uint64_t>(inputSize));
+        }
+
+        auto* localState = dynamic_cast<CachedInferenceLocalState*>(ctx.getLocalState(id));
+        auto* predictionCache = localState->getPredictionCache();
+        return predictionCache->getDataStructureRef(
+            cacheInputBuffer,
+            [&](const nautilus::val<PredictionCacheEntry*>& predictionCacheEntryToReplace, const nautilus::val<uint64_t>& replacementIndex)
+            {
+                return nautilus::invoke(
+                    replacePredictionCacheEntry,
+                    runtime,
+                    ctx.workerThreadId,
+                    predictionCacheEntryToReplace,
+                    replacementIndex,
+                    cacheInputBuffer,
+                    nautilus::val<uint64_t>(inputSize));
+            });
+    }();
 
     if (varsizedOutput)
     {
@@ -360,6 +432,12 @@ void CacheInferModelPhysicalOperator::execute(ExecutionContext& ctx, Record& rec
 
 void CacheInferModelPhysicalOperator::close(ExecutionContext& ctx, RecordBuffer& recordBuffer) const
 {
+    if (threadLocal->cacheScope == PredictionCacheScope::GLOBAL)
+    {
+        closeChild(ctx, recordBuffer);
+        return;
+    }
+
     auto* localState = dynamic_cast<CachedInferenceLocalState*>(ctx.getLocalState(id));
     auto* predictionCache = localState->getPredictionCache();
     nautilus::invoke(
