@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 from typing import Dict, Iterable, List, Tuple
 
 try:
@@ -35,6 +36,15 @@ PREDICTION_CACHE_ENTRIES_KEY = f"{INFERENCE_CONFIG_PREFIX}number_of_entries_pred
 PREDICTION_CACHE_NONE = "NONE"
 DEFAULT_USE_BATCH_DEDUPLICATION = False
 SYSTEST_PERFORMANCE_FILE = "systest-performance.json"
+RUN_LOG_SCRATCH = "_run.log"
+# Per-record timing CSV written by the HttpSink (TorchServe baseline). Its log_path in the
+# .test must point here, i.e. 'results/torchserve_timings.csv' relative to the systest CWD.
+TORCHSERVE_TIMINGS_FILE = "torchserve_timings.csv"
+# Per-record latency CSV written by the LatencySink. Its log_path in the .test must point
+# here, i.e. 'results/latency_timings.csv' relative to the systest CWD.
+LATENCY_TIMINGS_FILE = "latency_timings.csv"
+TORCHSERVE_METRICS_START_FILE = "torchserve_metrics_start.prom"
+TORCHSERVE_METRICS_END_FILE = "torchserve_metrics_end.prom"
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 QUERY_PERFORMANCE_PATTERN = re.compile(
     r"\bPASSED\s+in\s+([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)s\b"
@@ -171,6 +181,8 @@ def build_command(
         systest_path: Path,
         query: str,
         params: Dict[str, object],
+        *,
+        log_path: Path,
 ) -> List[str]:
     optimizer_params: Dict[str, object] = {}
     worker_params: Dict[str, object] = {}
@@ -185,7 +197,13 @@ def build_command(
         else:
             worker_params[key] = value
 
-    cmd = [str(systest_path), "-t", query, "-n", "1", "--show-query-performance"]
+    cmd = [
+        str(systest_path),
+        "--log-path", str(log_path),
+        "--show-query-performance",
+        "-t", query,
+        "-n", "1",
+    ]
     for key, value in optimizer_params.items():
         cmd.extend(["--optimizer", f"{key}={format_value(value)}"])
 
@@ -227,6 +245,16 @@ def safe_move(src: Path, dest_dir: Path) -> None:
     shutil.move(str(src), str(dest))
 
 
+def scrape_url(url: str) -> str | None:
+    """Fetch a URL's text body (e.g. TorchServe's :8082/metrics), or None on failure."""
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - operator-provided local URL
+            return response.read().decode("utf-8", errors="ignore")
+    except Exception as exc:  # pragma: no cover - network dependent
+        print(f"TorchServe metrics scrape failed ({url}): {exc}", file=sys.stderr)
+        return None
+
+
 def snapshot_files(directory: Path, pattern: str) -> Dict[Path, float]:
     if not directory.exists():
         return {}
@@ -240,35 +268,23 @@ def snapshot_files(directory: Path, pattern: str) -> Dict[Path, float]:
 
 
 def collect_artifacts(
-        systest_dir: Path,
-        build_dir: Path,
+        targets: List[Tuple[Path, str]],
         dest_dir: Path,
-        json_before: Dict[Path, float],
-        log_before_build: Dict[Path, float],
-        log_before_systest: Dict[Path, float],
+        before: List[Dict[Path, float]],
 ) -> None:
-    json_after = snapshot_files(systest_dir, "*.json")
-    log_after_build = snapshot_files(build_dir, "*.log")
-    log_after_systest = snapshot_files(systest_dir, "*.log")
+    """Move files that appeared/changed since `before` into dest_dir.
 
-    def changed_files(after: Dict[Path, float], before: Dict[Path, float]) -> List[Path]:
-        changed = []
+    `targets` is a list of (directory, glob) pairs, aligned with `before`.
+    """
+    for (directory, pattern), before_snapshot in zip(targets, before):
+        after = snapshot_files(directory, pattern)
         for path, mtime in after.items():
-            if path not in before or mtime > before[path]:
-                changed.append(path)
-        return changed
-
-    for path in (
-            changed_files(json_after, json_before)
-            + changed_files(log_after_build, log_before_build)
-            + changed_files(log_after_systest, log_before_systest)
-    ):
-        safe_move(path, dest_dir)
+            if path not in before_snapshot or mtime > before_snapshot[path]:
+                safe_move(path, dest_dir)
 
 
 def parse_args() -> argparse.Namespace:
     root = repo_root()
-    default_config = root / "scripts" / "benchmarking" / "e2e" / "config" / "nes_default.yaml"
     default_results = root / "scripts" / "benchmarking" / "e2e" / "results"
     default_systest = root / "cmake-build-release" / "nes-systests" / "systest" / "systest"
 
@@ -286,17 +302,6 @@ def parse_args() -> argparse.Namespace:
         required=True,
         type=Path,
         help="YAML config with parameter lists.",
-    )
-    parser.add_argument(
-        "--default-overrides",
-        type=Path,
-        help="Optional YAML file to override nes_default.yaml parameters.",
-    )
-    parser.add_argument(
-        "--default-config",
-        type=Path,
-        default=default_config,
-        help=f"Default config path (default: {default_config}).",
     )
     parser.add_argument(
         "--systest-path",
@@ -317,6 +322,14 @@ def parse_args() -> argparse.Namespace:
         help=f"Number of repetitions per combination (default: {REPETITIONS_DEFAULT}).",
     )
     parser.add_argument(
+        "--torchserve-metrics-url",
+        type=str,
+        default=None,
+        help="If set, scrape this TorchServe Prometheus URL (e.g. http://127.0.0.1:8082/metrics) "
+             "before and after each run, storing the snapshots in the rep dir for "
+             "process_torchserve_results.py to diff.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print commands without executing systest.",
@@ -334,10 +347,6 @@ def main() -> int:
         return 1
 
     inference_config = normalize_inference_config(load_yaml(args.inference_config))
-    # default_config = load_yaml(args.default_config)
-    # if args.default_overrides:
-    #     overrides = load_yaml(args.default_overrides)
-    #     default_config.update(overrides)
 
     try:
         resolved_queries = [resolve_query(query, root) for query in args.queries]
@@ -352,7 +361,11 @@ def main() -> int:
     if results_base.exists() and not results_base.is_dir():
         print(f"Results path exists and is not a directory: {results_base}", file=sys.stderr)
         return 1
-    results_base_created = results_base.exists()
+    results_base.mkdir(parents=True, exist_ok=True)
+    # systest writes its log here during the run; each rep preserves it as <rep_dir>/_run.log so the
+    # pipelined plan dump (PipeliningPhase) survives for process_results.py to identify the
+    # model-inference pipeline.
+    log_scratch = results_base / RUN_LOG_SCRATCH
 
     query_specs = []
     for query in resolved_queries:
@@ -387,19 +400,24 @@ def main() -> int:
     systest_dir = root / "cmake-build-release" / "nes-systests" / "systest"
     build_dir = root / "cmake-build-release" / "nes-systests"
 
+    # Where systest writes artifacts (subprocess cwd = systest_dir):
+    #   trace_*.json / systest JSON     -> systest_dir
+    #   stray logs                      -> build_dir / systest_dir (the run log itself goes to --log-path)
+    #   torchserve_timings.csv          -> systest_dir/results (HttpSink log_path 'results/...' relative to cwd)
+    #   latency_timings.csv             -> systest_dir/results (LatencySink log_path 'results/...' relative to cwd)
+    artifact_targets: List[Tuple[Path, str]] = [
+        (systest_dir, "*.json"),
+        (build_dir, "*.log"),
+        (systest_dir, "*.log"),
+        (systest_dir / "results", TORCHSERVE_TIMINGS_FILE),
+        (systest_dir / "results", LATENCY_TIMINGS_FILE),
+    ]
+
     for combo in pending_combinations:
         combo_label = combination_name(combo)
         combo_dir = results_base / combo_label
-        if combo_dir.exists() and not combo_dir.is_dir():
-            print(
-                f"Combination results path exists and is not a directory: {combo_dir}.",
-                file=sys.stderr,
-            )
-            return 1
 
-        params = dict()
-        # params = dict(default_config)
-        params.update(combo)
+        params = dict(combo)
 
         for query, query_name in query_specs:
             query_dir = combo_dir / query_name
@@ -411,7 +429,7 @@ def main() -> int:
             for repetition in missing_query_repetitions:
                 rep_dir = query_dir / f"rep-{repetition:02d}"
 
-                cmd = build_command(systest_path, query, params)
+                cmd = build_command(systest_path, query, params, log_path=log_scratch)
 
                 print(" ".join(cmd))
                 if args.dry_run:
@@ -419,12 +437,19 @@ def main() -> int:
 
                 total_attempts = QUERY_RETRIES + 1
                 result: subprocess.CompletedProcess[str] | None = None
-                run_snapshots: Tuple[Dict[Path, float], Dict[Path, float], Dict[Path, float]] | None = None
+                before_snapshots: List[Dict[Path, float]] | None = None
                 duration_us: float | None = None
+                metrics_start_text: str | None = None
+                metrics_end_text: str | None = None
                 for attempt in range(1, total_attempts + 1):
-                    json_before = snapshot_files(systest_dir, "*.json")
-                    log_before_build = snapshot_files(build_dir, "*.log")
-                    log_before_systest = snapshot_files(systest_dir, "*.log")
+                    before_snapshots = [
+                        snapshot_files(directory, pattern) for directory, pattern in artifact_targets
+                    ]
+
+                    # Snapshot TorchServe's cumulative counters just before the run; diffed
+                    # against the post-run snapshot to get per-rep inference/queue latency.
+                    if args.torchserve_metrics_url:
+                        metrics_start_text = scrape_url(args.torchserve_metrics_url)
 
                     result = subprocess.run(
                         cmd,
@@ -434,10 +459,11 @@ def main() -> int:
                         stderr=subprocess.STDOUT,
                         text=True,
                     )
+                    if args.torchserve_metrics_url:
+                        metrics_end_text = scrape_url(args.torchserve_metrics_url)
                     if result.stdout:
                         print(result.stdout, end="")
                     if result.returncode == 0:
-                        run_snapshots = (json_before, log_before_build, log_before_systest)
                         duration_us = parse_query_performance_duration_us(result.stdout)
                         break
 
@@ -455,28 +481,23 @@ def main() -> int:
                         )
                         return result.returncode
 
-                if run_snapshots is None:
+                if result is None or result.returncode != 0 or before_snapshots is None:
                     print("systest run ended without a successful attempt.", file=sys.stderr)
                     return 1
 
-                if not results_base_created:
-                    results_base.mkdir(parents=True, exist_ok=True)
-                    results_base_created = True
-                if not combo_dir.exists():
-                    combo_dir.mkdir(parents=True, exist_ok=False)
-                if not query_dir.exists():
-                    query_dir.mkdir()
-                if not rep_dir.exists():
-                    rep_dir.mkdir()
+                rep_dir.mkdir(parents=True, exist_ok=True)
 
-                collect_artifacts(
-                    systest_dir,
-                    build_dir,
-                    rep_dir,
-                    run_snapshots[0],
-                    run_snapshots[1],
-                    run_snapshots[2],
-                )
+                collect_artifacts(artifact_targets, rep_dir, before_snapshots)
+
+                if log_scratch.exists():
+                    safe_move(log_scratch, rep_dir)
+
+                if args.torchserve_metrics_url:
+                    if metrics_start_text is not None:
+                        (rep_dir / TORCHSERVE_METRICS_START_FILE).write_text(metrics_start_text, encoding="utf-8")
+                    if metrics_end_text is not None:
+                        (rep_dir / TORCHSERVE_METRICS_END_FILE).write_text(metrics_end_text, encoding="utf-8")
+
                 if duration_us is None:
                     print(
                         "Could not parse --show-query-performance runtime from systest output; "

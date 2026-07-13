@@ -41,6 +41,7 @@ per-repetition values.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 import re
@@ -71,6 +72,10 @@ END_TO_END_METRIC_COLUMNS = [
     "end_to_end_throughput",
     "end_to_end_latency_us",
 ]
+# The LatencySink writes a per-record CSV with these header columns (see LatencySink.cpp). We detect
+# such files by header signature so we never confuse them with the TorchServe HttpSink timing CSV.
+SINK_LATENCY_FILE_SIGNATURE = {"ingest_ts_us", "recv_ts_us", "latency_us"}
+SINK_LATENCY_COLUMN = "sink_latency_us"
 
 
 def repo_root() -> Path:
@@ -90,12 +95,12 @@ def parse_args() -> argparse.Namespace:
         default=default_results,
         help=f"Results directory (default: {default_results}).",
     )
-    default_output = default_results / "results.csv"
     parser.add_argument(
         "--output-csv",
         type=Path,
-        default=default_output,
-        help=f"Path to write CSV output (default: {default_output}).",
+        default=None,
+        help="Path to write CSV output (default: <results-dir>/results.csv). "
+             "Pass '-' to print to stdout instead.",
     )
     parser.add_argument(
         "--aggregate",
@@ -619,23 +624,31 @@ def iter_end_to_end_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
         yield row
 
 
-def parse_log_payload(log_path: Path) -> Optional[Dict[str, object]]:
+# The query compiler dumps the pipelined plan (PipeliningPhase.cpp:449). Each pipeline prints as
+# `Pipeline(ID(n), Provider(...))` followed by its operator chain, and the printed ID(n) equals the
+# `pipeline_id` in the trace events. The model-inference pipeline is the one whose chain contains an
+# *InferModelPhysicalOperator (InferModel / BatchInferModel / CacheInferModel / CachedInferModel /
+# BatchCacheInferModel -- all share the "InferModel" substring). UDF queries have no such operator
+# (the UDF is a MapPhysicalOperator), so this returns None and the caller leaves the run unflagged
+# for manual assignment.
+_PIPELINE_ID_PATTERN = re.compile(r"Pipeline\(ID\((\d+)\)")
+_INFERENCE_OPERATOR_PATTERN = re.compile(r"InferModelPhysicalOperator")
+
+
+def parse_inference_pipeline_id(log_path: Path) -> Optional[int]:
+    """Return the pipeline id of the model-inference pipeline from a run's plan dump, or None."""
     try:
         lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except OSError:
         return None
-    for line in reversed(lines):
-        line = line.strip()
-        if not line or "{" not in line:
+    current_pipeline_id: Optional[int] = None
+    for line in lines:
+        id_match = _PIPELINE_ID_PATTERN.search(line)
+        if id_match:
+            current_pipeline_id = int(id_match.group(1))
             continue
-        start = line.rfind("{")
-        candidate = line[start:]
-        try:
-            payload = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            return payload
+        if current_pipeline_id is not None and _INFERENCE_OPERATOR_PATTERN.search(line):
+            return current_pipeline_id
     return None
 
 
@@ -648,24 +661,18 @@ def iter_log_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
         if context is None:
             print(f"Skipping unexpected log path: {log_path}", file=sys.stderr)
             continue
-        payload = parse_log_payload(log_path)
-        if not payload:
-            continue
-        pipeline_id = payload.get("pipeline_id")
-        if pipeline_id is None:
+        inference_pipeline_id = parse_inference_pipeline_id(log_path)
+        if inference_pipeline_id is None:
             continue
         inference_parts = parse_inference_config(context["inference_config"])
         row: Dict[str, object] = {
             "query_name": context["query_name"],
             "inference_config_param_name": inference_parts["param_name"],
             "inference_config_param_value": inference_parts["param_value"],
-            "pipeline_id": pipeline_id,
+            "pipeline_id": inference_pipeline_id,
             "repetition": context["repetition"],
+            "is_inference_pipeline": True,
         }
-        for key, value in payload.items():
-            if key == "pipeline_id":
-                continue
-            row[key] = value
         dedupe_key = (
             row["query_name"],
             row["inference_config_param_name"],
@@ -891,6 +898,91 @@ def compute_end_to_end_rows(results_dir: Path) -> "pd.DataFrame":
     return pd.DataFrame(rows)
 
 
+def iter_sink_latency_rows(results_dir: Path) -> Iterable[Dict[str, object]]:
+    """Yield one row per record from every LatencySink CSV under the results tree.
+
+    LatencySink writes a real per-record latency (recv_ts_us - ingest_ts_us) and discards the
+    payload, so this is the NES-native counterpart to the throughput-derived end_to_end_latency_us.
+    Files are identified by header signature, so the TorchServe HttpSink CSV is never picked up here.
+    """
+    for csv_path in results_dir.rglob("*.csv"):
+        context = infer_context(results_dir, csv_path)
+        if context is None:
+            continue
+        try:
+            with csv_path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                if reader.fieldnames is None or not SINK_LATENCY_FILE_SIGNATURE.issubset(set(reader.fieldnames)):
+                    continue
+                inference_parts = parse_inference_config(context["inference_config"])
+                for record in reader:
+                    latency = parse_float(record.get("latency_us"))
+                    if latency is None:
+                        continue
+                    yield {
+                        "query_name": context["query_name"],
+                        "inference_config_param_name": inference_parts["param_name"],
+                        "inference_config_param_value": inference_parts["param_value"],
+                        "repetition": context["repetition"],
+                        SINK_LATENCY_COLUMN: latency,
+                    }
+        except OSError:
+            continue
+
+
+def _sink_latency_aggregations() -> Dict[str, Tuple[str, object]]:
+    col = SINK_LATENCY_COLUMN
+    return {
+        f"avg_{col}": (col, "mean"),
+        f"std_{col}": (col, "std"),
+        f"p50_{col}": (col, lambda series: series.quantile(0.50)),
+        f"p95_{col}": (col, lambda series: series.quantile(0.95)),
+        f"p99_{col}": (col, lambda series: series.quantile(0.99)),
+        "sink_latency_count": (col, "count"),
+    }
+
+
+def compute_sink_latency_stats(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_sink_latency_rows(results_dir))
+    columns = [
+        "query_name",
+        "inference_config_param_name",
+        "inference_config_param_value",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    df = pd.DataFrame(rows)
+    if "repetition" in df.columns:
+        df = df.drop(columns=["repetition"])
+    df[SINK_LATENCY_COLUMN] = pd.to_numeric(df[SINK_LATENCY_COLUMN], errors="coerce")
+    return (
+        df.groupby(columns, dropna=False)
+        .agg(**_sink_latency_aggregations())
+        .reset_index()
+    )
+
+
+def compute_sink_latency_rows(results_dir: Path) -> "pd.DataFrame":
+    rows: List[Dict[str, object]] = list(iter_sink_latency_rows(results_dir))
+    columns = [
+        "query_name",
+        "inference_config_param_name",
+        "inference_config_param_value",
+        "repetition",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    df = pd.DataFrame(rows)
+    df[SINK_LATENCY_COLUMN] = pd.to_numeric(df[SINK_LATENCY_COLUMN], errors="coerce")
+    return (
+        df.groupby(columns, dropna=False)
+        .agg(**_sink_latency_aggregations())
+        .reset_index()
+    )
+
+
 def compute_log_stats(results_dir: Path) -> "pd.DataFrame":
     rows: List[Dict[str, object]] = list(iter_log_rows(results_dir))
     if not rows:
@@ -941,12 +1033,14 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
         latency_stats = compute_latency_stats(results_dir)
         task_metric_stats = compute_task_metric_stats(results_dir)
         end_to_end_stats = compute_end_to_end_stats(results_dir)
+        sink_latency_stats = compute_sink_latency_stats(results_dir)
         log_stats = compute_log_stats(results_dir)
     else:
         throughput_stats = compute_throughput_rows(results_dir)
         latency_stats = compute_latency_rows(results_dir)
         task_metric_stats = compute_task_metric_rows(results_dir)
         end_to_end_stats = compute_end_to_end_rows(results_dir)
+        sink_latency_stats = compute_sink_latency_rows(results_dir)
         log_stats = compute_log_rows(results_dir)
 
     if throughput_stats.empty:
@@ -993,6 +1087,22 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
             ]
             if end_to_end_merge_keys:
                 merged = merged.merge(end_to_end_stats, on=end_to_end_merge_keys, how="left")
+        if not sink_latency_stats.empty:
+            sink_latency_merge_key_candidates = [
+                "query_name",
+                "source_name",
+                "inference_config_param_name",
+                "inference_config_param_value",
+            ]
+            if not aggregate:
+                sink_latency_merge_key_candidates.append("repetition")
+            sink_latency_merge_keys = [
+                col
+                for col in sink_latency_merge_key_candidates
+                if col in merged.columns and col in sink_latency_stats.columns
+            ]
+            if sink_latency_merge_keys:
+                merged = merged.merge(sink_latency_stats, on=sink_latency_merge_keys, how="left")
         expanded = expand_inference_columns(merged)
         return drop_combined_inference_columns(expanded)
 
@@ -1051,6 +1161,23 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
         if end_to_end_merge_keys:
             merged = merged.merge(end_to_end_stats, on=end_to_end_merge_keys, how="left")
 
+    if not sink_latency_stats.empty:
+        sink_latency_merge_key_candidates = [
+            "query_name",
+            "source_name",
+            "inference_config_param_name",
+            "inference_config_param_value",
+        ]
+        if not aggregate:
+            sink_latency_merge_key_candidates.append("repetition")
+        sink_latency_merge_keys = [
+            col
+            for col in sink_latency_merge_key_candidates
+            if col in merged.columns and col in sink_latency_stats.columns
+        ]
+        if sink_latency_merge_keys:
+            merged = merged.merge(sink_latency_stats, on=sink_latency_merge_keys, how="left")
+
     if log_stats.empty:
         expanded = expand_inference_columns(merged)
         return drop_combined_inference_columns(expanded)
@@ -1072,7 +1199,12 @@ def compute_stats(results_dir: Path, aggregate: bool) -> "pd.DataFrame":
         expanded = expand_inference_columns(merged)
         return drop_combined_inference_columns(expanded)
 
-    merged = merged.merge(log_stats, on=merge_keys, how="inner")
+    # Left join (not inner): keep every pipeline row and flag only the model-inference pipeline the
+    # log identified. Inner would drop all non-inference pipelines AND every UDF run (UDFs have no
+    # InferModel operator, so they stay unflagged for manual assignment in post-processing).
+    merged = merged.merge(log_stats, on=merge_keys, how="left")
+    if "is_inference_pipeline" in merged.columns:
+        merged["is_inference_pipeline"] = merged["is_inference_pipeline"].fillna(False).astype(bool)
     merged = expand_inference_columns(merged)
     return drop_combined_inference_columns(merged)
 
@@ -1125,18 +1257,20 @@ def main() -> int:
 
     stats = compute_stats(results_dir, aggregate=args.aggregate)
 
-    if args.output_csv:
-        output_path = args.output_csv
-        if not output_path.is_absolute():
-            output_path = (repo_root() / output_path).resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        stats.to_csv(output_path, index=False)
-    else:
+    # '-' means print to stdout; otherwise default to <results-dir>/results.csv.
+    if str(args.output_csv) == "-":
         if stats.empty:
             print("No result data found.")
         else:
             print(stats.to_string(index=False))
+        return 0
 
+    output_path = args.output_csv or (results_dir / "results.csv")
+    if not output_path.is_absolute():
+        output_path = (repo_root() / output_path).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    stats.to_csv(output_path, index=False)
+    print(f"Wrote {len(stats)} row(s) to {output_path}")
     return 0
 
 
