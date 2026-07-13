@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iomanip>
 #include <ios>
+#include <limits>
 #include <ostream>
 #include <random>
 #include <ranges>
@@ -569,5 +570,262 @@ std::ostream& RandomStrField::generate(std::ostream& os, std::mt19937& randEng)
     return os;
 }
 
+namespace
+{
+
+/// The cache workload fields only emit integer-valued keys so the text round-trips exactly; values must stay below the largest
+/// integer the column type represents exactly, otherwise distinct keys would collide after parsing and skew the hit rate.
+uint64_t maxExactInteger(const DataType::Type type, const std::string_view rawSchemaLine)
+{
+    switch (type)
+    {
+        case DataType::Type::UINT8:
+            return std::numeric_limits<uint8_t>::max();
+        case DataType::Type::UINT16:
+            return std::numeric_limits<uint16_t>::max();
+        case DataType::Type::UINT32:
+            return std::numeric_limits<uint32_t>::max();
+        case DataType::Type::UINT64:
+            return std::numeric_limits<uint64_t>::max();
+        case DataType::Type::INT8:
+            return std::numeric_limits<int8_t>::max();
+        case DataType::Type::INT16:
+            return std::numeric_limits<int16_t>::max();
+        case DataType::Type::INT32:
+            return std::numeric_limits<int32_t>::max();
+        case DataType::Type::INT64:
+            return std::numeric_limits<int64_t>::max();
+        case DataType::Type::FLOAT32:
+            return uint64_t{1} << 24U;
+        case DataType::Type::FLOAT64:
+            return uint64_t{1} << 53U;
+        case DataType::Type::BOOLEAN:
+        case DataType::Type::CHAR:
+        case DataType::Type::VARSIZED:
+        case DataType::Type::UNDEFINED:
+            throw InvalidConfigParameter("Type {} is not supported for cache workload fields: {}", magic_enum::enum_name(type), rawSchemaLine);
+    }
+    throw InvalidConfigParameter("Type is not supported for cache workload fields: {}", rawSchemaLine);
+}
+
+uint64_t parseCacheWorkloadUInt(const std::string_view parameter, const std::string_view name, const std::string_view rawSchemaLine)
+{
+    const auto value = from_chars<uint64_t>(parameter);
+    if (not value)
+    {
+        throw InvalidConfigParameter("Could not parse {} as {} in: {}", parameter, name, rawSchemaLine);
+    }
+    return *value;
+}
+
+uint64_t checkedAdd(const uint64_t left, const uint64_t right, const std::string_view rawSchemaLine)
+{
+    if (left > std::numeric_limits<uint64_t>::max() - right)
+    {
+        throw InvalidConfigParameter("Key range overflows uint64 in: {}", rawSchemaLine);
+    }
+    return left + right;
+}
+
+uint64_t desiredCacheHits(const uint64_t records, const uint64_t hitPercent)
+{
+    if (hitPercent == 100)
+    {
+        return records - 1;
+    }
+    return records / 100 * hitPercent + records % 100 * hitPercent / 100;
+}
+
+struct CacheGroupedParameters
+{
+    DataType::Type type;
+    uint64_t records;
+    uint64_t hitPercent;
+    uint64_t keySeed;
+    uint64_t valueOffset;
+};
+
+CacheGroupedParameters parseCacheGroupedParameters(const std::string_view rawSchemaLine)
+{
+    const auto parameters = splitWithStringDelimiter<std::string_view>(rawSchemaLine, " ");
+    if (parameters.size() != NUM_PARAMETERS_CACHE_GROUPED_FIELD and parameters.size() != NUM_PARAMETERS_CACHE_GROUPED_FIELD + 1)
+    {
+        throw InvalidConfigParameter(
+            "Invalid CACHE_GROUPED schema line: {}! Expected: CACHE_GROUPED <TYPE> <records> <hitPercent> <keySeed> [valueOffset]",
+            rawSchemaLine);
+    }
+
+    const auto dataType = DataTypeProvider::tryProvideDataType(std::string{parameters[1]});
+    if (not dataType.has_value())
+    {
+        throw InvalidConfigParameter("Invalid CACHE_GROUPED type of {}!", parameters[1]);
+    }
+
+    CacheGroupedParameters parsed{
+        .type = dataType.value().type,
+        .records = parseCacheWorkloadUInt(parameters[2], "records", rawSchemaLine),
+        .hitPercent = parseCacheWorkloadUInt(parameters[3], "hitPercent", rawSchemaLine),
+        .keySeed = parseCacheWorkloadUInt(parameters[4], "keySeed", rawSchemaLine),
+        .valueOffset
+        = parameters.size() > NUM_PARAMETERS_CACHE_GROUPED_FIELD ? parseCacheWorkloadUInt(parameters[5], "valueOffset", rawSchemaLine) : 0};
+
+    if (parsed.records == 0)
+    {
+        throw InvalidConfigParameter("CACHE_GROUPED records must be at least 1: {}", rawSchemaLine);
+    }
+    if (parsed.hitPercent > 100)
+    {
+        throw InvalidConfigParameter("CACHE_GROUPED hitPercent must be in [0, 100]: {}", rawSchemaLine);
+    }
+
+    const auto misses = parsed.records - desiredCacheHits(parsed.records, parsed.hitPercent);
+    const auto maxValue = checkedAdd(checkedAdd(parsed.keySeed, misses - 1, rawSchemaLine), parsed.valueOffset, rawSchemaLine);
+    if (maxValue > maxExactInteger(parsed.type, rawSchemaLine))
+    {
+        throw InvalidConfigParameter(
+            "CACHE_GROUPED emits values up to {}, which type {} cannot represent exactly: {}",
+            maxValue,
+            parameters[1],
+            rawSchemaLine);
+    }
+    return parsed;
+}
+
+struct CacheHotsetParameters
+{
+    DataType::Type type;
+    uint64_t records;
+    uint64_t hotPercent;
+    uint64_t hotsetSize;
+    uint64_t keySeed;
+    uint64_t valueOffset;
+};
+
+CacheHotsetParameters parseCacheHotsetParameters(const std::string_view rawSchemaLine)
+{
+    const auto parameters = splitWithStringDelimiter<std::string_view>(rawSchemaLine, " ");
+    if (parameters.size() != NUM_PARAMETERS_CACHE_HOTSET_FIELD and parameters.size() != NUM_PARAMETERS_CACHE_HOTSET_FIELD + 1)
+    {
+        throw InvalidConfigParameter(
+            "Invalid CACHE_HOTSET schema line: {}! Expected: CACHE_HOTSET <TYPE> <records> <hotPercent> <hotsetSize> <keySeed> "
+            "[valueOffset]",
+            rawSchemaLine);
+    }
+
+    const auto dataType = DataTypeProvider::tryProvideDataType(std::string{parameters[1]});
+    if (not dataType.has_value())
+    {
+        throw InvalidConfigParameter("Invalid CACHE_HOTSET type of {}!", parameters[1]);
+    }
+
+    CacheHotsetParameters parsed{
+        .type = dataType.value().type,
+        .records = parseCacheWorkloadUInt(parameters[2], "records", rawSchemaLine),
+        .hotPercent = parseCacheWorkloadUInt(parameters[3], "hotPercent", rawSchemaLine),
+        .hotsetSize = parseCacheWorkloadUInt(parameters[4], "hotsetSize", rawSchemaLine),
+        .keySeed = parseCacheWorkloadUInt(parameters[5], "keySeed", rawSchemaLine),
+        .valueOffset
+        = parameters.size() > NUM_PARAMETERS_CACHE_HOTSET_FIELD ? parseCacheWorkloadUInt(parameters[6], "valueOffset", rawSchemaLine) : 0};
+
+    if (parsed.records == 0)
+    {
+        throw InvalidConfigParameter("CACHE_HOTSET records must be at least 1: {}", rawSchemaLine);
+    }
+    if (parsed.hotPercent > 100)
+    {
+        throw InvalidConfigParameter("CACHE_HOTSET hotPercent must be in [0, 100]: {}", rawSchemaLine);
+    }
+    if (parsed.hotsetSize == 0)
+    {
+        throw InvalidConfigParameter("CACHE_HOTSET hotsetSize must be at least 1: {}", rawSchemaLine);
+    }
+
+    const auto hotAccesses = parsed.records / 100 * parsed.hotPercent + parsed.records % 100 * parsed.hotPercent / 100;
+    const auto coldAccesses = parsed.records - hotAccesses;
+    const auto maxKey = checkedAdd(checkedAdd(parsed.keySeed, parsed.hotsetSize, rawSchemaLine), coldAccesses, rawSchemaLine) - 1;
+    const auto maxValue = checkedAdd(maxKey, parsed.valueOffset, rawSchemaLine);
+    if (maxValue > maxExactInteger(parsed.type, rawSchemaLine))
+    {
+        throw InvalidConfigParameter(
+            "CACHE_HOTSET emits values up to {}, which type {} cannot represent exactly: {}", maxValue, parameters[1], rawSchemaLine);
+    }
+    return parsed;
+}
+
+}
+
+CacheGroupedField::CacheGroupedField(const std::string_view rawSchemaLine)
+{
+    const auto parameters = parseCacheGroupedParameters(rawSchemaLine);
+    this->records = parameters.records;
+    const auto hits = desiredCacheHits(parameters.records, parameters.hitPercent);
+    this->remainingHits = hits;
+    this->remainingMisses = parameters.records - hits;
+    this->nextKey = parameters.keySeed;
+    this->valueOffset = parameters.valueOffset;
+}
+
+void CacheGroupedField::validate(const std::string_view rawSchemaLine)
+{
+    parseCacheGroupedParameters(rawSchemaLine);
+}
+
+std::ostream& CacheGroupedField::generate(std::ostream& os, std::mt19937& /*randEng*/)
+{
+    if (hitsLeftInRun > 0)
+    {
+        --hitsLeftInRun;
+    }
+    else if (remainingMisses > 0)
+    {
+        currentKey = nextKey++;
+        --remainingMisses;
+        /// Spread the remaining hits evenly over the remaining runs; the final run absorbs the leftovers.
+        hitsLeftInRun = remainingMisses == 0 ? remainingHits : remainingHits / (remainingMisses + 1);
+        remainingHits -= hitsLeftInRun;
+    }
+    os << currentKey + valueOffset;
+    if (++generated >= records)
+    {
+        this->stop = true;
+    }
+    return os;
+}
+
+CacheHotsetField::CacheHotsetField(const std::string_view rawSchemaLine)
+{
+    const auto parameters = parseCacheHotsetParameters(rawSchemaLine);
+    this->records = parameters.records;
+    this->hotPercent = parameters.hotPercent;
+    this->hotsetSize = parameters.hotsetSize;
+    this->keySeed = parameters.keySeed;
+    this->valueOffset = parameters.valueOffset;
+}
+
+void CacheHotsetField::validate(const std::string_view rawSchemaLine)
+{
+    parseCacheHotsetParameters(rawSchemaLine);
+}
+
+std::ostream& CacheHotsetField::generate(std::ostream& os, std::mt19937& /*randEng*/)
+{
+    uint64_t key = 0;
+    accumulator += hotPercent;
+    if (accumulator >= 100)
+    {
+        accumulator -= 100;
+        key = keySeed + (hotIndex++ % hotsetSize);
+    }
+    else
+    {
+        key = keySeed + hotsetSize + coldIndex++;
+    }
+    os << key + valueOffset;
+    if (++generated >= records)
+    {
+        this->stop = true;
+    }
+    return os;
+}
 
 }

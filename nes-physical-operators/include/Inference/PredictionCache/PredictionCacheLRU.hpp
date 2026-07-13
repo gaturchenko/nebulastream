@@ -52,6 +52,7 @@ private:
     void appendToTail(const nautilus::val<uint64_t>& pos);
     void removeFromList(const nautilus::val<uint64_t>& pos);
     void touch(const nautilus::val<uint64_t>& pos);
+    nautilus::val<uint64_t> claimReplacementPos();
 
     nautilus::val<uint64_t> nextEmptyPos;
     nautilus::val<uint64_t> lruHead;

@@ -1,0 +1,135 @@
+# name: sources/GeneratorCacheWorkload.test
+# description: Tests the deterministic prediction-cache workload generator fields (CACHE_GROUPED, CACHE_HOTSET)
+# groups: [Sources, Generator]
+
+# 16 records at 50% hit rate: 8 misses, 8 hits; every key run is one miss followed by one hit.
+CREATE LOGICAL SOURCE grouped5050(id UINT64 NOT NULL);
+CREATE PHYSICAL SOURCE FOR grouped5050 TYPE Generator SET(
+       'ALL' as `SOURCE`.STOP_GENERATOR_WHEN_SEQUENCE_FINISHES,
+       1 AS `SOURCE`.SEED,
+       'CACHE_GROUPED UINT64 16 50 100' AS `SOURCE`.GENERATOR_SCHEMA
+);
+CREATE SINK grouped5050_sink(grouped5050.id UINT64 NOT NULL) TYPE File;
+SELECT * FROM grouped5050 INTO grouped5050_sink;
+----
+100
+100
+101
+101
+102
+102
+103
+103
+104
+104
+105
+105
+106
+106
+107
+107
+
+# 16 records at 75% hit rate: 4 misses, 12 hits; runs of 4. Two columns advance in lockstep so each key yields one
+# distinct record; the FLOAT32 column applies a valueOffset of 1000 and must round-trip exactly through text.
+CREATE LOGICAL SOURCE grouped75(id UINT64 NOT NULL, feature FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR grouped75 TYPE Generator SET(
+       'ALL' as `SOURCE`.STOP_GENERATOR_WHEN_SEQUENCE_FINISHES,
+       1 AS `SOURCE`.SEED,
+       'CACHE_GROUPED UINT64 16 75 0, CACHE_GROUPED FLOAT32 16 75 0 1000' AS `SOURCE`.GENERATOR_SCHEMA
+);
+CREATE SINK grouped75_sink(grouped75.id UINT64 NOT NULL, grouped75.feature FLOAT32 NOT NULL) TYPE File;
+SELECT * FROM grouped75 INTO grouped75_sink;
+----
+0 1000
+0 1000
+0 1000
+0 1000
+1 1001
+1 1001
+1 1001
+1 1001
+2 1002
+2 1002
+2 1002
+2 1002
+3 1003
+3 1003
+3 1003
+3 1003
+
+# 8 records at 100% hit rate: exactly one miss, the single key repeats for the whole stream.
+CREATE LOGICAL SOURCE grouped100(id UINT64 NOT NULL);
+CREATE PHYSICAL SOURCE FOR grouped100 TYPE Generator SET(
+       'ALL' as `SOURCE`.STOP_GENERATOR_WHEN_SEQUENCE_FINISHES,
+       1 AS `SOURCE`.SEED,
+       'CACHE_GROUPED UINT64 8 100 7' AS `SOURCE`.GENERATOR_SCHEMA
+);
+CREATE SINK grouped100_sink(grouped100.id UINT64 NOT NULL) TYPE File;
+SELECT * FROM grouped100 INTO grouped100_sink;
+----
+7
+7
+7
+7
+7
+7
+7
+7
+
+# 4 records at 0% hit rate: every key is fresh.
+CREATE LOGICAL SOURCE grouped0(id UINT64 NOT NULL);
+CREATE PHYSICAL SOURCE FOR grouped0 TYPE Generator SET(
+       'ALL' as `SOURCE`.STOP_GENERATOR_WHEN_SEQUENCE_FINISHES,
+       1 AS `SOURCE`.SEED,
+       'CACHE_GROUPED UINT64 4 0 0' AS `SOURCE`.GENERATOR_SCHEMA
+);
+CREATE SINK grouped0_sink(grouped0.id UINT64 NOT NULL) TYPE File;
+SELECT * FROM grouped0 INTO grouped0_sink;
+----
+0
+1
+2
+3
+
+# 12 records, 50% hot accesses over a hotset of 2 keys starting at 10: hot accesses cycle 10, 11, cold keys count up
+# from 12 and never repeat.
+CREATE LOGICAL SOURCE hotset50(id UINT64 NOT NULL);
+CREATE PHYSICAL SOURCE FOR hotset50 TYPE Generator SET(
+       'ALL' as `SOURCE`.STOP_GENERATOR_WHEN_SEQUENCE_FINISHES,
+       1 AS `SOURCE`.SEED,
+       'CACHE_HOTSET UINT64 12 50 2 10' AS `SOURCE`.GENERATOR_SCHEMA
+);
+CREATE SINK hotset50_sink(hotset50.id UINT64 NOT NULL) TYPE File;
+SELECT * FROM hotset50 INTO hotset50_sink;
+----
+12
+10
+13
+11
+14
+10
+15
+11
+16
+10
+17
+11
+
+# 8 records, 75% hot accesses over a hotset of 3 keys: 6 hot accesses (round-robin 0, 1, 2, 0, 1, 2), 2 cold keys (3, 4).
+CREATE LOGICAL SOURCE hotset75(id UINT64 NOT NULL, feature FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR hotset75 TYPE Generator SET(
+       'ALL' as `SOURCE`.STOP_GENERATOR_WHEN_SEQUENCE_FINISHES,
+       1 AS `SOURCE`.SEED,
+       'CACHE_HOTSET UINT64 8 75 3 0, CACHE_HOTSET FLOAT32 8 75 3 0 100' AS `SOURCE`.GENERATOR_SCHEMA
+);
+CREATE SINK hotset75_sink(hotset75.id UINT64 NOT NULL, hotset75.feature FLOAT32 NOT NULL) TYPE File;
+SELECT * FROM hotset75 INTO hotset75_sink;
+----
+3 103
+0 100
+1 101
+2 102
+4 104
+0 100
+1 101
+2 102

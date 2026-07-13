@@ -37,6 +37,8 @@ enum class FieldIdentifier : uint8_t
     NORMAL_DISTRIBUTION,
     WORDLIST,
     RANDOMSTR,
+    CACHE_GROUPED,
+    CACHE_HOTSET,
     INVALID,
 };
 
@@ -147,8 +149,71 @@ private:
                                's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'});
 };
 
+constexpr auto NUM_PARAMETERS_CACHE_GROUPED_FIELD = 5;
+
+/// @brief Generates a deterministic prediction-cache workload of grouped key runs: every unique key is emitted as one contiguous
+/// run (one miss followed by its repetitions), mirroring makeGroupedOperations in PredictionCacheMicrobenchmark. Because a key is
+/// never revisited after its run ends, a cache of any capacity >= 1 under any replacement policy (FIFO, LFU, LRU, SECOND_CHANCE)
+/// observes exactly the requested hits and misses, as long as one consumer processes the runs in order.
+/// Schema line: CACHE_GROUPED <TYPE> <records> <hitPercent> <keySeed> [valueOffset]
+/// - records: total number of tuples, after which the field stops
+/// - hitPercent in [0, 100]: hits = records * hitPercent / 100 (for 100: records - 1), misses = records - hits
+/// - keySeed: first key; unique keys occupy [keySeed, keySeed + misses)
+/// - valueOffset: added to every emitted key; use distinct offsets to de-duplicate columns that share the key sequence
+/// Values are integral and printed as integers, so they round-trip exactly through text for FLOAT32/FLOAT64 columns within the
+/// validated range. Multiple fields with identical parameters advance in lockstep, producing one record per key across columns.
+class CacheGroupedField final : public BaseStoppableGeneratorField
+{
+public:
+    explicit CacheGroupedField(std::string_view rawSchemaLine);
+    std::ostream& generate(std::ostream& os, std::mt19937& randEng) override;
+    static void validate(std::string_view rawSchemaLine);
+
+private:
+    uint64_t records{0};
+    uint64_t remainingHits{0};
+    uint64_t remainingMisses{0};
+    uint64_t nextKey{0};
+    uint64_t valueOffset{0};
+    uint64_t currentKey{0};
+    uint64_t hitsLeftInRun{0};
+    uint64_t generated{0};
+};
+
+constexpr auto NUM_PARAMETERS_CACHE_HOTSET_FIELD = 6;
+
+/// @brief Generates a deterministic prediction-cache workload with a recurring hotset: hot accesses cycle round-robin through a
+/// fixed set of hotsetSize keys, interleaved (via error-diffusion, exact over the whole stream) with cold keys that never repeat.
+/// A cache shared by all worker threads pays hotsetSize warm-up misses once and then hits on every hot access, while thread-local
+/// caches each have to build the hotset, paying the warm-up misses per thread. Requires a capacity that keeps the hotset resident:
+/// capacity >= hotsetSize for LFU, roughly hotsetSize * 100 / hotPercent for LRU/SECOND_CHANCE. FIFO evicts by insertion order
+/// regardless of hits, so it cannot keep a hotset resident under cold traffic; use CACHE_GROUPED for deterministic FIFO rates.
+/// Schema line: CACHE_HOTSET <TYPE> <records> <hotPercent> <hotsetSize> <keySeed> [valueOffset]
+/// - records: total number of tuples, after which the field stops
+/// - hotPercent in [0, 100]: hot accesses = records * hotPercent / 100; the rest are unique cold keys
+/// - hot keys occupy [keySeed, keySeed + hotsetSize), cold keys count up from keySeed + hotsetSize
+class CacheHotsetField final : public BaseStoppableGeneratorField
+{
+public:
+    explicit CacheHotsetField(std::string_view rawSchemaLine);
+    std::ostream& generate(std::ostream& os, std::mt19937& randEng) override;
+    static void validate(std::string_view rawSchemaLine);
+
+private:
+    uint64_t records{0};
+    uint64_t hotPercent{0};
+    uint64_t hotsetSize{0};
+    uint64_t keySeed{0};
+    uint64_t valueOffset{0};
+    uint64_t accumulator{0};
+    uint64_t hotIndex{0};
+    uint64_t coldIndex{0};
+    uint64_t generated{0};
+};
+
 /// @brief Variant containing the types of base generator fields
-using GeneratorFieldType = std::variant<SequenceField, NormalDistributionField, WordListField, RandomStrField>;
+using GeneratorFieldType
+    = std::variant<SequenceField, NormalDistributionField, WordListField, RandomStrField, CacheGroupedField, CacheHotsetField>;
 
 struct FieldValidator
 {
@@ -158,11 +223,13 @@ struct FieldValidator
 
 /// @brief Array containing functions paired with the fields identifier used to validate the fields syntax
 /// NOLINTBEGIN(cert-err58-cpp): do not warn about static storage duration
-static const std::array<FieldValidator, 4> Validators = {
+static const std::array<FieldValidator, 6> Validators = {
     {{.identifier = FieldIdentifier::SEQUENCE, .validator = SequenceField::validate},
      {.identifier = FieldIdentifier::NORMAL_DISTRIBUTION, .validator = NormalDistributionField::validate},
      {.identifier = FieldIdentifier::WORDLIST, .validator = WordListField::validate},
-     {.identifier = FieldIdentifier::RANDOMSTR, .validator = RandomStrField::validate}},
+     {.identifier = FieldIdentifier::RANDOMSTR, .validator = RandomStrField::validate},
+     {.identifier = FieldIdentifier::CACHE_GROUPED, .validator = CacheGroupedField::validate},
+     {.identifier = FieldIdentifier::CACHE_HOTSET, .validator = CacheHotsetField::validate}},
 };
 /// NOLINTEND(cert-err58-cpp)
 
@@ -182,6 +249,26 @@ static const std::unordered_multimap<FieldIdentifier, DataType::Type> FieldNameT
        {FieldIdentifier::NORMAL_DISTRIBUTION, DataType::Type::FLOAT64},
        {FieldIdentifier::NORMAL_DISTRIBUTION, DataType::Type::FLOAT32},
        {FieldIdentifier::WORDLIST, DataType::Type::VARSIZED},
-       {FieldIdentifier::RANDOMSTR, DataType::Type::VARSIZED}};
+       {FieldIdentifier::RANDOMSTR, DataType::Type::VARSIZED},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::INT64},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::INT32},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::INT16},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::INT8},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::UINT64},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::UINT32},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::UINT16},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::UINT8},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::FLOAT64},
+       {FieldIdentifier::CACHE_GROUPED, DataType::Type::FLOAT32},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::INT64},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::INT32},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::INT16},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::INT8},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::UINT64},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::UINT32},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::UINT16},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::UINT8},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::FLOAT64},
+       {FieldIdentifier::CACHE_HOTSET, DataType::Type::FLOAT32}};
 /// NOLINTEND(cert-err58-cpp)
 }

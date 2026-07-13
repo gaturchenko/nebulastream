@@ -95,7 +95,7 @@ void PredictionCacheLRU::touch(const nautilus::val<uint64_t>& pos)
     appendToTail(pos);
 }
 
-nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
+nautilus::val<uint64_t> PredictionCacheLRU::claimReplacementPos()
 {
     if (nextEmptyPos < numberOfEntries)
     {
@@ -110,21 +110,41 @@ nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
     return replacementPos;
 }
 
+nautilus::val<uint64_t> PredictionCacheLRU::getReplacementPos()
+{
+    /// The recency order persists in the entries' previous/next pointers; there is no scalar state to save, and saving must not
+    /// mutate the list (this is called once per task close).
+    return nautilus::val<uint64_t>(0);
+}
+
 void PredictionCacheLRU::setReplacementPos(nautilus::val<uint64_t>)
 {
-    /// Cache entries outlive this wrapper, but the LRU head/tail state does not.
-    nextEmptyPos = 0;
+    /// Cache entries outlive this wrapper, but the trace-local list anchors do not. The recency order itself persists in the
+    /// entries' previous/next pointers, so recover the anchors from them instead of rebuilding the list in slot order.
+    /// Occupied slots always form a prefix, as claimReplacementPos fills empty slots in ascending order.
+    nextEmptyPos = numberOfEntries;
     lruHead = NOT_FOUND;
     lruTail = NOT_FOUND;
 
     for (nautilus::val<uint64_t> pos = 0; pos < numberOfEntries; pos = pos + 1)
     {
-        *getPreviousPos(pos) = NOT_FOUND;
-        *getNextPos(pos) = NOT_FOUND;
-        if (getRecord(pos) != nullptr)
+        if (getRecord(pos) == nullptr)
         {
-            appendToTail(pos);
-            nextEmptyPos = pos + 1;
+            if (pos < nextEmptyPos)
+            {
+                nextEmptyPos = pos;
+            }
+        }
+        else
+        {
+            if (*getPreviousPos(pos) == NOT_FOUND)
+            {
+                lruHead = pos;
+            }
+            if (*getNextPos(pos) == NOT_FOUND)
+            {
+                lruTail = pos;
+            }
         }
     }
 }
@@ -144,7 +164,7 @@ nautilus::val<uint64_t> PredictionCacheLRU::updateKeys(const nautilus::val<std::
         return dataStructurePos;
     }
     incrementNumberOfMisses();
-    const auto replacementPos = getReplacementPos();
+    const auto replacementPos = claimReplacementPos();
     updateFunction(startOfEntries + replacementPos * sizeOfEntry, replacementPos);
     replacementIndex = replacementPos;
     return nautilus::val<uint64_t>(NOT_FOUND);
@@ -160,7 +180,7 @@ PredictionCacheLRU::getDataStructureRef(const nautilus::val<std::byte*>& record,
         return getDataStructure(dataStructurePos);
     }
     incrementNumberOfMisses();
-    const auto replacementPos = getReplacementPos();
+    const auto replacementPos = claimReplacementPos();
     const auto dataStructure = replacementFunction(startOfEntries + replacementPos * sizeOfEntry, replacementPos);
     addLookupIndexEntry(record, replacementPos);
     replacementIndex = replacementPos;
