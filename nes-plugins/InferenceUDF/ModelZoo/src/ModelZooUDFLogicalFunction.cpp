@@ -40,6 +40,7 @@ namespace
 constexpr std::string_view SaradSize200Stride10Udf = "SARAD_SIZE_200_STRIDE_10_UDF";
 constexpr std::string_view MhattRnnUdf = "MHATT_RNN_UDF";
 constexpr std::string_view SqueezeDetUdf = "SQUEEZEDET_UDF";
+constexpr std::string_view SqueezeDet192x624Udf = "SQUEEZEDET_192X624_UDF";
 
 LogicalFunction makeModelZooUdfLogicalFunction(std::string_view functionName, LogicalFunctionRegistryArguments arguments)
 {
@@ -153,6 +154,12 @@ LogicalFunctionRegistryReturnType
 LogicalFunctionGeneratedRegistrar::RegisterSQUEEZEDET_UDFLogicalFunction(LogicalFunctionRegistryArguments arguments)
 {
     return makeModelZooUdfLogicalFunction(SqueezeDetUdf, arguments);
+}
+
+LogicalFunctionRegistryReturnType
+LogicalFunctionGeneratedRegistrar::RegisterSQUEEZEDET_192X624_UDFLogicalFunction(LogicalFunctionRegistryArguments arguments)
+{
+    return makeModelZooUdfLogicalFunction(SqueezeDet192x624Udf, arguments);
 }
 
 }

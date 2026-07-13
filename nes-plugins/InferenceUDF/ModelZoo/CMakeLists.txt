@@ -13,6 +13,7 @@
 add_plugin(SARAD_SIZE_200_STRIDE_10_UDF LogicalFunction nes-logical-operators src/ModelZooUDFLogicalFunction.cpp)
 add_plugin(MHATT_RNN_UDF LogicalFunction nes-logical-operators)
 add_plugin(SQUEEZEDET_UDF LogicalFunction nes-logical-operators)
+add_plugin(SQUEEZEDET_192X624_UDF LogicalFunction nes-logical-operators)
 
 add_plugin_as_library(
         SARAD_SIZE_200_STRIDE_10_UDF
@@ -35,10 +36,18 @@ add_plugin_as_library(
         squeezedet-udf
         src/SqueezeDetUDFPhysicalFunction.cpp)
 
+add_plugin_as_library(
+        SQUEEZEDET_192X624_UDF
+        PhysicalFunction
+        nes-physical-operators
+        squeezedet-192x624-udf
+        src/SqueezeDet192x624UDFPhysicalFunction.cpp)
+
 foreach (model_zoo_udf_target
         sarad-size-200-stride-10-udf
         mhatt-rnn-udf
-        squeezedet-udf)
+        squeezedet-udf
+        squeezedet-192x624-udf)
     target_include_directories(${model_zoo_udf_target} PRIVATE
             ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
             ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
