@@ -23,6 +23,12 @@ add_nes_physical_operator_test(SliceCacheTest SliceCacheTest.cpp)
 add_nes_physical_operator_test(PredictionCacheTest PredictionCacheTest.cpp)
 add_nes_physical_operator_test(GlobalPredictionCacheTest GlobalPredictionCacheTest.cpp)
 
+add_executable(PredictionCacheScopeMicrobenchmark microbenchmark/PredictionCacheScopeMicrobenchmark.cpp)
+target_link_libraries(PredictionCacheScopeMicrobenchmark PRIVATE
+        nes-data-types
+        nes-physical-operators
+        nes-test-util)
+
 add_executable(PredictionCacheMicrobenchmark microbenchmark/PredictionCacheMicrobenchmark.cpp)
 target_include_directories(PredictionCacheMicrobenchmark PRIVATE
         microbenchmark/)
