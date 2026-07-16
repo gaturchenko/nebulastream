@@ -1,4 +1,0 @@
-"worker.default_query_execution.inference.batch_size": [1, 2, 4, 8, 16, 32, 64, 80]
-"worker.default_query_execution.inference.use_batch_deduplication": [false, true]
-"worker.default_query_execution.inference.prediction_cache_type": ["SECOND_CHANCE"]
-"worker.default_query_execution.inference.number_of_entries_prediction_cache": [16]

@@ -1,6 +1,0 @@
-"worker.default_query_execution.inference.openvino_inference_num_threads": [1]
-"worker.default_query_execution.inference.openvino_num_streams": [1]
-"optimizer.inference_batch_size": [8192]
-"worker.default_query_execution.inference.prediction_cache_type": ["LRU"]
-"worker.default_query_execution.inference.number_of_entries_prediction_cache": [1024]
-"worker.default_query_execution.inference.use_batch_deduplication": [true]
