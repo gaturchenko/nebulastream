@@ -15,7 +15,21 @@ set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_CMAKE_SYSTEM_NAME Linux)
 
+# Pin dependencies to the ARMv8.0-A baseline. The build host (Ampere Altra,
+# ARMv8.2-A) otherwise lets the compiler inline ARMv8.1 LSE atomics (ldaddal
+# etc.) into generic framework code -- notably OpenVINO's ARM Compute Library
+# (arm_gemm) -- which SIGILLs on ARMv8.0 Raspberry Pis (Cortex-A53/A72).
+# armv8-a makes the compiler emit outline/LL-SC atomics that run everywhere;
+# ACL's specialized SIMD kernels append their own higher -march per file and
+# stay runtime-dispatched, so this only floors the un-guarded baseline code.
+set(VCPKG_C_FLAGS   "-march=armv8-a")
+set(VCPKG_CXX_FLAGS "-march=armv8-a")
+
 # boost-context and openvino do not recognize arm64
-if (PORT STREQUAL "boost-context" OR PORT STREQUAL "openvino")
-    SET(VCPKG_CMAKE_CONFIGURE_OPTIONS -DCMAKE_SYSTEM_PROCESSOR=aarch64)
+if (PORT STREQUAL "boost-context")
+    set(VCPKG_CMAKE_CONFIGURE_OPTIONS -DCMAKE_SYSTEM_PROCESSOR=aarch64)
+elseif (PORT STREQUAL "openvino")
+    set(VCPKG_CMAKE_CONFIGURE_OPTIONS
+        -DCMAKE_SYSTEM_PROCESSOR=aarch64
+        -DOV_CPU_ARM_TARGET_ARCH=arm64-v8a)
 endif ()
