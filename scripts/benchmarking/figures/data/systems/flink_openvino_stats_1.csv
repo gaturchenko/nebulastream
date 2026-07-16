@@ -1,0 +1,2 @@
+query_name,inference_config_param_name,inference_config_param_value,repetition,flink_records,end_to_end_duration_us,end_to_end_throughput,end_to_end_latency_us,e2e_latency_ms_mean,e2e_latency_ms_p50,e2e_latency_ms_p95,e2e_latency_ms_p99,inference_latency_ms_mean,inference_latency_ms_p50,inference_latency_ms_p95,inference_latency_ms_p99
+flink,baseline,flink,0,991,99119648.404,9.998,150890.165,150.890,148.908,194.981,229.411,20.818,19.109,33.283,42.937
