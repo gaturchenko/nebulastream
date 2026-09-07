@@ -1,0 +1,7 @@
+# Phase 1 cache arm: prediction cache alone (no batching, so this is the single-tuple
+# CacheInferModelPhysicalOperator). LRU with 1024 entries keeps the 64-key hotset resident at every
+# duplicate level in the grid, so the measured hit rate tracks the workload's duplicate percentage.
+"optimizer.inference_batch_size": [1]
+"worker.default_query_execution.inference.prediction_cache_type": ["LRU"]
+"worker.default_query_execution.inference.number_of_entries_prediction_cache": [1024]
+"worker.default_query_execution.inference.use_batch_deduplication": [false]

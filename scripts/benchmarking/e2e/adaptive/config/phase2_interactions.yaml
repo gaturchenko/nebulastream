@@ -1,0 +1,8 @@
+# Phase 2: full factorial over the knobs, run only at the corner operating points (lowest/highest
+# rate x lowest/highest duplicate percentage, both precisions). run_systests.py drops the invalid
+# and redundant cells itself: deduplication is meaningless at batch 1, and the cache capacity is
+# irrelevant when the cache is off, so this expands to 10 combinations, not 12.
+"optimizer.inference_batch_size": [1, 64, 512]
+"worker.default_query_execution.inference.prediction_cache_type": ["NONE", "LRU"]
+"worker.default_query_execution.inference.number_of_entries_prediction_cache": [1024]
+"worker.default_query_execution.inference.use_batch_deduplication": [false, true]

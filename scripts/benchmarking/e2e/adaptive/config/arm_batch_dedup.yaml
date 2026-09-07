@@ -1,0 +1,6 @@
+# Phase 1 deduplication arm: deduplication requires batching, so it is measured on top of a
+# mid-sized batch. Compare against arm_batch.yaml at batch 64 to isolate the deduplication effect.
+"optimizer.inference_batch_size": [64]
+"worker.default_query_execution.inference.prediction_cache_type": ["NONE"]
+"worker.default_query_execution.inference.number_of_entries_prediction_cache": [1024]
+"worker.default_query_execution.inference.use_batch_deduplication": [true]

@@ -1,0 +1,7 @@
+# Phase 1 batching arm: batch size alone, no cache, no deduplication.
+# 512 is deliberately above what a single tuple buffer holds at low rates, so the runs show where
+# the configured batch size stops being reachable.
+"optimizer.inference_batch_size": [8, 64, 512]
+"worker.default_query_execution.inference.prediction_cache_type": ["NONE"]
+"worker.default_query_execution.inference.number_of_entries_prediction_cache": [1024]
+"worker.default_query_execution.inference.use_batch_deduplication": [false]
