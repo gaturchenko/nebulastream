@@ -112,7 +112,7 @@ CREATE SINK snksCalHot90Int8(prediction VARSIZED NOT NULL, ingestion_time UINT64
 );
 
 # :01 -- generator ceiling: no inference operator, 500000 records
-SELECT f01 FROM sCalHot0 INTO snkCalVoid;
+SELECT f01 AS f01 FROM sCalHot0 INTO snkCalVoid;
 ----
 
 # :02 -- rate=1000000000 tuples/s, structure=hotset, duplicates=0%, precision=fp32, records=500000

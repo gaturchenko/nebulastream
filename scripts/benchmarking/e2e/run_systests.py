@@ -330,6 +330,13 @@ def parse_args() -> argparse.Namespace:
              "process_torchserve_results.py to diff.",
     )
     parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="Record a cell that still fails after all retries and carry on, instead of aborting the "
+             "whole sweep. Failed cells leave a FAILED marker in their rep directory and are retried "
+             "on the next invocation.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print commands without executing systest.",
@@ -473,6 +480,12 @@ def main() -> int:
                             f"(attempt {attempt}/{total_attempts}). Retrying...",
                             file=sys.stderr,
                         )
+                    elif args.continue_on_failure:
+                        print(
+                            f"systest failed with exit code {result.returncode} "
+                            f"after {QUERY_RETRIES} retries. Recording the failure and continuing.",
+                            file=sys.stderr,
+                        )
                     else:
                         print(
                             f"systest failed with exit code {result.returncode} "
@@ -482,8 +495,19 @@ def main() -> int:
                         return result.returncode
 
                 if result is None or result.returncode != 0 or before_snapshots is None:
-                    print("systest run ended without a successful attempt.", file=sys.stderr)
-                    return 1
+                    if not args.continue_on_failure:
+                        print("systest run ended without a successful attempt.", file=sys.stderr)
+                        return 1
+                    # Leave a marker outside the rep directory so the cell is retried next time
+                    # (a rep directory that exists counts as done).
+                    failure_marker = query_dir / f"rep-{repetition:02d}.FAILED"
+                    failure_marker.parent.mkdir(parents=True, exist_ok=True)
+                    failure_marker.write_text(
+                        f"exit_code={result.returncode if result else 'none'}\n"
+                        f"command={' '.join(cmd)}\n",
+                        encoding="utf-8",
+                    )
+                    continue
 
                 rep_dir.mkdir(parents=True, exist_ok=True)
 

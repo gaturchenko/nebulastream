@@ -24,6 +24,10 @@
 #   RESULTS   results directory (default scripts/benchmarking/e2e/adaptive/results)
 #   SYSTEST   systest binary (default cmake-build-release/nes-systests/systest/systest)
 #   DRY_RUN   set to 1 to print the systest commands without running them
+#
+# Cells are run with --continue-on-failure: a cell that fails all its retries leaves a
+# rep-NN.FAILED marker and the sweep carries on, so one flaky crash cannot kill an overnight
+# job. Re-running the script retries those cells.
 
 set -euo pipefail
 
@@ -71,7 +75,7 @@ cfg() {
 run() {
   local config="$1" reps="$2"
   shift 2
-  local extra=()
+  local extra=(--continue-on-failure)
   [[ "$DRY_RUN" == "1" ]] && extra+=(--dry-run)
   python3 "$ROOT/scripts/benchmarking/e2e/run_systests.py" \
     --systest-path "$SYSTEST" \

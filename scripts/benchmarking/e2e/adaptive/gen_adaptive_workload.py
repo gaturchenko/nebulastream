@@ -264,10 +264,13 @@ def build_test(
         section_no += 1
         sink_blocks.append("CREATE SINK snkCalVoid(f01 FLOAT32 NOT NULL) TYPE Void;\n")
         first = points[0]
+        # `SELECT f01` alone keeps the qualified name (SCALHOT0$F01) and fails to bind to the
+        # sink's unqualified `f01`; the alias renames it, which is how the systests project raw
+        # source fields into a sink.
         query_blocks.append(
             f"\n# :{section_no:02d} -- generator ceiling: no inference operator, "
             f"{first['records']} records\n"
-            f"SELECT f01 FROM {first['source']} INTO snkCalVoid;\n----\n"
+            f"SELECT f01 AS f01 FROM {first['source']} INTO snkCalVoid;\n----\n"
         )
         record(first, "none")
 
