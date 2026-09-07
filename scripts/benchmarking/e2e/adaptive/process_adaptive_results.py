@@ -44,6 +44,9 @@ from process_results import (  # noqa: E402  (path set above)
     parse_pipeline_aggregate_metric_rows,
 )
 
+# The calibration sections offer an unreachable rate on purpose, so "the generator could not keep
+# up" is their intended state, not a warning-worthy finding.
+UNBOUNDED_RATE_THRESHOLD = 1e8
 CACHE_STATS_PATTERN = re.compile(r"InferModelPhysicalOperator cache hits=(\d+), misses=(\d+)")
 SOURCE_SATURATION_PATTERN = re.compile(r"Can not produce all required tuples in the flushInterval")
 KNOB_COLUMNS = {
@@ -163,16 +166,30 @@ def read_log(rep_dir: Path) -> Dict[str, object]:
 
 
 def read_trace(rep_dir: Path, inference_pipeline_id: Optional[int]) -> Dict[str, object]:
-    """Pipeline-level tuples/task counts for the model-inference pipeline."""
+    """Pipeline-level counters for this run.
+
+    `pipeline_*` describe the model-inference pipeline. `ingested_tuples` is the largest tuple count
+    of any pipeline in the trace, used as a rough stand-in for what the query read.
+
+    Caveat, and it matters: the batching operator hands the inference operator a buffer whose
+    payload is an `EmittedBatch{batchId}` and whose numberOfTuples is *batch metadata*, not scanned
+    tuples - a different contract from a normal emit/scan. So these counters are a screening signal,
+    not proof. The authoritative per-record counter is the prediction cache's hits+misses, logged by
+    the operator itself (`cache_hits`/`cache_misses` below): it is incremented inside the scan loop
+    and never reads buffer metadata. When the two disagree, believe the cache counter.
+    See verify_batch_delivery.test for a standalone check against a Checksum sink.
+    """
     empty: Dict[str, object] = {
         "pipeline_tuples": None,
         "pipeline_task_count": None,
         "pipeline_task_duration_us": None,
+        "tuples_per_task": None,
         "effective_batch_size": None,
         "per_record_task_us": None,
+        "ingested_tuples": None,
+        "tuple_completion_ratio": None,
+        "trace_throughput": None,
     }
-    if inference_pipeline_id is None:
-        return empty
     for json_path in sorted(rep_dir.glob("*.json")):
         if json_path.name == "systest-performance.json":
             continue
@@ -183,21 +200,43 @@ def read_trace(rep_dir: Path, inference_pipeline_id: Optional[int]) -> Dict[str,
         events = payload.get("traceEvents")
         if not isinstance(events, list):
             continue
-        for row in parse_pipeline_aggregate_metric_rows(events):
-            if str(row.get("pipeline_id")) != str(inference_pipeline_id):
+        rows = parse_pipeline_aggregate_metric_rows(events)
+        if not rows:
+            continue
+
+        out = dict(empty)
+        tuple_counts = [float(row["pipeline_tuples"]) for row in rows if row.get("pipeline_tuples")]
+        if tuple_counts:
+            out["ingested_tuples"] = max(tuple_counts)
+        # Wall-clock span of the busiest pipeline, so a source-only run (no inference operator, no
+        # LatencySink CSV) still yields a throughput number.
+        spans = [
+            (float(row["pipeline_tuples"]), float(row["pipeline_task_span_us"]))
+            for row in rows
+            if row.get("pipeline_tuples") and row.get("pipeline_task_span_us")
+        ]
+        if spans:
+            tuples, span = max(spans, key=lambda item: item[0])
+            if span > 0:
+                out["trace_throughput"] = tuples / span * 1e6
+
+        for row in rows:
+            if inference_pipeline_id is None or str(row.get("pipeline_id")) != str(inference_pipeline_id):
                 continue
             tuples = row.get("pipeline_tuples")
             tasks = row.get("pipeline_task_count")
             duration = row.get("pipeline_task_duration_us")
-            out = dict(empty)
             out["pipeline_tuples"] = tuples
             out["pipeline_task_count"] = tasks
             out["pipeline_task_duration_us"] = duration
             if tuples and tasks:
-                out["effective_batch_size"] = float(tuples) / float(tasks)
+                out["tuples_per_task"] = float(tuples) / float(tasks)
             if tuples and duration:
                 out["per_record_task_us"] = float(duration) / float(tuples)
-            return out
+            if tuples and out["ingested_tuples"]:
+                out["tuple_completion_ratio"] = float(tuples) / float(out["ingested_tuples"])
+            break
+        return out
     return empty
 
 
@@ -306,6 +345,24 @@ def main() -> int:
                 else:
                     row["observed_hit_rate"] = None
 
+                # A batch is flushed at every buffer boundary, so the model sees
+                # min(configured batch, tuples in the task) records per call.
+                tuples_per_task = row.get("tuples_per_task")
+                try:
+                    configured_batch = float(knobs["batch_size"])
+                except (TypeError, ValueError):
+                    configured_batch = None
+                if tuples_per_task and configured_batch:
+                    row["effective_batch_size"] = min(configured_batch, float(tuples_per_task))
+
+                delivered = row.get("records")
+                configured_records = section["records"]
+                row["records_delivered_ratio"] = (
+                    float(delivered) / float(configured_records)
+                    if delivered and configured_records
+                    else None
+                )
+
                 row["expected_unique_fraction"] = expected_unique_fraction(
                     str(section["structure"]),
                     float(section["duplicate_percent"]),
@@ -345,7 +402,9 @@ def main() -> int:
         "offered_rate", "duplicate_percent", "structure", "hotset_size", "precision",
         "batch_size", "cache_type", "cache_entries", "dedup", "worker_threads",
         "repetition", "records", "records_configured",
-        "sink_throughput", "sustained_ratio", "effective_batch_size", "per_record_task_us",
+        "sink_throughput", "trace_throughput", "sustained_ratio",
+        "effective_batch_size", "tuples_per_task", "per_record_task_us",
+        "ingested_tuples", "tuple_completion_ratio", "records_delivered_ratio",
         "latency_us_mean", "latency_us_p50", "latency_us_p95", "latency_us_p99", "latency_us_max",
         "cache_hits", "cache_misses", "observed_hit_rate", "expected_unique_fraction",
         "source_saturated", "source_saturation_events",
@@ -367,15 +426,30 @@ def main() -> int:
         pd.concat(samples, ignore_index=True).to_csv(sample_path, index=False)
         print(f"Wrote latency samples to {sample_path}")
 
-    saturated = frame[frame["source_saturated"] == True]  # noqa: E712 - explicit for pandas
+    # Only a *bounded* offered rate can be missed; the calibration sections are meant to saturate.
+    bounded = frame[frame["offered_rate"] < UNBOUNDED_RATE_THRESHOLD]
+    saturated = bounded[bounded["source_saturated"] == True]  # noqa: E712 - explicit for pandas
     if not saturated.empty:
         rates = sorted(set(saturated["offered_rate"]))
         print(
             f"WARNING: the generator could not keep up in {len(saturated)} run(s) at rate(s) {rates}. "
-            "Those operating points are source-bound: lower the rate, lower the flush interval, or "
-            "split the load over several physical sources before drawing conclusions from them.",
+            "Those operating points are source-bound: lower the rate or the flush interval before "
+            "drawing conclusions from them.",
             file=sys.stderr,
         )
+
+    if "tuple_completion_ratio" in frame.columns:
+        dropped = frame[frame["tuple_completion_ratio"].notna() & (frame["tuple_completion_ratio"] < 0.95)]
+        if not dropped.empty:
+            worst = dropped.nsmallest(1, "tuple_completion_ratio").iloc[0]
+            print(
+                f"WARNING: {len(dropped)} run(s) delivered fewer tuples to the model than the query "
+                f"ingested (worst: {worst['tuple_completion_ratio'] * 100:.1f}% at batch "
+                f"{worst['batch_size']}, {worst['worker_threads']} threads). Those runs measured a "
+                "truncated workload; their throughput and latency are not comparable with runs that "
+                "processed everything.",
+                file=sys.stderr,
+            )
     return 0
 
 

@@ -1,0 +1,66 @@
+# name: verify_batch_delivery.test
+# description: Does batched inference deliver every tuple? Checksum sink counts them authoritatively.
+#              Section :01 is the control - identical source, no inference operator at all.
+# groups: [Inference]
+#
+# Expected values below are deliberately 0,0 so systest prints the ACTUAL count it observed.
+# Every section must report exactly 100000 tuples.
+#
+# Deliberately kept OUT of nes-systests/ so CI does not pick up a test that fails by design.
+# Run it as:
+#   cd cmake-build-release/nes-systests/systest
+#   ./systest -t <this file>:03 -n 1 --optimizer inference_batch_size=512 \
+#       -- --worker.query_engine.number_of_worker_threads=4 \
+#          --worker.default_query_execution.inference.prediction_cache_type=LRU \
+#          --worker.default_query_execution.inference.number_of_entries_prediction_cache=2048
+#
+# Cross-check the sink count against the operator's own per-record counter in the run log:
+#   grep -o 'cache hits=[0-9]*, misses=[0-9]*' <log>
+# hits+misses counts records inside the scan loop and never reads buffer metadata, so it
+# distinguishes "records were not processed" from "records were processed but under-counted".
+#
+# Measured on this machine (iris, OpenVINO and default backend, 4 and 16 threads - identical):
+#   batch    1 -> 100000   batch   8 -> 99600   batch  16 -> 98800   batch  32 -> 97200
+#   batch   64 ->  94032   batch 128 -> 87760   batch 256 -> 75472   batch 512 -> 51680
+#   batch 1024 ->  25928   batch 2048 -> 13052
+# Section :01 (same source, no inference operator) returns exactly 100000 in every configuration.
+
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1048576]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [4096]
+
+CREATE LOGICAL SOURCE ver(p1 FLOAT32 NOT NULL, p2 FLOAT32 NOT NULL, p3 FLOAT32 NOT NULL, p4 FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR ver TYPE Generator SET(
+       'ALL' as `SOURCE`.STOP_GENERATOR_WHEN_SEQUENCE_FINISHES,
+       1 AS `SOURCE`.SEED,
+       'FIXED' AS `SOURCE`.GENERATOR_RATE_TYPE,
+       'emit_rate 50000' AS `SOURCE`.GENERATOR_RATE_CONFIG,
+       10 AS `SOURCE`.FLUSH_INTERVAL_MS,
+       'CACHE_HOTSET FLOAT32 100000 0 64 1 0, CACHE_HOTSET FLOAT32 100000 0 64 1 1, CACHE_HOTSET FLOAT32 100000 0 64 1 2, CACHE_HOTSET FLOAT32 100000 0 64 1 3' AS `SOURCE`.GENERATOR_SCHEMA
+);
+
+CREATE MODEL iris ('model/iris.onnx')
+INPUT (p1 FLOAT32, p2 FLOAT32, p3 FLOAT32, p4 FLOAT32)
+OUTPUT (setosa FLOAT32, versicolor FLOAT32, virginica FLOAT32);
+
+CREATE MODEL irisOV ('model/iris.onnx' BACKEND OpenVINO)
+INPUT (p1 FLOAT32, p2 FLOAT32, p3 FLOAT32, p4 FLOAT32)
+OUTPUT (setosa FLOAT32, versicolor FLOAT32, virginica FLOAT32);
+
+CREATE SINK ctlSink(p1 FLOAT32 NOT NULL, p2 FLOAT32 NOT NULL, p3 FLOAT32 NOT NULL, p4 FLOAT32 NOT NULL) TYPE Checksum;
+CREATE SINK inferSink(`VER$P1` FLOAT32 NOT NULL, `VER$P2` FLOAT32 NOT NULL, `VER$P3` FLOAT32 NOT NULL, `VER$P4` FLOAT32 NOT NULL, SETOSA FLOAT32 NOT NULL, VERSICOLOR FLOAT32 NOT NULL, VIRGINICA FLOAT32 NOT NULL) TYPE Checksum;
+CREATE SINK inferSinkOV(`VER$P1` FLOAT32 NOT NULL, `VER$P2` FLOAT32 NOT NULL, `VER$P3` FLOAT32 NOT NULL, `VER$P4` FLOAT32 NOT NULL, SETOSA FLOAT32 NOT NULL, VERSICOLOR FLOAT32 NOT NULL, VIRGINICA FLOAT32 NOT NULL) TYPE Checksum;
+
+# :01 -- control: same source, NO inference operator
+SELECT p1 AS p1, p2 AS p2, p3 AS p3, p4 AS p4 FROM ver INTO ctlSink;
+----
+0, 0
+
+# :02 -- inference, default backend
+SELECT * FROM MODEL_INFERENCE(iris, ver) INTO inferSink;
+----
+0, 0
+
+# :03 -- inference, OpenVINO backend (what the experiment uses)
+SELECT * FROM MODEL_INFERENCE(irisOV, ver) INTO inferSinkOV;
+----
+0, 0
