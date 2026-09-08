@@ -244,6 +244,7 @@ def read_latency(rep_dir: Path, warmup_fraction: float, sample: int) -> Dict[str
     empty: Dict[str, object] = {
         "records": None,
         "sink_throughput": None,
+        "sink_throughput_whole_run": None,
         "latency_us_mean": None,
         "latency_us_p50": None,
         "latency_us_p95": None,
@@ -264,14 +265,18 @@ def read_latency(rep_dir: Path, warmup_fraction: float, sample: int) -> Dict[str
 
     frame = frame.sort_values("recv_ts_us")
     total = len(frame)
-    # Throughput is measured over the whole run (records / observed span at the sink), latency only
-    # over the post-warm-up part: the first records carry compilation and cache warm-up.
-    span_us = float(frame["recv_ts_us"].iloc[-1] - frame["recv_ts_us"].iloc[0])
+    # Both throughput and latency are measured over the post-warm-up window. The leading records
+    # carry per-worker-thread model compilation and cache warm-up, and those fixed costs are a large
+    # fraction of a short run - an INT8 model compiles ~2.6x slower than its FP32 counterpart, which
+    # is enough to invert a throughput comparison on a one-second run.
     warm = frame.iloc[int(total * max(0.0, min(0.9, warmup_fraction))) :]
+    span_us = float(frame["recv_ts_us"].iloc[-1] - frame["recv_ts_us"].iloc[0])
+    warm_span_us = float(warm["recv_ts_us"].iloc[-1] - warm["recv_ts_us"].iloc[0]) if len(warm) > 1 else 0.0
     latency = warm["latency_us"]
     result: Dict[str, object] = {
         "records": total,
-        "sink_throughput": (total / span_us * 1e6) if span_us > 0 else None,
+        "sink_throughput": (len(warm) / warm_span_us * 1e6) if warm_span_us > 0 else None,
+        "sink_throughput_whole_run": (total / span_us * 1e6) if span_us > 0 else None,
         "latency_us_mean": float(latency.mean()),
         "latency_us_p50": float(latency.quantile(0.50)),
         "latency_us_p95": float(latency.quantile(0.95)),
@@ -402,7 +407,7 @@ def main() -> int:
         "offered_rate", "duplicate_percent", "structure", "hotset_size", "precision",
         "batch_size", "cache_type", "cache_entries", "dedup", "worker_threads",
         "repetition", "records", "records_configured",
-        "sink_throughput", "trace_throughput", "sustained_ratio",
+        "sink_throughput", "sink_throughput_whole_run", "trace_throughput", "sustained_ratio",
         "effective_batch_size", "tuples_per_task", "per_record_task_us",
         "ingested_tuples", "tuple_completion_ratio", "records_delivered_ratio",
         "latency_us_mean", "latency_us_p50", "latency_us_p95", "latency_us_p99", "latency_us_max",
