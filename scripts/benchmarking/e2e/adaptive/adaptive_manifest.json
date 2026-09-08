@@ -598,7 +598,7 @@
       "structure": "hotset",
       "duplicate_percent": 0,
       "precision": "none",
-      "records": 500000,
+      "records": 100000,
       "hotset_size": 64,
       "source": "sCalHot0"
     },
@@ -610,7 +610,7 @@
       "structure": "hotset",
       "duplicate_percent": 0,
       "precision": "fp32",
-      "records": 500000,
+      "records": 100000,
       "hotset_size": 64,
       "source": "sCalHot0"
     },
@@ -622,7 +622,7 @@
       "structure": "hotset",
       "duplicate_percent": 0,
       "precision": "int8",
-      "records": 500000,
+      "records": 100000,
       "hotset_size": 64,
       "source": "sCalHot0"
     },
@@ -634,7 +634,7 @@
       "structure": "hotset",
       "duplicate_percent": 90,
       "precision": "fp32",
-      "records": 500000,
+      "records": 100000,
       "hotset_size": 64,
       "source": "sCalHot90"
     },
@@ -646,7 +646,7 @@
       "structure": "hotset",
       "duplicate_percent": 90,
       "precision": "int8",
-      "records": 500000,
+      "records": 100000,
       "hotset_size": 64,
       "source": "sCalHot90"
     }

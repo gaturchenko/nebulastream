@@ -330,6 +330,14 @@ def parse_args() -> argparse.Namespace:
              "process_torchserve_results.py to diff.",
     )
     parser.add_argument(
+        "--run-timeout",
+        type=float,
+        default=900.0,
+        help="Seconds to wait for one systest invocation before killing it and treating the attempt as "
+             "failed (default: 900). systest can hang after a query failure - e.g. when the global buffer "
+             "pool is exhausted - and without this the sweep blocks forever on it.",
+    )
+    parser.add_argument(
         "--continue-on-failure",
         action="store_true",
         help="Record a cell that still fails after all retries and carry on, instead of aborting the "
@@ -458,14 +466,25 @@ def main() -> int:
                     if args.torchserve_metrics_url:
                         metrics_start_text = scrape_url(args.torchserve_metrics_url)
 
-                    result = subprocess.run(
-                        cmd,
-                        check=False,
-                        cwd=systest_dir,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                    )
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            check=False,
+                            cwd=systest_dir,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            timeout=args.run_timeout,
+                        )
+                    except subprocess.TimeoutExpired as timeout_error:
+                        print(
+                            f"systest exceeded --run-timeout of {args.run_timeout}s and was killed; "
+                            "treating the attempt as failed.",
+                            file=sys.stderr,
+                        )
+                        result = subprocess.CompletedProcess(
+                            cmd, returncode=124, stdout=timeout_error.stdout or ""
+                        )
                     if args.torchserve_metrics_url:
                         metrics_end_text = scrape_url(args.torchserve_metrics_url)
                     if result.stdout:

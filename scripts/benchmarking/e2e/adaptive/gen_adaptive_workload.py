@@ -92,7 +92,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--buffers", type=int, default=32_768, help="worker.number_of_buffers_in_global_buffer_manager.")
     parser.add_argument("--page-size", type=int, default=16_384)
-    parser.add_argument("--calibration-records", type=int, default=500_000, help="Record count for the unbounded-rate calibration sections.")
+    parser.add_argument(
+        "--calibration-records",
+        type=int,
+        default=100_000,
+ help="Record count for the unbounded-rate calibration sections.")
     parser.add_argument("--calibration-dups", type=int, nargs="+", default=[0, 90], help="Duplicate percentages of the calibration sections.")
     parser.add_argument("--out-dir", type=Path, default=root / "nes-systests" / "inference" / "adaptive")
     parser.add_argument("--manifest-dir", type=Path, default=Path(__file__).resolve().parent)
