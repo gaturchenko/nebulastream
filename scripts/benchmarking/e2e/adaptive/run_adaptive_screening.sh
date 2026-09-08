@@ -24,6 +24,7 @@
 #   RESULTS   results directory (default scripts/benchmarking/e2e/adaptive/results)
 #   SYSTEST   systest binary (default cmake-build-release/nes-systests/systest/systest)
 #   DRY_RUN   set to 1 to print the systest commands without running them
+#   RUN_TIMEOUT  seconds before a single systest invocation is killed (default 300)
 #
 # Cells are run with --continue-on-failure: a cell that fails all its retries leaves a
 # rep-NN.FAILED marker and the sweep carries on, so one flaky crash cannot kill an overnight
@@ -41,6 +42,7 @@ THREADS="${THREADS:-8}"
 RESULTS="${RESULTS:-$HERE/results}"
 SYSTEST="${SYSTEST:-$ROOT/cmake-build-release/nes-systests/systest/systest}"
 DRY_RUN="${DRY_RUN:-0}"
+RUN_TIMEOUT="${RUN_TIMEOUT:-300}"
 
 if [[ ! -f "$HERE/sections.env" ]]; then
   echo "sections.env not found - run gen_adaptive_workload.py first" >&2
@@ -75,7 +77,7 @@ cfg() {
 run() {
   local config="$1" reps="$2"
   shift 2
-  local extra=(--continue-on-failure)
+  local extra=(--continue-on-failure --run-timeout "$RUN_TIMEOUT")
   [[ "$DRY_RUN" == "1" ]] && extra+=(--dry-run)
   python3 "$ROOT/scripts/benchmarking/e2e/run_systests.py" \
     --systest-path "$SYSTEST" \
