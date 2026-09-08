@@ -266,7 +266,15 @@ def build_test(
 
     if source_only_first:
         section_no += 1
-        sink_blocks.append("CREATE SINK snkCalVoid(f01 FLOAT32 NOT NULL) TYPE Void;\n")
+        # A Latency sink rather than Void: it writes the per-record CSV the processor counts, so the
+        # ceiling section yields a records/throughput number. With a Void sink the row came out
+        # empty - and that ceiling is the one measurement Phase 0 exists to produce.
+        sink_blocks.append(
+            "CREATE SINK snkCalCeiling(f01 FLOAT32 NOT NULL, ingestion_time UINT64 NOT NULL) TYPE Latency SET(\n"
+            "       'results/latency_timings.csv' AS `SINK`.log_path,\n"
+            "       'ingestion_time' AS `SINK`.ingest_field\n"
+            ");\n"
+        )
         first = points[0]
         # `SELECT f01` alone keeps the qualified name (SCALHOT0$F01) and fails to bind to the
         # sink's unqualified `f01`; the alias renames it, which is how the systests project raw
@@ -274,7 +282,8 @@ def build_test(
         query_blocks.append(
             f"\n# :{section_no:02d} -- generator ceiling: no inference operator, "
             f"{first['records']} records\n"
-            f"SELECT f01 AS f01 FROM {first['source']} INTO snkCalVoid;\n----\n"
+            f"SELECT f01 AS f01, CURRENT_TIME() AS ingestion_time FROM {first['source']} "
+            f"INTO snkCalCeiling;\n----\n"
         )
         record(first, "none")
 
