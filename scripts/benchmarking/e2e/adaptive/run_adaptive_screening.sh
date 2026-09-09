@@ -17,7 +17,7 @@
 #   REPS=3 THREADS=16 PHASES="1 2" scripts/benchmarking/e2e/adaptive/run_adaptive_screening.sh
 #
 # Environment:
-#   PHASES    phases to run (default "0 1 2")
+#   PHASES    phases to run (default "0 1 2"; 3 = cache x dedup over the full plane)
 #   REPS      repetitions per cell for phases 1-2 (default 2)
 #   REPS_CAL  repetitions for phase 0 (default 1)
 #   THREADS   worker.query_engine.number_of_worker_threads (default 8; set to the node's core count)
@@ -109,6 +109,14 @@ if phase_enabled 1; then
   run "$(cfg arm_batch)" "$REPS" $SECTIONS_FP32
   run "$(cfg arm_cache)" "$REPS" $SECTIONS_FP32
   run "$(cfg arm_batch_dedup)" "$REPS" $SECTIONS_FP32
+fi
+
+if phase_enabled 3; then
+  echo "=== Phase 3: cache x deduplication over the full plane ==="
+  # Set INCLUDE_INT8=1 to cover the INT8 sections as well (doubles the cell count).
+  int8_sections=""
+  [[ "${INCLUDE_INT8:-0}" == "1" ]] && int8_sections="$SECTIONS_INT8"
+  run "$(cfg arm_batch_cache)" "$REPS" $SECTIONS_FP32 $int8_sections
 fi
 
 if phase_enabled 2; then

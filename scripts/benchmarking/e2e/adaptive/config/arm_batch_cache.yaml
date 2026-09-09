@@ -1,0 +1,15 @@
+# Phase 3: prediction cache and batch deduplication together, over the whole
+# (rate x duplicates x structure) plane. Phase 2 only covered this combination at the four corner
+# operating points, which is too sparse to see where it beats cache-alone or dedup-alone.
+#
+# Two combinations: cache-only and cache+dedup at the same batch size, so the deduplication effect
+# is isolated against a cache-enabled baseline (b64 and b64+dedup from Phase 1 give the other two
+# corners of the 2x2).
+#
+# Key order matches the other arm files so the combination labels - and therefore the result
+# directories - are identical to the Phase 2 cells already measured. The runner skips those, so this
+# only fills in what is missing.
+"optimizer.inference_batch_size": [64]
+"worker.default_query_execution.inference.prediction_cache_type": ["LRU"]
+"worker.default_query_execution.inference.number_of_entries_prediction_cache": [1024]
+"worker.default_query_execution.inference.use_batch_deduplication": [false, true]
