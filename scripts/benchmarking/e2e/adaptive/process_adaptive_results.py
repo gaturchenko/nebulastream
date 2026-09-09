@@ -375,11 +375,16 @@ def main() -> int:
                     section["hotset_size"],
                 )
 
-                throughput = row["sink_throughput"]
+                # "Did it keep up?" must be judged over the WHOLE run: a configuration that falls
+                # behind and then drains its backlog shows a post-warm-up rate above the offered one,
+                # so the trimmed figure reports >1.0 for a run that never kept up. The trimmed figure
+                # is the right one for comparing steady-state speed, and is reported separately.
                 offered = float(section["offered_rate"])
-                # The calibration sections offer an unreachable rate on purpose; a ratio there is
-                # meaningless, the throughput itself is the measurement.
-                row["sustained_ratio"] = (throughput / offered) if (throughput and offered < 1e8) else None
+                whole = row.get("sink_throughput_whole_run")
+                steady = row.get("sink_throughput")
+                unbounded = offered >= UNBOUNDED_RATE_THRESHOLD
+                row["sustained_ratio"] = (whole / offered) if (whole and not unbounded) else None
+                row["steady_state_ratio"] = (steady / offered) if (steady and not unbounded) else None
                 rows.append(row)
 
                 if sample is not None and len(sample):
@@ -407,7 +412,7 @@ def main() -> int:
         "offered_rate", "duplicate_percent", "structure", "hotset_size", "precision",
         "batch_size", "cache_type", "cache_entries", "dedup", "worker_threads",
         "repetition", "records", "records_configured",
-        "sink_throughput", "sink_throughput_whole_run", "trace_throughput", "sustained_ratio",
+        "sink_throughput", "sink_throughput_whole_run", "trace_throughput", "sustained_ratio", "steady_state_ratio",
         "effective_batch_size", "tuples_per_task", "per_record_task_us",
         "ingested_tuples", "tuple_completion_ratio", "records_delivered_ratio",
         "latency_us_mean", "latency_us_p50", "latency_us_p95", "latency_us_p99", "latency_us_max",
