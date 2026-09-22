@@ -35,6 +35,18 @@ enum class StreamJoinStrategy : uint8_t
     OPTIMIZER_CHOOSES
 };
 
+/// How an inference operator over k compatible payload fields of a joined record invokes the model.
+enum class PostJoinInferenceStrategy : uint8_t
+{
+    /// Always invoke the model once with a batch of k payloads.
+    BATCHED,
+    /// Always invoke the model k times with a single payload.
+    SEQUENTIAL,
+    /// Submit a profiling job to the worker hosting the operator and batch only if a batch-k invocation amortizes over k
+    /// single-tuple invocations.
+    OPTIMIZER_CHOOSES
+};
+
 class QueryOptimizerConfiguration : public BaseConfiguration
 {
 public:
@@ -49,21 +61,41 @@ public:
 
     QueryOptimizerNetworkConfiguration network = {"network", "Network configuration overrides for query decomposition"};
 
-    UIntOption inferenceBatchSize = {
-        "inference_batch_size",
-        "1",
-        "Inference Batch Size",
-        {std::make_shared<NonZeroValidation>()}};
+    UIntOption inferenceBatchSize = {"inference_batch_size", "1", "Inference Batch Size", {std::make_shared<NonZeroValidation>()}};
 
-    BoolOption rewritePostJoinBatchInference = {
-        "rewrite_post_join_batch_inference",
-        "true",
-        "Rewrite compatible inference operators over joins into post-join batched inference operators."};
+    EnumOption<PostJoinInferenceStrategy> postJoinInferenceStrategy
+        = {"post_join_inference_strategy",
+           PostJoinInferenceStrategy::OPTIMIZER_CHOOSES,
+           "How inference over k compatible payload fields of a joined record invokes the model "
+           "[BATCHED|SEQUENTIAL|OPTIMIZER_CHOOSES]. OPTIMIZER_CHOOSES profiles one batch-k invocation against k single-tuple "
+           "invocations on the worker hosting the operator."};
+
+    FloatOption postJoinInferenceMinimumSpeedup
+        = {"post_join_inference_minimum_speedup",
+           "1.1",
+           "Minimum speedup of one batch-k invocation over k single-tuple invocations for which OPTIMIZER_CHOOSES selects "
+           "post-join batching. The margin covers the batching overhead that is not part of the profiled model invocation."};
+
+    UIntOption inferenceProfilingWarmupIterations
+        = {"inference_profiling_warmup_iterations", "10", "Unmeasured model invocations per batch size before profiling."};
+
+    UIntOption inferenceProfilingIterations
+        = {"inference_profiling_iterations",
+           "50",
+           "Measured model invocations per batch size when profiling.",
+           {std::make_shared<NonZeroValidation>()}};
 
 private:
     std::vector<BaseOption*> getOptions() override
     {
-        return {&joinStrategy, &network, &inferenceBatchSize, &rewritePostJoinBatchInference};
+        return {
+            &joinStrategy,
+            &network,
+            &inferenceBatchSize,
+            &postJoinInferenceStrategy,
+            &postJoinInferenceMinimumSpeedup,
+            &inferenceProfilingWarmupIterations,
+            &inferenceProfilingIterations};
     }
 };
 

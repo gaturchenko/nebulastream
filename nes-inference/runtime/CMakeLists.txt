@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(NES_INFERENCE_RUNTIME_SOURCES src/InferenceRuntime.cpp)
+set(NES_INFERENCE_RUNTIME_SOURCES src/InferenceRuntime.cpp src/ModelProfiler.cpp)
 set(NES_INFERENCE_RUNTIME_PRIVATE_LIBS nes-common)
 
 if (NES_ENABLE_IREE_INFERENCE_BACKEND)

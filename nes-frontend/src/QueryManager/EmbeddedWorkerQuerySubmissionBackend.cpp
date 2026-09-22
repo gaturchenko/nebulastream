@@ -16,13 +16,17 @@
 
 #include <chrono>
 #include <memory>
+#include <utility>
 #include <Identifiers/Identifiers.hpp>
 #include <Listeners/QueryLog.hpp>
 #include <Plans/LogicalPlan.hpp>
 #include <QueryManager/QueryManager.hpp>
 
 #include <Util/Logger/impl/NesLogger.hpp>
+#include <cpptrace/from_current.hpp>
 #include <ErrorHandling.hpp>
+#include <InferenceProfiling.hpp>
+#include <ModelProfile.hpp>
 #include <QueryStatus.hpp>
 #include <SingleNodeWorkerConfiguration.hpp>
 #include <WorkerStatus.hpp>
@@ -30,15 +34,24 @@
 namespace NES
 {
 
+namespace
+{
+/// Start with the per-worker topology config, then overlay only
+/// explicitly-set CLI values so that CLI args take highest priority
+/// but topology values aren't clobbered by CLI defaults.
+SingleNodeWorkerConfiguration mergeWorkerConfiguration(const WorkerConfig& config, const SingleNodeWorkerConfiguration& workerConfiguration)
+{
+    SingleNodeWorkerConfiguration mergedConfig = config.config;
+    mergedConfig.applyExplicitlySetFrom(workerConfiguration);
+    return mergedConfig;
+}
+}
+
 EmbeddedWorkerQuerySubmissionBackend::EmbeddedWorkerQuerySubmissionBackend(
     WorkerConfig config, SingleNodeWorkerConfiguration workerConfiguration)
     : worker{[&]()
              {
-                 /// Start with the per-worker topology config, then overlay only
-                 /// explicitly-set CLI values so that CLI args take highest priority
-                 /// but topology values aren't clobbered by CLI defaults.
-                 SingleNodeWorkerConfiguration mergedConfig = config.config;
-                 mergedConfig.applyExplicitlySetFrom(workerConfiguration);
+                 SingleNodeWorkerConfiguration mergedConfig = mergeWorkerConfiguration(config, workerConfiguration);
 
                  /// Set grpc/data from topology (these always come from cluster config)
                  mergedConfig.grpcAddressUri.setValue(config.host.getRawValue());
@@ -75,10 +88,43 @@ std::expected<WorkerStatus, Exception> EmbeddedWorkerQuerySubmissionBackend::wor
     return worker.getWorkerStatus(after);
 }
 
+std::expected<ModelProfile, Exception> EmbeddedWorkerQuerySubmissionBackend::profileModel(const ModelProfilingRequest& request) const
+{
+    return worker.profileModel(request);
+}
+
 BackendProvider createEmbeddedBackend(const SingleNodeWorkerConfiguration& workerConfiguration)
 {
     return [workerConfiguration](const WorkerConfig& config) /// NOLINT(bugprone-exception-escape)
     { return std::make_unique<EmbeddedWorkerQuerySubmissionBackend>(config, workerConfiguration); };
+}
+
+EmbeddedInferenceProfiler::EmbeddedInferenceProfiler(
+    SharedPtr<const WorkerCatalog> workerCatalog, SingleNodeWorkerConfiguration workerConfiguration)
+    : workerCatalog(std::move(workerCatalog)), workerConfiguration(std::move(workerConfiguration))
+{
+}
+
+std::expected<ModelProfile, Exception> EmbeddedInferenceProfiler::profile(const Host& worker, const ModelProfilingRequest& request)
+{
+    const auto config = workerCatalog->getWorker(worker);
+    if (!config.has_value())
+    {
+        return std::unexpected(UnknownWorker("Cannot profile a model on unknown worker '{}'", worker));
+    }
+    CPPTRACE_TRY
+    {
+        const auto mergedConfig = mergeWorkerConfiguration(config.value(), workerConfiguration);
+        return profileInferenceModel(
+            request,
+            mergedConfig.workerConfiguration.defaultQueryExecution,
+            mergedConfig.workerConfiguration.queryEngine.numberOfWorkerThreads.getValue());
+    }
+    CPPTRACE_CATCH(...)
+    {
+        return std::unexpected(wrapExternalException());
+    }
+    std::unreachable();
 }
 
 }

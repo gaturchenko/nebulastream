@@ -27,6 +27,8 @@
 #include <DistributedLogicalPlan.hpp>
 #include <DistributedQuery.hpp>
 #include <ErrorHandling.hpp>
+#include <InferenceProfiler.hpp>
+#include <ModelProfile.hpp>
 #include <QueryStatus.hpp>
 #include <WorkerCatalog.hpp>
 #include <WorkerConfig.hpp>
@@ -44,6 +46,7 @@ public:
     virtual std::expected<void, Exception> stop(QueryId) = 0;
     [[nodiscard]] virtual std::expected<LocalQueryStatusSnapshot, Exception> status(QueryId) const = 0;
     [[nodiscard]] virtual std::expected<WorkerStatus, Exception> workerStatus(std::chrono::system_clock::time_point after) const = 0;
+    [[nodiscard]] virtual std::expected<ModelProfile, Exception> profileModel(const ModelProfilingRequest& request) const = 0;
 };
 
 /// std::move_only_function is the C++23 equivalent but is not yet available in libc++19.
@@ -117,6 +120,18 @@ public:
     [[nodiscard]] std::vector<DistributedQueryId> queries() const;
     [[nodiscard]] std::expected<DistributedWorkerStatus, Exception> workerStatus(std::chrono::system_clock::time_point after) const;
     [[nodiscard]] std::expected<DistributedQuery, Exception> getQuery(DistributedQueryId query) const;
+    /// Submits a model profiling job to `worker` and waits for its result.
+    [[nodiscard]] std::expected<ModelProfile, Exception> profileModel(const Host& worker, const ModelProfilingRequest& request) const;
+};
+
+/// Submits the optimizer's profiling jobs to the workers through the query manager's submission backends.
+class QueryManagerInferenceProfiler final : public InferenceProfiler
+{
+    SharedPtr<const QueryManager> queryManager;
+
+public:
+    explicit QueryManagerInferenceProfiler(SharedPtr<const QueryManager> queryManager);
+    [[nodiscard]] std::expected<ModelProfile, Exception> profile(const Host& worker, const ModelProfilingRequest& request) override;
 };
 
 }

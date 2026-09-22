@@ -33,6 +33,8 @@
 #include <grpcpp/support/status.h>
 #include <magic_enum/magic_enum.hpp>
 #include <ErrorHandling.hpp>
+#include <ModelProfile.hpp>
+#include <ModelProfileSerialization.hpp>
 #include <QueryStatus.hpp>
 #include <SingleNodeWorkerRPCService.grpc.pb.h>
 #include <SingleNodeWorkerRPCService.pb.h>
@@ -183,6 +185,26 @@ std::expected<void, Exception> GRPCQuerySubmissionBackend::stop(QueryId queryId)
 
     return std::unexpected{NES::QueryStopFailed(
         "Status: {}\nMessage: {}\nDetail: {}", magic_enum::enum_name(status.error_code()), status.error_message(), status.error_details())};
+}
+
+std::expected<ModelProfile, Exception> GRPCQuerySubmissionBackend::profileModel(const ModelProfilingRequest& request) const
+{
+    grpc::ClientContext context;
+    ProfileModelRequest profileRequest;
+    ProfileModelReply reply;
+    serializeModelProfilingRequest(request, &profileRequest);
+    const auto status = stub->ProfileModel(&context, profileRequest, &reply);
+    if (status.ok())
+    {
+        NES_DEBUG("Profiling a model on node {} was successful.", workerConfig.host);
+        return deserializeModelProfile(reply);
+    }
+    return std::unexpected{InferenceRuntimeFailure(
+        "Profiling a model on node {} failed.\nStatus: {}\nMessage: {}\nDetail: {}",
+        workerConfig.host,
+        magic_enum::enum_name(status.error_code()),
+        status.error_message(),
+        status.error_details())};
 }
 
 BackendProvider createGRPCBackend()

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -45,6 +46,14 @@ struct InferenceRuntimeOptions
     /// compiling a private per-thread copy. See openvino_share_compiled_model.
     bool openvinoShareCompiledModel = false;
 };
+
+/// Options a worker-thread session is set up with when `numberOfWorkerThreads` sessions run the same model. When sharing the
+/// compiled model, all sessions reuse one ov::CompiledModel (one weight copy). To keep the per-thread parallelism the old
+/// per-session compilation gave for free, that single model must have enough streams for every worker thread AND enough total
+/// threads to feed those streams (streams share one inference_num_threads budget, unlike the old N private models that each
+/// grabbed their own thread). Only "auto" (0) streams are overridden so an explicit ablation value still wins; the thread budget
+/// is raised to at least one per stream so the streams can actually run concurrently.
+[[nodiscard]] InferenceRuntimeOptions resolveSessionOptions(InferenceRuntimeOptions options, size_t numberOfWorkerThreads);
 
 /// Import a model from a file.
 [[nodiscard]] ModelBackend defaultModelBackend();

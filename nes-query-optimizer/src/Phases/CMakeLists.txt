@@ -11,6 +11,7 @@
 # limitations under the License.
 
 add_source_files(nes-query-optimizer
+        InferenceImplementationSelector.cpp
         SemanticAnalyzer.cpp
         OperatorPlacer.cpp
         RuleBasedOptimizer.cpp

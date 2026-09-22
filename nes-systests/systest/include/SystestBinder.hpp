@@ -15,10 +15,12 @@
 #pragma once
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include <Util/Pointers.hpp>
+#include <InferenceProfiler.hpp>
 #include <QueryOptimizerConfiguration.hpp>
 #include <SystestConfiguration.hpp>
 #include <SystestState.hpp>
@@ -37,7 +39,8 @@ public:
         const std::filesystem::path& testDataDir,
         const std::filesystem::path& configDir,
         const QueryOptimizerConfiguration& queryOptimizerConfiguration,
-        SystestClusterConfiguration clusterConfig);
+        SystestClusterConfiguration clusterConfig,
+        std::shared_ptr<InferenceProfiler> inferenceProfiler);
 
     /// @return the loaded systest queries and the number of loaded files
     [[nodiscard]] std::pair<std::vector<SystestQuery>, size_t> loadOptimizeQueries(const TestFileMap& discoveredTestFiles);

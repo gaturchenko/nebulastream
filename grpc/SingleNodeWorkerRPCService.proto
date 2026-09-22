@@ -25,6 +25,8 @@ service WorkerRPCService {
 
   rpc RequestQueryStatus (QueryStatusRequest) returns (QueryStatusReply) {}
   rpc RequestStatus (WorkerStatusRequest) returns (WorkerStatusResponse) {}
+
+  rpc ProfileModel (ProfileModelRequest) returns (ProfileModelReply) {}
 }
 
 message RegisterQueryRequest {
@@ -96,4 +98,23 @@ message WorkerStatusResponse {
   uint64 until_unix_timestamp_in_milli_seconds = 4;
   repeated ActiveQuery active_queries = 1;
   repeated TerminatedQuery terminated_queries = 2;
+}
+
+message ProfileModelRequest {
+  string reflectedModel = 1; /// JSON-serialized reflection of the imported model
+  repeated uint64 batchSizes = 2;
+  uint64 warmupIterations = 3;
+  uint64 measurementIterations = 4;
+}
+
+message BatchProfile {
+  uint64 batchSize = 1;
+  uint64 iterations = 2;
+  uint64 medianLatencyInNanoSeconds = 3;
+  uint64 meanLatencyInNanoSeconds = 4;
+  uint64 minLatencyInNanoSeconds = 5;
+}
+
+message ProfileModelReply {
+  repeated BatchProfile batches = 1;
 }

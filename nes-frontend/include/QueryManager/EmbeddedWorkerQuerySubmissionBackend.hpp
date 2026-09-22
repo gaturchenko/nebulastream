@@ -20,10 +20,14 @@
 #include <Identifiers/Identifiers.hpp>
 #include <Listeners/QueryLog.hpp>
 #include <Plans/LogicalPlan.hpp>
+#include <Util/Pointers.hpp>
 #include <ErrorHandling.hpp>
+#include <InferenceProfiler.hpp>
+#include <ModelProfile.hpp>
 #include <QueryStatus.hpp>
 #include <SingleNodeWorker.hpp>
 #include <SingleNodeWorkerConfiguration.hpp>
+#include <WorkerCatalog.hpp>
 #include <WorkerStatus.hpp>
 
 namespace NES
@@ -37,11 +41,24 @@ public:
     std::expected<void, Exception> stop(QueryId) override;
     [[nodiscard]] std::expected<LocalQueryStatusSnapshot, Exception> status(QueryId) const override;
     [[nodiscard]] std::expected<WorkerStatus, Exception> workerStatus(std::chrono::system_clock::time_point after) const override;
+    [[nodiscard]] std::expected<ModelProfile, Exception> profileModel(const ModelProfilingRequest& request) const override;
 
 private:
     SingleNodeWorker worker;
 };
 
 BackendProvider createEmbeddedBackend(const SingleNodeWorkerConfiguration& workerConfiguration);
+
+/// Executes the optimizer's profiling jobs in-process with the configuration the embedded worker for the target host would be
+/// created with. Allows profiling before any embedded worker exists, e.g., when queries are optimized ahead of their execution.
+class EmbeddedInferenceProfiler final : public InferenceProfiler
+{
+    SharedPtr<const WorkerCatalog> workerCatalog;
+    SingleNodeWorkerConfiguration workerConfiguration;
+
+public:
+    EmbeddedInferenceProfiler(SharedPtr<const WorkerCatalog> workerCatalog, SingleNodeWorkerConfiguration workerConfiguration);
+    [[nodiscard]] std::expected<ModelProfile, Exception> profile(const Host& worker, const ModelProfilingRequest& request) override;
+};
 
 }

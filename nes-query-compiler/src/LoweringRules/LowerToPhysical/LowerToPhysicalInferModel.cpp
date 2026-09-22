@@ -15,6 +15,7 @@
 #include <LoweringRules/LowerToPhysical/LowerToPhysicalInferModel.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <ranges>
@@ -44,12 +45,14 @@
 #include <Runtime/Execution/OperatorHandler.hpp>
 #include <Traits/MemoryLayoutTypeTrait.hpp>
 #include <Traits/OutputOriginIdsTrait.hpp>
+#include <Traits/PostJoinInferenceImplementationTrait.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <ErrorHandling.hpp>
 #include <HashMapOptions.hpp>
 #include <Inference.hpp>
 #include <InferenceConfiguration.hpp>
+#include <InferenceProfiling.hpp>
 #include <LoweringRuleRegistry.hpp>
 #include <Model.hpp>
 #include <PhysicalOperator.hpp>
@@ -197,14 +200,10 @@ getPostJoinBatchingInfo(const LogicalOperator& logicalOperator, const InferModel
         .batchInputSchema = std::move(batchInputSchema)};
 }
 
-InferenceRuntimeOptions getInferenceRuntimeOptions(const QueryExecutionConfiguration& conf)
+PostJoinInferenceImplementation getPostJoinInferenceImplementation(const LogicalOperator& logicalOperator)
 {
-    const auto& inference = conf.inferenceConfiguration;
-    return {
-        .openvinoInferenceNumThreads = inference.openvinoInferenceNumThreads.getValue(),
-        .openvinoNumStreams = inference.openvinoNumStreams.getValue(),
-        .openvinoEnableCpuPinning = inference.openvinoEnableCpuPinning.getValue(),
-        .openvinoShareCompiledModel = inference.openvinoShareCompiledModel.getValue()};
+    const auto implementationTrait = getTrait<PostJoinInferenceImplementationTrait>(logicalOperator.getTraitSet());
+    return implementationTrait.has_value() ? implementationTrait.value()->implementation : PostJoinInferenceImplementation::BATCHED;
 }
 
 InferenceRuntimeOptions withOpenVinoDynamicBatch(InferenceRuntimeOptions options, const bool enabled)
@@ -277,10 +276,19 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType.getValue();
     const auto predictionCacheScope = conf.inferenceConfiguration.predictionCacheScope.getValue();
     const auto useBatchDeduplication = conf.inferenceConfiguration.useBatchDeduplication.getValue();
-    const auto postJoinBatchingInfo
-        = getPostJoinBatchingInfo(logicalOperator, inferModelOp.get(), logicalOperator.getInputSchemas().at(0));
+    const auto postJoinBatchingInfo = getPostJoinBatchingInfo(logicalOperator, inferModelOp.get(), logicalOperator.getInputSchemas().at(0));
 
-    if (batchSize > 1 || postJoinBatchingInfo.has_value())
+    auto postJoinImplementation = getPostJoinInferenceImplementation(logicalOperator);
+    if (postJoinBatchingInfo.has_value() && postJoinImplementation == PostJoinInferenceImplementation::SEQUENTIAL
+        && predictionCacheType != PredictionCacheType::NONE)
+    {
+        NES_WARNING("Sequential post-join inference does not support a prediction cache, falling back to post-join batching");
+        postJoinImplementation = PostJoinInferenceImplementation::BATCHED;
+    }
+
+    const auto useBatchedInference
+        = postJoinBatchingInfo.has_value() ? postJoinImplementation == PostJoinInferenceImplementation::BATCHED : batchSize > 1;
+    if (useBatchedInference)
     {
         const auto inputSchema
             = postJoinBatchingInfo.has_value() ? postJoinBatchingInfo->batchInputSchema : logicalOperator.getInputSchemas().at(0);
@@ -354,7 +362,8 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
                 handlerId);
 
             NES_DEBUG(
-                "Lowering InferModel operator to physical BatchCacheInferModelPhysicalOperator operator with batch size {}", batchSize)
+                "Lowering InferModel operator to physical BatchCacheInferModelPhysicalOperator operator with batch size {}",
+                runtimeBatchSize)
         }
         else
         {
@@ -372,7 +381,8 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
                 useBatchDeduplication,
                 handlerId);
 
-            NES_DEBUG("Lowering InferModel operator to physical BatchInferModelPhysicalOperator operator with batch size {}", batchSize)
+            NES_DEBUG(
+                "Lowering InferModel operator to physical BatchInferModelPhysicalOperator operator with batch size {}", runtimeBatchSize)
         }
 
         const auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
@@ -417,6 +427,61 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
 
         std::vector leafes(logicalOperator.getChildren().size(), wrapper);
         return {.root = wrapper, .leafs = {leafes}};
+    }
+
+    if (postJoinBatchingInfo.has_value())
+    {
+        /// Sequential post-join inference chains one single-tuple inference operator per payload field. Each writes the model
+        /// outputs to its payload's qualified output fields, so the chain produces the same schema as post-join batching.
+        const auto& payloadFieldNames = postJoinBatchingInfo->payloadFieldNames;
+        const auto outputsPerPayload = inferModelOp.get().getOutputFieldNames().size();
+        const auto& outputSchema = logicalOperator.getOutputSchema();
+
+        std::shared_ptr<PhysicalOperatorWrapper> first;
+        std::shared_ptr<PhysicalOperatorWrapper> last;
+        auto inputSchema = logicalOperator.getInputSchemas().at(0);
+        for (size_t payload = 0; payload < payloadFieldNames.size(); ++payload)
+        {
+            const auto outputFieldNames = std::vector(
+                postJoinBatchingInfo->outputFieldNames.begin() + static_cast<std::ptrdiff_t>(payload * outputsPerPayload),
+                postJoinBatchingInfo->outputFieldNames.begin() + static_cast<std::ptrdiff_t>((payload + 1) * outputsPerPayload));
+            auto payloadOutputSchema = inputSchema;
+            for (const auto& outputFieldName : outputFieldNames)
+            {
+                const auto outputField = outputSchema.getFieldByName(outputFieldName);
+                PRECONDITION(outputField.has_value(), "Expected post-join inference output field {} in {}", outputFieldName, outputSchema);
+                payloadOutputSchema = payloadOutputSchema.addField(outputField->name, outputField->dataType);
+            }
+
+            auto wrapper = std::make_shared<PhysicalOperatorWrapper>(
+                InferModelPhysicalOperator(
+                    model,
+                    {payloadFieldNames.at(payload)},
+                    outputFieldNames,
+                    runtimeOptions,
+                    inferModelOp.get().hasVarsizedInput(),
+                    inferModelOp.get().hasVarsizedOutput()),
+                inputSchema,
+                payloadOutputSchema,
+                memoryLayoutType,
+                memoryLayoutType,
+                PhysicalOperatorWrapper::PipelineLocation::INTERMEDIATE);
+            if (last)
+            {
+                wrapper->addChild(last);
+            }
+            else
+            {
+                first = wrapper;
+            }
+            last = wrapper;
+            inputSchema = std::move(payloadOutputSchema);
+        }
+
+        NES_DEBUG("Lowering InferModel operator to {} chained physical InferModelPhysicalOperator operators", payloadFieldNames.size())
+
+        std::vector leafes(logicalOperator.getChildren().size(), first);
+        return {.root = last, .leafs = {leafes}};
     }
 
     /// Create the physical operator. Input names come from the logical operator: they

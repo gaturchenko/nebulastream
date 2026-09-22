@@ -26,6 +26,7 @@
 #include <Util/Pointers.hpp>
 #include <CompositeStatisticListener.hpp>
 #include <ErrorHandling.hpp>
+#include <ModelProfile.hpp>
 #include <QueryCompiler.hpp>
 #include <QueryStatus.hpp>
 #include <SingleNodeWorkerConfiguration.hpp>
@@ -74,5 +75,9 @@ public:
     /// Summary structure for query.
     [[nodiscard]] std::expected<LocalQueryStatusSnapshot, Exception> getQueryStatus(QueryId queryId) const noexcept;
     [[nodiscard]] WorkerStatus getWorkerStatus(std::chrono::system_clock::time_point after) const;
+
+    /// Executes a profiling job: measures the invocation latency of the requested model per batch size with the inference runtime
+    /// configuration this worker lowers inference operators with. Runs synchronously on the calling thread.
+    [[nodiscard]] std::expected<ModelProfile, Exception> profileModel(const ModelProfilingRequest& request) const noexcept;
 };
 }

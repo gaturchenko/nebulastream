@@ -40,6 +40,8 @@
 #include <CompositeStatisticListener.hpp>
 #include <ErrorHandling.hpp>
 #include <GoogleEventTracePrinter.hpp>
+#include <InferenceProfiling.hpp>
+#include <ModelProfile.hpp>
 #include <NetworkOptions.hpp>
 #include <QueryCompiler.hpp>
 #include <QueryStatus.hpp>
@@ -226,6 +228,22 @@ WorkerStatus SingleNodeWorker::getWorkerStatus(std::chrono::system_clock::time_p
         }
     }
     return status;
+}
+
+std::expected<ModelProfile, Exception> SingleNodeWorker::profileModel(const ModelProfilingRequest& request) const noexcept
+{
+    CPPTRACE_TRY
+    {
+        return profileInferenceModel(
+            request,
+            configuration.workerConfiguration.defaultQueryExecution,
+            configuration.workerConfiguration.queryEngine.numberOfWorkerThreads.getValue());
+    }
+    CPPTRACE_CATCH(...)
+    {
+        return std::unexpected(wrapExternalException());
+    }
+    std::unreachable();
 }
 
 }

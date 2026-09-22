@@ -35,6 +35,7 @@
 #include <DistributedLogicalPlan.hpp>
 #include <DistributedQuery.hpp>
 #include <ErrorHandling.hpp>
+#include <ModelProfile.hpp>
 #include <QueryId.hpp>
 #include <QueryStatus.hpp>
 #include <WorkerCatalog.hpp>
@@ -291,6 +292,25 @@ std::expected<DistributedWorkerStatus, Exception> QueryManager::workerStatus(std
         distributedStatus.workerStatus.try_emplace(wId, backend->workerStatus(after));
     }
     return distributedStatus;
+}
+
+std::expected<ModelProfile, Exception> QueryManager::profileModel(const Host& worker, const ModelProfilingRequest& request) const
+{
+    if (!backends.contains(worker))
+    {
+        return std::unexpected(UnknownWorker("Cannot profile a model on unknown worker '{}'", worker));
+    }
+    return backends.at(worker).profileModel(request);
+}
+
+QueryManagerInferenceProfiler::QueryManagerInferenceProfiler(SharedPtr<const QueryManager> queryManager)
+    : queryManager(std::move(queryManager))
+{
+}
+
+std::expected<ModelProfile, Exception> QueryManagerInferenceProfiler::profile(const Host& worker, const ModelProfilingRequest& request)
+{
+    return queryManager->profileModel(worker, request);
 }
 
 std::vector<DistributedQueryId> QueryManager::getRunningQueries() const
