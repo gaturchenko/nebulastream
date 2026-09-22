@@ -24,7 +24,9 @@ DistributedLogicalPlan QueryOptimizer::optimize(LogicalPlan plan) const
 {
     plan = semanticAnalyzer.analyse(plan);
     plan = ruleBasedOptimization.optimize(plan);
-    return operatorPlacement.place(plan);
+    plan = operatorPlacement.assignPlacement(plan);
+    plan = inferenceImplementationSelection.apply(plan);
+    return operatorPlacement.decompose(plan);
 }
 
 }

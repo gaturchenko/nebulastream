@@ -26,7 +26,6 @@
 #include <Rules/Semantic/InsertSequenceForWindowAggregationRule.hpp>
 #include <Rules/Semantic/LogicalSourceExpansionRule.hpp>
 #include <Rules/Semantic/OriginIdInferenceRule.hpp>
-#include <Rules/Semantic/ResolveChainedPostJoinInferenceRule.hpp>
 #include <Rules/Semantic/ResolvePostJoinBatchInferenceRule.hpp>
 #include <Rules/Semantic/RewriteChainedInferModelRule.hpp>
 #include <Rules/Semantic/SinkBindingRule.hpp>
@@ -53,22 +52,13 @@ SemanticAnalyzer::SemanticAnalyzer(
     ruleManager.addRule(SourceInferenceRule{this->sourceCatalog});
     ruleManager.addRule(LogicalSourceExpansionRule{this->sourceCatalog});
     ruleManager.addRule(InferModelResolutionRule{this->modelCatalog});
-    if (this->defaultQueryOptimization.rewritePostJoinBatchInference.getValue())
-    {
-        ruleManager.addRule(RewriteChainedInferModelRule{});
-    }
+    /// Inference over several payload fields of a joined record is always resolved into a single operator over all fields. Whether
+    /// it invokes the model with one batch or once per field is a physical choice made after placement.
+    ruleManager.addRule(RewriteChainedInferModelRule{});
     ruleManager.addRule(InsertSequenceForBatchInferenceRule{this->defaultQueryOptimization.inferenceBatchSize.getValue()});
     ruleManager.addRule(InsertSequenceForWindowAggregationRule{});
     ruleManager.addRule(TypeInferenceRule{});
-    if (this->defaultQueryOptimization.rewritePostJoinBatchInference.getValue())
-    {
-        ruleManager.addRule(ResolvePostJoinBatchInferenceRule{});
-    }
-    else
-    {
-        ruleManager.addRule(ResolveChainedPostJoinInferenceRule{});
-        ruleManager.addRule(ResolvePostJoinBatchInferenceRule{});
-    }
+    ruleManager.addRule(ResolvePostJoinBatchInferenceRule{});
     ruleManager.addRule(OriginIdInferenceRule{});
 
     this->ruleSequence = ruleManager.getSequence();

@@ -49,6 +49,7 @@
 #include <nlohmann/json_fwd.hpp>
 #include <yaml-cpp/yaml.h> ///NOLINT(misc-include-cleaner)
 #include <ErrorHandling.hpp>
+#include <InferenceProfiler.hpp>
 #include <QuerySubmitter.hpp>
 #include <SingleNodeWorkerConfiguration.hpp>
 #include <SystestBinder.hpp>
@@ -277,13 +278,39 @@ SystestExecutorResult SystestExecutor::executeSystests()
         std::filesystem::remove_all(config.workingDir.getValue());
         std::filesystem::create_directory(config.workingDir.getValue());
 
+        auto singleNodeWorkerConfiguration = config.singleNodeWorkerConfig.value_or(SingleNodeWorkerConfiguration{});
+        if (not config.workerConfig.getValue().empty())
+        {
+            singleNodeWorkerConfiguration.workerConfiguration.overwriteConfigWithYAMLFileInput(config.workerConfig);
+        }
+        else if (config.singleNodeWorkerConfig.has_value())
+        {
+            singleNodeWorkerConfiguration = config.singleNodeWorkerConfig.value();
+        }
+
+        /// Queries are optimized before any worker runs them, so the optimizer's profiling jobs either go to the remote workers
+        /// or run in-process with the configuration of the embedded workers.
+        auto profilingWorkerCatalog = std::make_shared<WorkerCatalog>(config.clusterConfig.workers);
+        std::shared_ptr<InferenceProfiler> inferenceProfiler;
+        if (config.remoteWorker.getValue())
+        {
+            inferenceProfiler = std::make_shared<QueryManagerInferenceProfiler>(
+                std::make_shared<QueryManager>(std::move(profilingWorkerCatalog), createGRPCBackend()));
+        }
+        else
+        {
+            inferenceProfiler
+                = std::make_shared<EmbeddedInferenceProfiler>(std::move(profilingWorkerCatalog), singleNodeWorkerConfiguration);
+        }
+
         auto discoveredTestFiles = Systest::loadTestFileMap(config);
         Systest::SystestBinder binder{
             config.workingDir.getValue(),
             config.testDataDir.getValue(),
             config.configDir.getValue(),
             config.queryOptimizerConfig.value_or(QueryOptimizerConfiguration{}),
-            config.clusterConfig};
+            config.clusterConfig,
+            std::move(inferenceProfiler)};
         auto [queries, loadedFiles] = binder.loadOptimizeQueries(discoveredTestFiles);
         if (loadedFiles != discoveredTestFiles.size())
         {
@@ -339,15 +366,6 @@ SystestExecutorResult SystestExecutor::executeSystests()
         }
         else
         {
-            auto singleNodeWorkerConfiguration = config.singleNodeWorkerConfig.value_or(SingleNodeWorkerConfiguration{});
-            if (not config.workerConfig.getValue().empty())
-            {
-                singleNodeWorkerConfiguration.workerConfiguration.overwriteConfigWithYAMLFileInput(config.workerConfig);
-            }
-            else if (config.singleNodeWorkerConfig.has_value())
-            {
-                singleNodeWorkerConfiguration = config.singleNodeWorkerConfig.value();
-            }
             if (config.benchmark)
             {
                 nlohmann::json benchmarkResults;

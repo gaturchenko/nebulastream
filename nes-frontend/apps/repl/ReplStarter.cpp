@@ -281,8 +281,13 @@ int main(int argc, char** argv)
 #endif
         NES::TopologyStatementHandler topologyStatementHandler{queryManager, workerCatalog};
         NES::ModelStatementHandler modelStatementHandler{modelCatalog};
-        auto queryOptimizer
-            = std::make_shared<NES::QueryOptimizer>(queryOptimizerConfig, sourceCatalog, sinkCatalog, workerCatalog, modelCatalog);
+        auto queryOptimizer = std::make_shared<NES::QueryOptimizer>(
+            queryOptimizerConfig,
+            sourceCatalog,
+            sinkCatalog,
+            workerCatalog,
+            modelCatalog,
+            std::make_shared<NES::QueryManagerInferenceProfiler>(queryManager));
         auto queryStatementHandler = std::make_shared<NES::QueryStatementHandler>(queryManager, queryOptimizer);
         NES::Repl replClient(
             std::move(sourceStatementHandler),

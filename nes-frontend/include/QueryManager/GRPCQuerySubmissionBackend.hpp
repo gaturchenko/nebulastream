@@ -22,6 +22,7 @@
 #include <Listeners/QueryLog.hpp>
 #include <Plans/LogicalPlan.hpp>
 #include <ErrorHandling.hpp>
+#include <ModelProfile.hpp>
 #include <QueryStatus.hpp>
 #include <SingleNodeWorkerRPCService.grpc.pb.h>
 #include <WorkerStatus.hpp>
@@ -40,6 +41,7 @@ public:
     std::expected<void, Exception> stop(QueryId) override;
     [[nodiscard]] std::expected<LocalQueryStatusSnapshot, Exception> status(QueryId) const override;
     [[nodiscard]] std::expected<WorkerStatus, Exception> workerStatus(std::chrono::system_clock::time_point after) const override;
+    [[nodiscard]] std::expected<ModelProfile, Exception> profileModel(const ModelProfilingRequest& request) const override;
 };
 
 BackendProvider createGRPCBackend();

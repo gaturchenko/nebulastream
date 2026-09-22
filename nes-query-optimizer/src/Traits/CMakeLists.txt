@@ -21,3 +21,4 @@ add_plugin(JoinImplementationType Trait nes-query-optimizer ImplementationTypeTr
 add_plugin(MemoryLayoutType Trait nes-query-optimizer MemoryLayoutTypeTrait.cpp)
 add_plugin(OutputOriginIds Trait nes-query-optimizer OutputOriginIdsTrait.cpp)
 add_plugin(Placement Trait nes-query-optimizer PlacementTrait.cpp)
+add_plugin(PostJoinInferenceImplementation Trait nes-query-optimizer PostJoinInferenceImplementationTrait.cpp)

@@ -384,12 +384,14 @@ struct SystestBinder::Impl
         std::filesystem::path testDataDir,
         std::filesystem::path configDir,
         QueryOptimizerConfiguration queryOptimizerConfiguration,
-        SystestClusterConfiguration clusterConfiguration)
+        SystestClusterConfiguration clusterConfiguration,
+        std::shared_ptr<InferenceProfiler> inferenceProfiler)
         : workingDir(std::move(workingDir))
         , testDataDir(std::move(testDataDir))
         , configDir(std::move(configDir))
         , queryOptimizerConfiguration(std::move(queryOptimizerConfiguration))
         , clusterConfiguration(std::move(clusterConfiguration))
+        , inferenceProfiler(std::move(inferenceProfiler))
     {
         this->workerCatalog = std::make_shared<WorkerCatalog>();
         for (const auto& [host, data, capacity, downstream, config] : this->clusterConfiguration.workers)
@@ -484,7 +486,12 @@ struct SystestBinder::Impl
         std::unordered_set<SystestQueryId> foundQueries;
 
         const QueryOptimizer queryOptimizer{
-            queryOptimizerConfiguration, testfile.sourceCatalog, testfile.sinkCatalog, copyPtr(workerCatalog), modelCatalog};
+            queryOptimizerConfiguration,
+            testfile.sourceCatalog,
+            testfile.sinkCatalog,
+            copyPtr(workerCatalog),
+            modelCatalog,
+            inferenceProfiler};
 
         std::vector<SystestQuery> buildSystests;
         for (auto& builder : loadedSystests)
@@ -1048,6 +1055,7 @@ private:
     std::filesystem::path configDir;
     QueryOptimizerConfiguration queryOptimizerConfiguration;
     SystestClusterConfiguration clusterConfiguration;
+    std::shared_ptr<InferenceProfiler> inferenceProfiler;
 
     SharedPtr<WorkerCatalog> workerCatalog;
 };
@@ -1057,8 +1065,10 @@ SystestBinder::SystestBinder(
     const std::filesystem::path& testDataDir,
     const std::filesystem::path& configDir,
     const QueryOptimizerConfiguration& queryOptimizerConfiguration,
-    SystestClusterConfiguration clusterConfiguration)
-    : impl(std::make_unique<Impl>(workingDir, testDataDir, configDir, queryOptimizerConfiguration, std::move(clusterConfiguration)))
+    SystestClusterConfiguration clusterConfiguration,
+    std::shared_ptr<InferenceProfiler> inferenceProfiler)
+    : impl(std::make_unique<Impl>(
+          workingDir, testDataDir, configDir, queryOptimizerConfiguration, std::move(clusterConfiguration), std::move(inferenceProfiler)))
 {
 }
 

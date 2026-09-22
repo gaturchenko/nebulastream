@@ -47,6 +47,7 @@
 #include <DistributedLogicalPlan.hpp>
 #include <DistributedQuery.hpp>
 #include <ErrorHandling.hpp>
+#include <ModelProfile.hpp>
 #include <QueryId.hpp>
 #include <QueryStatus.hpp>
 #include <QuerySubmitter.hpp>
@@ -129,6 +130,7 @@ public:
     MOCK_METHOD((std::expected<void, Exception>), stop, (QueryId), (override));
     MOCK_METHOD((std::expected<LocalQueryStatusSnapshot, Exception>), status, (QueryId), (const, override));
     MOCK_METHOD((std::expected<WorkerStatus, Exception>), workerStatus, (std::chrono::system_clock::time_point), (const, override));
+    MOCK_METHOD((std::expected<ModelProfile, Exception>), profileModel, (const ModelProfilingRequest&), (const, override));
 };
 
 namespace

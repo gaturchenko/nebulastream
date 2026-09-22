@@ -35,7 +35,10 @@ def classify_settings(df: pd.DataFrame, batch_from_optimizer: bool,
     df = df.copy()
     udf = df["query_name"].str.contains("01")
     if batch_from_optimizer:
-        batch = df["optimizer.rewrite_post_join_batch_inference"] != False  # noqa: E712
+        if "optimizer.post_join_inference_strategy" in df:
+            batch = df["optimizer.post_join_inference_strategy"].astype(str).str.upper() != "SEQUENTIAL"
+        else:  # runs recorded before the post-join inference strategy replaced the rewrite flag
+            batch = df["optimizer.rewrite_post_join_batch_inference"] != False  # noqa: E712
     else:
         batch = df["batch_size"] != 1
     cache_type = df["prediction_cache_type"].fillna("NONE").astype(str).str.strip().str.upper()

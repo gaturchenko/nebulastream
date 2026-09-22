@@ -15,13 +15,16 @@
 #pragma once
 
 #include <memory>
+#include <utility>
 
+#include <Phases/InferenceImplementationSelector.hpp>
 #include <Phases/OperatorPlacer.hpp>
 #include <Phases/RuleBasedOptimizer.hpp>
 #include <Phases/SemanticAnalyzer.hpp>
 #include <Plans/LogicalPlan.hpp>
 #include <Util/Pointers.hpp>
 #include <DistributedLogicalPlan.hpp>
+#include <InferenceProfiler.hpp>
 #include <QueryOptimizerConfiguration.hpp>
 #include <WorkerCatalog.hpp>
 
@@ -41,10 +44,12 @@ public:
         const std::shared_ptr<const SourceCatalog>& sourceCatalog,
         const std::shared_ptr<const SinkCatalog>& sinkCatalog,
         const std::shared_ptr<const WorkerCatalog>& workerCatalog,
-        const std::shared_ptr<const ModelCatalog>& modelCatalog)
+        const std::shared_ptr<const ModelCatalog>& modelCatalog,
+        std::shared_ptr<InferenceProfiler> inferenceProfiler = nullptr) /// NOLINT(fuchsia-default-arguments-declarations)
         : semanticAnalyzer(defaultQueryOptimization, sourceCatalog, sinkCatalog, modelCatalog)
         , ruleBasedOptimization(defaultQueryOptimization)
-        , operatorPlacement(defaultQueryOptimization, sourceCatalog, sinkCatalog, workerCatalog) { };
+        , operatorPlacement(defaultQueryOptimization, sourceCatalog, sinkCatalog, workerCatalog)
+        , inferenceImplementationSelection(defaultQueryOptimization, std::move(inferenceProfiler)) { };
 
     [[nodiscard]] DistributedLogicalPlan optimize(LogicalPlan plan) const;
 
@@ -52,6 +57,7 @@ private:
     SemanticAnalyzer semanticAnalyzer;
     RuleBasedOptimizer ruleBasedOptimization;
     OperatorPlacer operatorPlacement;
+    InferenceImplementationSelector inferenceImplementationSelection;
 };
 
 }

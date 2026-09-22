@@ -14,6 +14,8 @@
 
 #include <Phases/OperatorPlacer.hpp>
 
+#include <utility>
+
 #include <Placement/BottomUpPlacement.hpp>
 #include <Placement/QueryDecomposition.hpp>
 #include <Plans/LogicalPlan.hpp>
@@ -24,8 +26,17 @@ namespace NES
 {
 DistributedLogicalPlan OperatorPlacer::place(LogicalPlan plan) const
 {
-    BottomUpOperatorPlacer(copyPtr(workerCatalog)).apply(plan);
+    return decompose(assignPlacement(std::move(plan)));
+}
 
+LogicalPlan OperatorPlacer::assignPlacement(LogicalPlan plan) const
+{
+    BottomUpOperatorPlacer(copyPtr(workerCatalog)).apply(plan);
+    return plan;
+}
+
+DistributedLogicalPlan OperatorPlacer::decompose(LogicalPlan plan) const
+{
     return QueryDecomposer(copyPtr(workerCatalog), copyPtr(sourceCatalog), copyPtr(sinkCatalog))
         .decompose(plan, defaultQueryOptimization.network);
 }

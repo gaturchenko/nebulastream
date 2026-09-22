@@ -28,6 +28,7 @@
 #include <grpcpp/server_context.h>
 #include <grpcpp/support/status.h>
 #include <ErrorHandling.hpp>
+#include <ModelProfileSerialization.hpp>
 #include <SingleNodeWorkerRPCService.pb.h>
 #include <WorkerStatus.hpp>
 
@@ -203,6 +204,25 @@ grpc::Status GRPCServer::RequestStatus(grpc::ServerContext* context, const Worke
 
         serializeWorkerStatus(status, response);
 
+        return grpc::Status::OK;
+    }
+    CPPTRACE_CATCH(const Exception& e)
+    {
+        return handleError(e, context);
+    }
+    CPPTRACE_CATCH_ALT(const std::exception& e)
+    {
+        return handleError(e, context);
+    }
+    return {grpc::INTERNAL, "unknown exception"};
+}
+
+grpc::Status GRPCServer::ProfileModel(grpc::ServerContext* context, const ProfileModelRequest* request, ProfileModelReply* reply)
+{
+    CPPTRACE_TRY
+    {
+        const auto profile = getValueOrThrow(delegate.profileModel(deserializeModelProfilingRequest(*request)));
+        serializeModelProfile(profile, reply);
         return grpc::Status::OK;
     }
     CPPTRACE_CATCH(const Exception& e)

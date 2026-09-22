@@ -701,8 +701,13 @@ void doQueryManagement(const argparse::ArgumentParser& program, const argparse::
     NES::SourceStatementHandler sourceHandler{sourceCatalog, NES::RequireHostConfig{}};
     NES::SinkStatementHandler sinkHandler{sinkCatalog, NES::RequireHostConfig{}};
     NES::ModelStatementHandler modelHandler{modelCatalog};
-    auto queryOptimizer
-        = std::make_shared<NES::QueryOptimizer>(queryOptimizationConfiguration, sourceCatalog, sinkCatalog, workerCatalog, modelCatalog);
+    auto queryOptimizer = std::make_shared<NES::QueryOptimizer>(
+        queryOptimizationConfiguration,
+        sourceCatalog,
+        sinkCatalog,
+        workerCatalog,
+        modelCatalog,
+        std::make_shared<NES::QueryManagerInferenceProfiler>(queryManager));
     NES::QueryStatementHandler queryHandler{queryManager, queryOptimizer};
 
     handleStatements(loadStatements(topologyConfig), topologyHandler, sourceHandler, sinkHandler, modelHandler);
@@ -742,8 +747,13 @@ void doQuerySubmission(const argparse::ArgumentParser& program, const argparse::
     NES::SourceStatementHandler sourceHandler{sourceCatalog, NES::RequireHostConfig{}};
     NES::SinkStatementHandler sinkHandler{sinkCatalog, NES::RequireHostConfig{}};
     NES::ModelStatementHandler modelHandler{modelCatalog};
-    auto queryOptimizer
-        = std::make_shared<NES::QueryOptimizer>(queryOptimizerConfiguration, sourceCatalog, sinkCatalog, workerCatalog, modelCatalog);
+    auto queryOptimizer = std::make_shared<NES::QueryOptimizer>(
+        queryOptimizerConfiguration,
+        sourceCatalog,
+        sinkCatalog,
+        workerCatalog,
+        modelCatalog,
+        std::make_shared<NES::QueryManagerInferenceProfiler>(queryManager));
     handleStatements(statements, topologyHandler, sourceHandler, sinkHandler, modelHandler);
 
     if (program.is_subcommand_used("start"))

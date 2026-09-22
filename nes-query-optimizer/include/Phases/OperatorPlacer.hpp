@@ -39,6 +39,11 @@ public:
 
     [[nodiscard]] DistributedLogicalPlan place(LogicalPlan plan) const;
 
+    /// Assigns every operator to a worker via placement traits without changing the plan structure.
+    [[nodiscard]] LogicalPlan assignPlacement(LogicalPlan plan) const;
+    /// Splits a plan with placement traits into per-worker plans.
+    [[nodiscard]] DistributedLogicalPlan decompose(LogicalPlan plan) const;
+
 private:
     QueryOptimizerConfiguration defaultQueryOptimization;
     SharedPtr<const SourceCatalog> sourceCatalog;

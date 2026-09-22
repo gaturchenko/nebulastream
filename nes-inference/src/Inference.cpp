@@ -14,6 +14,9 @@
 
 #include <Inference.hpp>
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <utility>
@@ -58,6 +61,16 @@ const OpenVinoImporter& sharedOpenVinoImporter()
 }
 #endif
 
+}
+
+InferenceRuntimeOptions resolveSessionOptions(InferenceRuntimeOptions options, const size_t numberOfWorkerThreads)
+{
+    if (options.openvinoShareCompiledModel && options.openvinoNumStreams == 0)
+    {
+        options.openvinoNumStreams = numberOfWorkerThreads;
+        options.openvinoInferenceNumThreads = std::max<uint64_t>(options.openvinoInferenceNumThreads, numberOfWorkerThreads);
+    }
+    return options;
 }
 
 ModelBackend defaultModelBackend()
