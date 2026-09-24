@@ -153,7 +153,12 @@ Batch* BatchInferenceOperatorHandler::getOrCreateNewBatch()
     const std::scoped_lock lock(batchesMutex);
     ++tuplesSeen;
 
-    if (batches.empty() || tuplesSeen == batchSize || batches.back()->state == BatchState::MARKED_AS_EMITTED)
+    /// A batch stops accepting records the moment it leaves the CREATED state. Checking only for
+    /// MARKED_AS_EMITTED missed batches that the probe had already scanned and flipped to
+    /// MARKED_AS_PROCESSED, so the records that arrived afterwards were appended to a batch nobody
+    /// would read again and were silently lost. That only shows up when the downstream keeps up
+    /// between two input buffers - i.e. with a rate-limited source, where it is severe.
+    if (batches.empty() || tuplesSeen == batchSize || batches.back()->state != BatchState::MARKED_AS_CREATED)
     {
         auto batch = createNewBatch();
         batches.emplace_back(std::move(batch));

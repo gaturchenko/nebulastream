@@ -15,6 +15,7 @@
 
 #include <Phases/SemanticAnalyzer.hpp>
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <Plans/LogicalPlan.hpp>
@@ -55,7 +56,13 @@ SemanticAnalyzer::SemanticAnalyzer(
     /// Inference over several payload fields of a joined record is always resolved into a single operator over all fields. Whether
     /// it invokes the model with one batch or once per field is a physical choice made after placement.
     ruleManager.addRule(RewriteChainedInferModelRule{});
-    ruleManager.addRule(InsertSequenceForBatchInferenceRule{this->defaultQueryOptimization.inferenceBatchSize.getValue()});
+    /// A batch size chosen after placement may exceed one, so batched inference must be able to restore the record order.
+    const auto sequenceBatchSize
+        = this->defaultQueryOptimization.inferenceBatchSizeStrategy.getValue() == InferenceBatchSizeStrategy::OPTIMIZER_CHOOSES
+        ? std::max(
+              this->defaultQueryOptimization.inferenceBatchSize.getValue(), this->defaultQueryOptimization.inferenceMaxBatchSize.getValue())
+        : this->defaultQueryOptimization.inferenceBatchSize.getValue();
+    ruleManager.addRule(InsertSequenceForBatchInferenceRule{sequenceBatchSize});
     ruleManager.addRule(InsertSequenceForWindowAggregationRule{});
     ruleManager.addRule(TypeInferenceRule{});
     ruleManager.addRule(ResolvePostJoinBatchInferenceRule{});
