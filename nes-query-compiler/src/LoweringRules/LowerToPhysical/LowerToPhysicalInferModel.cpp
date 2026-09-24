@@ -47,8 +47,11 @@
 #include <Traits/MemoryLayoutTypeTrait.hpp>
 #include <Traits/OutputOriginIdsTrait.hpp>
 #include <Traits/PostJoinInferenceImplementationTrait.hpp>
+#include <Traits/PredictionCacheScopeTrait.hpp>
+#include <Traits/SharedCompiledModelTrait.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <ErrorHandling.hpp>
 #include <HashMapOptions.hpp>
 #include <Inference.hpp>
@@ -279,10 +282,27 @@ LoweringRuleResultSubgraph LowerToPhysicalInferModel::apply(LogicalOperator logi
     PRECONDITION(memoryLayoutTypeTrait.has_value(), "Expected a memory layout type trait");
     const auto memoryLayoutType = memoryLayoutTypeTrait.value()->memoryLayout;
     const auto batchSize = getInferenceBatchSize(logicalOperator);
-    const auto runtimeOptions = getInferenceRuntimeOptions(conf);
+    /// The optimizer may have chosen the deployment of this operator from what it costs in memory on this worker; otherwise the
+    /// worker's own configuration decides.
+    auto runtimeOptions = getInferenceRuntimeOptions(conf);
+    if (const auto sharedCompiledModel = getTrait<SharedCompiledModelTrait>(logicalOperator.getTraitSet()); sharedCompiledModel.has_value())
+    {
+        runtimeOptions.openvinoShareCompiledModel = sharedCompiledModel.value()->shareCompiledModel;
+    }
     const auto predictionCacheType = conf.inferenceConfiguration.predictionCacheType.getValue();
-    const auto predictionCacheScope = conf.inferenceConfiguration.predictionCacheScope.getValue();
+    const auto predictionCacheScope = [&]
+    {
+        if (const auto scope = getTrait<PredictionCacheScopeTrait>(logicalOperator.getTraitSet()); scope.has_value())
+        {
+            return scope.value()->scope;
+        }
+        return conf.inferenceConfiguration.predictionCacheScope.getValue();
+    }();
     const auto useBatchDeduplication = conf.inferenceConfiguration.useBatchDeduplication.getValue();
+    NES_DEBUG(
+        "Lowering InferModel operator with a {} compiled model and a {} prediction cache",
+        runtimeOptions.openvinoShareCompiledModel ? "shared" : "private",
+        magic_enum::enum_name(predictionCacheScope))
     const auto postJoinBatchingInfo = getPostJoinBatchingInfo(logicalOperator, inferModelOp.get(), logicalOperator.getInputSchemas().at(0));
 
     auto postJoinImplementation = getPostJoinInferenceImplementation(logicalOperator);
