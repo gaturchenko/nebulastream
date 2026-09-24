@@ -37,6 +37,8 @@
 #include <Traits/InferenceBatchSizeTrait.hpp>
 #include <Traits/PlacementTrait.hpp>
 #include <Traits/PostJoinInferenceImplementationTrait.hpp>
+#include <Traits/PredictionCacheScopeTrait.hpp>
+#include <Traits/SharedCompiledModelTrait.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/LogLevel.hpp>
 #include <Util/Logger/impl/NesLogger.hpp>
@@ -47,6 +49,7 @@
 #include <gtest/gtest.h>
 #include <BaseUnitTest.hpp>
 #include <ErrorHandling.hpp>
+#include <InferenceConfiguration.hpp>
 #include <InferenceProfiler.hpp>
 #include <ModelCatalog.hpp>
 #include <ModelProfile.hpp>
@@ -57,6 +60,16 @@ namespace NES
 {
 namespace
 {
+
+/// A model whose sessions cost 8 MB for the first and 6 MB for each further private one, or 1 MB each when they share the
+/// compiled model, on a worker with 4 threads and 8 GB of memory.
+InferenceMemoryProfile defaultMemoryProfile()
+{
+    return InferenceMemoryProfile{
+        .session = SessionMemoryProfile{.measuredBatchSize = 1, .modelPayloadBytes = 4096, .inputBufferBytes = 3136, .outputBufferBytes = 40, .firstPrivateSessionBytes = 8 * 1024 * 1024, .additionalPrivateSessionBytes = 6 * 1024 * 1024, .firstSharedSessionBytes = 8 * 1024 * 1024, .additionalSharedSessionBytes = 1024 * 1024, .measured = true},
+        .predictionCache = PredictionCacheMemoryProfile{},
+        .worker = WorkerMemoryProfile{.physicalMemoryBytes = 8UL * 1024 * 1024 * 1024, .bufferPoolBytes = 0, .numberOfWorkerThreads = 4}};
+}
 
 /// Answers profiling jobs with per-invocation latencies given as a function of the batch size and records the submitted jobs.
 class FakeInferenceProfiler final : public InferenceProfiler
@@ -97,24 +110,15 @@ public:
         }
         if (request.assessMemoryForBatchSize.has_value())
         {
-            profile.memory.session = SessionMemoryProfile{
-                .measuredBatchSize = request.assessMemoryForBatchSize.value(),
-                .modelPayloadBytes = 4096,
-                .inputBufferBytes = 3136,
-                .outputBufferBytes = 40,
-                .firstPrivateSessionBytes = 8 * 1024 * 1024,
-                .additionalPrivateSessionBytes = 6 * 1024 * 1024,
-                .firstSharedSessionBytes = 8 * 1024 * 1024,
-                .additionalSharedSessionBytes = 1024 * 1024,
-                .measured = true};
-            profile.memory.worker = WorkerMemoryProfile{
-                .physicalMemoryBytes = 8UL * 1024 * 1024 * 1024, .bufferPoolBytes = 1024 * 1024, .numberOfWorkerThreads = 4};
+            profile.memory = memory;
+            profile.memory.session.measuredBatchSize = request.assessMemoryForBatchSize.value();
         }
         return profile;
     }
 
     std::function<std::chrono::nanoseconds(size_t)> latency;
     std::vector<std::pair<Host, size_t>> memoryJobs;
+    InferenceMemoryProfile memory = defaultMemoryProfile();
     bool failing = false;
     std::vector<std::pair<Host, std::vector<size_t>>> jobs;
 };
@@ -533,6 +537,144 @@ TEST_F(InferenceImplementationSelectorTest, DoesNotAssessMemoryWithoutADecisionT
     (void)fixedPostJoin.apply(createPostJoinInferencePlan({"s1$pixels", "s2$pixels"}, worker));
 
     EXPECT_TRUE(profiler->memoryJobs.empty());
+}
+
+/// Deployment decisions: the memory-saving alternatives are only taken when the faster ones do not fit the worker's budget.
+class InferenceDeploymentTest : public InferenceImplementationSelectorTest
+{
+public:
+    static QueryOptimizerConfiguration createDeploymentConfiguration()
+    {
+        auto configuration = createBatchSizeConfiguration();
+        configuration.inferenceMemoryStrategy.setValue(InferenceMemoryStrategy::OPTIMIZER_CHOOSES);
+        return configuration;
+    }
+
+    /// A plan whose inference operator invokes the model with single tuples, which is what a global prediction cache requires.
+    static LogicalPlan createSingleTupleInferencePlan()
+    {
+        /// One invocation per tuple takes 1 ms at every batch size, so the smallest batch wins.
+        return createWindowedInferencePlan(createSlidingWindow(200, 10));
+    }
+
+    static std::shared_ptr<FakeInferenceProfiler> createProfiler()
+    {
+        return std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{0}, std::chrono::microseconds{1000}));
+    }
+
+    static std::optional<bool> getSharedCompiledModel(const LogicalPlan& plan)
+    {
+        const auto trait = getTrait<SharedCompiledModelTrait>(plan.getRootOperators().front().getTraitSet());
+        if (!trait.has_value())
+        {
+            return std::nullopt;
+        }
+        return trait.value()->shareCompiledModel;
+    }
+
+    static std::optional<PredictionCacheScope> getPredictionCacheScope(const LogicalPlan& plan)
+    {
+        const auto trait = getTrait<PredictionCacheScopeTrait>(plan.getRootOperators().front().getTraitSet());
+        if (!trait.has_value())
+        {
+            return std::nullopt;
+        }
+        return trait.value()->scope;
+    }
+};
+
+TEST_F(InferenceDeploymentTest, KeepsPrivateCompiledModelsIfTheyFitTheBudget)
+{
+    auto profiler = createProfiler();
+    const InferenceImplementationSelector selector{createDeploymentConfiguration(), profiler};
+
+    const auto plan = selector.apply(createSingleTupleInferencePlan());
+
+    EXPECT_EQ(getSharedCompiledModel(plan), false);
+}
+
+/// 4 sessions need 8 + 3 x 6 = 26 MB privately and 8 + 3 x 1 = 11 MB sharing one compiled model. A budget between the two forces
+/// sharing.
+TEST_F(InferenceDeploymentTest, SharesTheCompiledModelIfPrivateCopiesDoNotFit)
+{
+    auto profiler = createProfiler();
+    profiler->memory.worker.physicalMemoryBytes = 20 * 1024 * 1024;
+    auto configuration = createDeploymentConfiguration();
+    configuration.inferenceMemoryBudgetFraction.setValue(1.0F);
+    const InferenceImplementationSelector selector{configuration, profiler};
+
+    const auto plan = selector.apply(createSingleTupleInferencePlan());
+
+    EXPECT_EQ(getSharedCompiledModel(plan), true);
+}
+
+TEST_F(InferenceDeploymentTest, KeepsThreadLocalCachesIfTheyFitTheBudget)
+{
+    auto profiler = createProfiler();
+    profiler->memory.predictionCache = PredictionCacheMemoryProfile{
+        .entries = 1024, .bytesPerEntry = 1024, .threadLocalBytes = 4 * 1024 * 1024, .globalBytes = 1024 * 1024};
+    const InferenceImplementationSelector selector{createDeploymentConfiguration(), profiler};
+
+    const auto plan = selector.apply(createSingleTupleInferencePlan());
+
+    EXPECT_EQ(getPredictionCacheScope(plan), PredictionCacheScope::THREAD_LOCAL);
+    EXPECT_EQ(getSharedCompiledModel(plan), false);
+}
+
+/// Sessions cost 26 MB privately or 11 MB shared, caches 40 MB thread-local or 10 MB global. Only sharing both fits into 55 MB,
+/// and the cache is given up last because its lock is on the path of every record.
+TEST_F(InferenceDeploymentTest, FallsBackToAGlobalCacheOnlyAfterSharingTheCompiledModel)
+{
+    auto profiler = createProfiler();
+    profiler->memory.predictionCache = PredictionCacheMemoryProfile{
+        .entries = 1024, .bytesPerEntry = 40960, .threadLocalBytes = 40 * 1024 * 1024, .globalBytes = 10 * 1024 * 1024};
+    auto configuration = createDeploymentConfiguration();
+    configuration.inferenceMemoryBudgetFraction.setValue(1.0F);
+
+    /// 11 + 40 = 51 MB fits: sharing the compiled model alone is enough.
+    profiler->memory.worker.physicalMemoryBytes = 55 * 1024 * 1024;
+    const InferenceImplementationSelector sharingSelector{configuration, profiler};
+    const auto sharingPlan = sharingSelector.apply(createSingleTupleInferencePlan());
+    EXPECT_EQ(getSharedCompiledModel(sharingPlan), true);
+    EXPECT_EQ(getPredictionCacheScope(sharingPlan), PredictionCacheScope::THREAD_LOCAL);
+
+    /// 11 + 10 = 21 MB is the only combination that fits into 25 MB.
+    auto tightProfiler = createProfiler();
+    tightProfiler->memory.predictionCache = profiler->memory.predictionCache;
+    tightProfiler->memory.worker.physicalMemoryBytes = 25 * 1024 * 1024;
+    const InferenceImplementationSelector tightSelector{configuration, tightProfiler};
+    const auto tightPlan = tightSelector.apply(createSingleTupleInferencePlan());
+    EXPECT_EQ(getSharedCompiledModel(tightPlan), true);
+    EXPECT_EQ(getPredictionCacheScope(tightPlan), PredictionCacheScope::GLOBAL);
+}
+
+/// Batched inference cannot use a global cache, so only the compiled model can be shared however tight the budget is.
+TEST_F(InferenceDeploymentTest, KeepsThreadLocalCachesForBatchedInference)
+{
+    auto profiler = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{1000}, std::chrono::microseconds{10}));
+    profiler->memory.predictionCache = PredictionCacheMemoryProfile{
+        .entries = 1024, .bytesPerEntry = 40960, .threadLocalBytes = 40 * 1024 * 1024, .globalBytes = 10 * 1024 * 1024};
+    profiler->memory.worker.physicalMemoryBytes = 1024 * 1024;
+    auto configuration = createDeploymentConfiguration();
+    configuration.inferenceMemoryBudgetFraction.setValue(1.0F);
+    const InferenceImplementationSelector selector{configuration, profiler};
+
+    const auto plan = selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)));
+
+    ASSERT_GT(getSelectedBatchSize(plan), 1);
+    EXPECT_EQ(getPredictionCacheScope(plan), PredictionCacheScope::THREAD_LOCAL);
+    EXPECT_EQ(getSharedCompiledModel(plan), true);
+}
+
+TEST_F(InferenceDeploymentTest, LeavesTheDeploymentToTheWorkerUnderTheFixedStrategy)
+{
+    auto profiler = createProfiler();
+    const InferenceImplementationSelector selector{createBatchSizeConfiguration(), profiler};
+
+    const auto plan = selector.apply(createSingleTupleInferencePlan());
+
+    EXPECT_EQ(getSharedCompiledModel(plan), std::nullopt);
+    EXPECT_EQ(getPredictionCacheScope(plan), std::nullopt);
 }
 
 }

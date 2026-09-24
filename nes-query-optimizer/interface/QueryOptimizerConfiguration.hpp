@@ -47,6 +47,16 @@ enum class InferenceBatchSizeStrategy : uint8_t
     OPTIMIZER_CHOOSES
 };
 
+/// How the memory-related deployment of inference operators is chosen: whether worker threads share one compiled model, and
+/// whether they share one prediction cache.
+enum class InferenceMemoryStrategy : uint8_t
+{
+    /// Use the worker's configured openvino_share_compiled_model and prediction_cache_scope.
+    FIXED,
+    /// Compare what the alternatives cost against the memory the worker has, and pick the fastest one that fits.
+    OPTIMIZER_CHOOSES
+};
+
 /// How an inference operator over k compatible payload fields of a joined record invokes the model.
 enum class PostJoinInferenceStrategy : uint8_t
 {
@@ -94,6 +104,18 @@ public:
            "Factor by which the sources replay event time faster than wall-clock time. OPTIMIZER_CHOOSES divides the window stride "
            "and size by it to obtain the wall-clock arrival interval and latency SLOs of window results."};
 
+    EnumOption<InferenceMemoryStrategy> inferenceMemoryStrategy
+        = {"inference_memory_strategy",
+           InferenceMemoryStrategy::FIXED,
+           "How compiled-model sharing and the prediction cache scope are chosen [FIXED|OPTIMIZER_CHOOSES]. OPTIMIZER_CHOOSES has the "
+           "worker assess what an inference operator costs in memory and picks the fastest deployment that fits its memory budget."};
+
+    FloatOption inferenceMemoryBudgetFraction
+        = {"inference_memory_budget_fraction",
+           "0.8",
+           "Fraction of the worker's memory that is left after its buffer pool that inference operators may occupy under "
+           "OPTIMIZER_CHOOSES."};
+
     EnumOption<PostJoinInferenceStrategy> postJoinInferenceStrategy
         = {"post_join_inference_strategy",
            PostJoinInferenceStrategy::OPTIMIZER_CHOOSES,
@@ -126,6 +148,8 @@ private:
             &inferenceBatchSizeStrategy,
             &inferenceMaxBatchSize,
             &inferenceReplaySpeedup,
+            &inferenceMemoryStrategy,
+            &inferenceMemoryBudgetFraction,
             &postJoinInferenceStrategy,
             &postJoinInferenceMinimumSpeedup,
             &inferenceProfilingWarmupIterations,

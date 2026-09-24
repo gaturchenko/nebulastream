@@ -39,12 +39,16 @@
 #include <Traits/InferenceBatchSizeTrait.hpp>
 #include <Traits/PlacementTrait.hpp>
 #include <Traits/PostJoinInferenceImplementationTrait.hpp>
+#include <Traits/PredictionCacheScopeTrait.hpp>
+#include <Traits/SharedCompiledModelTrait.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
 #include <WindowTypes/Measures/TimeMeasure.hpp>
 #include <WindowTypes/Types/TimeBasedWindowType.hpp>
+#include <fmt/format.h>
 #include <magic_enum/magic_enum.hpp>
 #include <ErrorHandling.hpp>
+#include <InferenceConfiguration.hpp>
 #include <InferenceProfiler.hpp>
 #include <ModelCatalog.hpp>
 #include <ModelProfile.hpp>
@@ -160,27 +164,33 @@ LogicalOperator InferenceImplementationSelector::apply(const LogicalOperator& lo
     auto traitSet = logicalOperator.getTraitSet();
     if (const auto inferModel = logicalOperator.tryGetAs<InferModelLogicalOperator>(); inferModel.has_value())
     {
-        bool batched = false;
+        /// How many tuples the operator will invoke the model with, which the memory of its deployment depends on.
+        size_t deployedBatchSize = 1;
         if (isPostJoinInference(inferModel.value().get()))
         {
             const auto implementation = selectPostJoinImplementation(logicalOperator, inferModel.value().get());
             tryInsert(traitSet, PostJoinInferenceImplementationTrait{implementation});
-            batched = implementation == PostJoinInferenceImplementation::BATCHED;
+            deployedBatchSize
+                = implementation == PostJoinInferenceImplementation::BATCHED ? inferModel.value().get().getInputFieldNames().size() : 1;
         }
         else if (configuration.inferenceBatchSizeStrategy.getValue() == InferenceBatchSizeStrategy::OPTIMIZER_CHOOSES)
         {
-            const auto batchSize = selectBatchSize(logicalOperator, inferModel.value().get());
-            tryInsert(traitSet, InferenceBatchSizeTrait{batchSize});
-            batched = batchSize > 1;
+            deployedBatchSize = selectBatchSize(logicalOperator, inferModel.value().get());
+            tryInsert(traitSet, InferenceBatchSizeTrait{deployedBatchSize});
         }
         else
         {
-            batched = configuration.inferenceBatchSize.getValue() > 1;
+            deployedBatchSize = configuration.inferenceBatchSize.getValue();
+        }
+
+        if (configuration.inferenceMemoryStrategy.getValue() == InferenceMemoryStrategy::OPTIMIZER_CHOOSES)
+        {
+            selectDeployment(logicalOperator, inferModel.value().get(), deployedBatchSize, traitSet);
         }
 
         /// The inference sequence operator restores the record order that batched inference needs. It was inserted before the batch
         /// size was known, and single-tuple inference neither needs it nor can be lowered into its pipeline.
-        if (!batched)
+        if (deployedBatchSize <= 1)
         {
             children = withoutInferenceSequence(std::move(children));
         }
@@ -480,4 +490,111 @@ void InferenceImplementationSelector::assessMemory(
     profileCache->memoryProfiles.insert_or_assign(memoryKey, profile->memory);
     logMemoryProfile(worker, model.getName(), profile->memory);
 }
+
+void InferenceImplementationSelector::selectDeployment(
+    const LogicalOperator& logicalOperator,
+    const InferModelLogicalOperator& inferModel,
+    const size_t deployedBatchSize,
+    TraitSet& traitSet) const
+{
+    const auto& modelName = inferModel.getModel().getName();
+    const auto placement = getTrait<PlacementTrait>(logicalOperator.getTraitSet());
+    if (!profiler || !placement.has_value())
+    {
+        NES_WARNING(
+            "Cannot choose the deployment of model '{}' ({}), leaving it to the worker's configuration",
+            modelName,
+            profiler ? "operator is not placed" : "no inference profiler is available");
+        return;
+    }
+
+    const auto& worker = placement.value()->onNode;
+    assessMemory(worker, inferModel, deployedBatchSize);
+    const auto memory = getMemoryProfile(worker, inferModel.getModel());
+    if (!memory.has_value() || !memory->session.measured)
+    {
+        NES_WARNING(
+            "No memory assessment for model '{}' on worker '{}', leaving its deployment to the worker's configuration", modelName, worker);
+        return;
+    }
+
+    const auto threads = memory->worker.numberOfWorkerThreads;
+    const auto budget = static_cast<size_t>(
+        static_cast<double>(memory->worker.availableBytes()) * configuration.inferenceMemoryBudgetFraction.getValue());
+    const auto usesPredictionCache = memory->predictionCache.entries > 0;
+    /// A global prediction cache is only supported for single-tuple inference.
+    const auto scopes = (usesPredictionCache && deployedBatchSize <= 1)
+        ? std::vector{PredictionCacheScope::THREAD_LOCAL, PredictionCacheScope::GLOBAL}
+        : std::vector{PredictionCacheScope::THREAD_LOCAL};
+
+    struct DeploymentCandidate
+    {
+        bool shareCompiledModel;
+        PredictionCacheScope scope;
+        size_t bytes;
+        /// Both alternatives trade speed for memory, but not equally: a shared compiled model turns the per-thread sessions into
+        /// streams that divide one thread budget, while a global cache serializes every lookup, which the scope measurements in
+        /// scripts/benchmarking/figures/data/cache/cache_scope_keysize.csv put at about 1/threads of the throughput of
+        /// thread-local caches, with no hit rate to show for it. The cache scope is therefore given up last.
+        int penalty;
+    };
+
+    std::vector<DeploymentCandidate> candidates;
+    for (const auto shareCompiledModel : {false, true})
+    {
+        for (const auto scope : scopes)
+        {
+            const auto sessionBytes
+                = shareCompiledModel ? memory->session.sharedDeploymentBytes(threads) : memory->session.privateDeploymentBytes(threads);
+            const auto cacheBytes = !usesPredictionCache ? 0
+                : scope == PredictionCacheScope::GLOBAL  ? memory->predictionCache.globalBytes
+                                                         : memory->predictionCache.threadLocalBytes;
+            candidates.push_back(DeploymentCandidate{
+                .shareCompiledModel = shareCompiledModel,
+                .scope = scope,
+                .bytes = sessionBytes + cacheBytes,
+                .penalty = (shareCompiledModel ? 1 : 0) + (scope == PredictionCacheScope::GLOBAL ? 2 : 0)});
+        }
+    }
+
+    const auto fits = [budget](const DeploymentCandidate& candidate) { return candidate.bytes <= budget; };
+    const auto cheaper = [](const DeploymentCandidate& lhs, const DeploymentCandidate& rhs) { return lhs.bytes < rhs.bytes; };
+    const auto faster = [](const DeploymentCandidate& lhs, const DeploymentCandidate& rhs)
+    { return std::pair{lhs.penalty, lhs.bytes} < std::pair{rhs.penalty, rhs.bytes}; };
+
+    auto fitting = candidates | std::views::filter(fits) | std::ranges::to<std::vector>();
+    DeploymentCandidate selected{};
+    if (fitting.empty())
+    {
+        selected = *std::ranges::min_element(candidates, cheaper);
+        NES_WARNING(
+            "Model '{}' on worker '{}' does not fit its memory budget of {} B in any deployment; choosing the smallest one, which "
+            "needs {} B",
+            modelName,
+            worker,
+            budget,
+            selected.bytes);
+    }
+    else
+    {
+        selected = *std::ranges::min_element(fitting, faster);
+    }
+
+    NES_INFO(
+        "Deploying model '{}' on worker '{}' with {} compiled model{} and {} B of memory for {} sessions, out of a budget of {} B",
+        modelName,
+        worker,
+        selected.shareCompiledModel ? "one shared" : "one private",
+        usesPredictionCache ? fmt::format(" and a {} prediction cache", magic_enum::enum_name(selected.scope)) : "",
+        selected.bytes,
+        threads,
+        budget);
+
+    tryInsert(traitSet, SharedCompiledModelTrait{selected.shareCompiledModel});
+    if (usesPredictionCache)
+    {
+        tryInsert(traitSet, PredictionCacheScopeTrait{selected.scope});
+    }
+}
+
 }

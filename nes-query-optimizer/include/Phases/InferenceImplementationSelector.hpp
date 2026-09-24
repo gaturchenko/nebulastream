@@ -29,6 +29,7 @@
 #include <Operators/LogicalOperator.hpp>
 #include <Plans/LogicalPlan.hpp>
 #include <Traits/PostJoinInferenceImplementationTrait.hpp>
+#include <Traits/TraitSet.hpp>
 #include <ErrorHandling.hpp>
 #include <InferenceProfiler.hpp>
 #include <ModelCatalog.hpp>
@@ -58,7 +59,9 @@ namespace NES
 /// removed below inference operators that end up invoking the model with single tuples.
 ///
 /// Once an operator's invocation is decided, the worker assesses what the model costs in memory there, using sessions set up for
-/// the decided batch size.
+/// the decided batch size. Under OPTIMIZER_CHOOSES, that assessment then decides the operator's deployment: whether the worker
+/// threads share one compiled model, and whether they share one prediction cache. Both alternatives trade speed for memory, so
+/// the fastest combination that fits the worker's memory budget is selected.
 class InferenceImplementationSelector
 {
 public:
@@ -86,6 +89,13 @@ private:
     /// Assesses what the model costs in memory on the worker, with runtime sessions set up for the batch size the operator was
     /// decided to use. Runs once per model and worker.
     void assessMemory(const Host& worker, const InferModelLogicalOperator& inferModel, size_t deployedBatchSize) const;
+    /// Chooses whether the worker threads share one compiled model and one prediction cache, from what the alternatives cost on
+    /// the worker and what memory it has.
+    void selectDeployment(
+        const LogicalOperator& logicalOperator,
+        const InferModelLogicalOperator& inferModel,
+        size_t deployedBatchSize,
+        TraitSet& traitSet) const;
     [[nodiscard]] std::expected<ModelProfile, Exception>
     getProfile(const Host& worker, const InferModelLogicalOperator& inferModel, const std::vector<size_t>& batchSizes) const;
 

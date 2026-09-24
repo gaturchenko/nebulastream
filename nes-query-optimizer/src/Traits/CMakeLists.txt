@@ -18,6 +18,8 @@ add_source_files(nes-query-optimizer
         PlacementTrait.cpp)
 
 add_plugin(InferenceBatchSize Trait nes-query-optimizer InferenceBatchSizeTrait.cpp)
+add_plugin(PredictionCacheScope Trait nes-query-optimizer PredictionCacheScopeTrait.cpp)
+add_plugin(SharedCompiledModel Trait nes-query-optimizer SharedCompiledModelTrait.cpp)
 add_plugin(JoinImplementationType Trait nes-query-optimizer ImplementationTypeTrait.cpp)
 add_plugin(MemoryLayoutType Trait nes-query-optimizer MemoryLayoutTypeTrait.cpp)
 add_plugin(OutputOriginIds Trait nes-query-optimizer OutputOriginIdsTrait.cpp)
