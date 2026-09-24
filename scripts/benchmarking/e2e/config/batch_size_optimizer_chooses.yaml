@@ -1,0 +1,3 @@
+"optimizer.inference_batch_size_strategy": ["OPTIMIZER_CHOOSES"]
+"optimizer.inference_max_batch_size": [256]
+"optimizer.inference_replay_speedup": [1.0]

@@ -14,10 +14,15 @@
 
 #include <Phases/InferenceImplementationSelector.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <ranges>
 #include <tuple>
 #include <utility>
@@ -26,11 +31,17 @@
 #include <Identifiers/Identifiers.hpp>
 #include <Operators/InferModelLogicalOperator.hpp>
 #include <Operators/LogicalOperator.hpp>
+#include <Operators/ProjectionLogicalOperator.hpp>
+#include <Operators/SequenceLogicalOperator.hpp>
+#include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
 #include <Plans/LogicalPlan.hpp>
+#include <Traits/InferenceBatchSizeTrait.hpp>
 #include <Traits/PlacementTrait.hpp>
 #include <Traits/PostJoinInferenceImplementationTrait.hpp>
 #include <Traits/TraitSet.hpp>
 #include <Util/Logger/Logger.hpp>
+#include <WindowTypes/Measures/TimeMeasure.hpp>
+#include <WindowTypes/Types/TimeBasedWindowType.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <ErrorHandling.hpp>
 #include <InferenceProfiler.hpp>
@@ -49,6 +60,51 @@ bool isPostJoinInference(const InferModelLogicalOperator& inferModel)
 {
     return inferModel.hasVarsizedInput() && inferModel.getInputFieldNames().size() > 1;
 }
+
+/// Finds the windowed aggregation whose results reach the inference operator one-to-one. Only sequence and projection operators may
+/// lie in between; any other operator, e.g., a selection, changes how many results arrive per window stride.
+std::optional<WindowedAggregationLogicalOperator> findFeedingWindow(const LogicalOperator& inferModel)
+{
+    auto children = inferModel.getChildren();
+    while (children.size() == 1)
+    {
+        const auto& child = children.front();
+        if (const auto window = child.tryGetAs<WindowedAggregationLogicalOperator>(); window.has_value())
+        {
+            return window.value().get();
+        }
+        if (!child.tryGetAs<SequenceLogicalOperator>().has_value() && !child.tryGetAs<ProjectionLogicalOperator>().has_value())
+        {
+            return std::nullopt;
+        }
+        children = child.getChildren();
+    }
+    return std::nullopt;
+}
+
+std::vector<LogicalOperator> withoutInferenceSequence(std::vector<LogicalOperator> children)
+{
+    if (children.size() != 1)
+    {
+        return children;
+    }
+    const auto sequence = children.front().tryGetAs<SequenceLogicalOperator>();
+    if (!sequence.has_value() || sequence.value().get().getSequenceSource() != SequenceLogicalOperator::SequenceSource::INFERENCE)
+    {
+        return children;
+    }
+    return children.front().getChildren();
+}
+
+struct BatchSizeCandidate
+{
+    size_t batchSize;
+    std::chrono::nanoseconds invocationLatency;
+    std::chrono::nanoseconds resultLatency;
+    double throughput;
+    bool meetsHardSlo;
+    bool meetsWeakSlo;
+};
 
 }
 
@@ -70,10 +126,32 @@ LogicalOperator InferenceImplementationSelector::apply(const LogicalOperator& lo
     auto children = logicalOperator.getChildren() | std::views::transform([this](const LogicalOperator& child) { return apply(child); })
         | std::ranges::to<std::vector>();
     auto traitSet = logicalOperator.getTraitSet();
-    if (const auto inferModel = logicalOperator.tryGetAs<InferModelLogicalOperator>();
-        inferModel.has_value() && isPostJoinInference(inferModel.value().get()))
+    if (const auto inferModel = logicalOperator.tryGetAs<InferModelLogicalOperator>(); inferModel.has_value())
     {
-        tryInsert(traitSet, PostJoinInferenceImplementationTrait{selectPostJoinImplementation(logicalOperator, inferModel.value().get())});
+        bool batched = false;
+        if (isPostJoinInference(inferModel.value().get()))
+        {
+            const auto implementation = selectPostJoinImplementation(logicalOperator, inferModel.value().get());
+            tryInsert(traitSet, PostJoinInferenceImplementationTrait{implementation});
+            batched = implementation == PostJoinInferenceImplementation::BATCHED;
+        }
+        else if (configuration.inferenceBatchSizeStrategy.getValue() == InferenceBatchSizeStrategy::OPTIMIZER_CHOOSES)
+        {
+            const auto batchSize = selectBatchSize(logicalOperator, inferModel.value().get());
+            tryInsert(traitSet, InferenceBatchSizeTrait{batchSize});
+            batched = batchSize > 1;
+        }
+        else
+        {
+            batched = configuration.inferenceBatchSize.getValue() > 1;
+        }
+
+        /// The inference sequence operator restores the record order that batched inference needs. It was inserted before the batch
+        /// size was known, and single-tuple inference neither needs it nor can be lowered into its pipeline.
+        if (!batched)
+        {
+            children = withoutInferenceSequence(std::move(children));
+        }
     }
     return logicalOperator.withChildren(std::move(children)).withTraitSet(traitSet);
 }
@@ -104,7 +182,7 @@ PostJoinInferenceImplementation InferenceImplementationSelector::selectPostJoinI
     }
 
     const auto& worker = placement.value()->onNode;
-    const auto profile = getProfile(worker, inferModel, numberOfPayloads);
+    const auto profile = getProfile(worker, inferModel, {1, numberOfPayloads});
     const auto singleTuple = profile.has_value() ? profile->forBatchSize(1) : std::nullopt;
     const auto batched = profile.has_value() ? profile->forBatchSize(numberOfPayloads) : std::nullopt;
     if (!singleTuple.has_value() || !batched.has_value())
@@ -140,29 +218,181 @@ PostJoinInferenceImplementation InferenceImplementationSelector::selectPostJoinI
     return implementation;
 }
 
-std::expected<ModelProfile, Exception>
-InferenceImplementationSelector::getProfile(const Host& worker, const InferModelLogicalOperator& inferModel, const size_t batchSize) const
+uint64_t
+InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalOperator, const InferModelLogicalOperator& inferModel) const
 {
-    const auto& model = inferModel.getModel();
-    auto key = std::make_tuple(worker.getRawValue(), model.getName(), model.getPath().string(), batchSize);
-    const std::scoped_lock lock(profileCache->mutex);
-    if (const auto cached = profileCache->profiles.find(key); cached != profileCache->profiles.end())
+    const auto fixedBatchSize = configuration.inferenceBatchSize.getValue();
+    const auto& modelName = inferModel.getModel().getName();
+    const auto window = findFeedingWindow(logicalOperator);
+    if (!window.has_value())
     {
-        return cached->second;
+        NES_INFO("Inference of model '{}' is not fed by a time window, using the configured batch size {}", modelName, fixedBatchSize);
+        return fixedBatchSize;
+    }
+    const auto windowType = std::dynamic_pointer_cast<Windowing::TimeBasedWindowType>(window->getWindowType());
+    if (window->isKeyed() || !windowType)
+    {
+        NES_WARNING(
+            "Inference of model '{}' is fed by a {} window, whose result rate is unknown; using the configured batch size {}",
+            modelName,
+            window->isKeyed() ? "keyed" : "non-time-based",
+            fixedBatchSize);
+        return fixedBatchSize;
     }
 
-    auto profile = profiler->profile(
-        worker,
-        ModelProfilingRequest{
-            .model = model.getImported(),
-            .batchSizes = {1, batchSize},
-            .warmupIterations = configuration.inferenceProfilingWarmupIterations.getValue(),
-            .measurementIterations = configuration.inferenceProfilingIterations.getValue()});
-    if (profile.has_value())
+    const auto placement = getTrait<PlacementTrait>(logicalOperator.getTraitSet());
+    if (!profiler || !placement.has_value())
     {
-        profileCache->profiles.emplace(std::move(key), profile.value());
+        NES_WARNING(
+            "Cannot profile batched inference of model '{}' ({}), using the configured batch size {}",
+            modelName,
+            profiler ? "operator is not placed" : "no inference profiler is available",
+            fixedBatchSize);
+        return fixedBatchSize;
+    }
+
+    /// Window results arrive once per stride of event time; the replay speedup converts the stride and size to wall-clock time.
+    const auto replaySpeedup = static_cast<double>(configuration.inferenceReplaySpeedup.getValue());
+    PRECONDITION(replaySpeedup > 0, "The inference replay speedup must be positive, but is {}", replaySpeedup);
+    const auto toWallClock = [replaySpeedup](const Windowing::TimeMeasure& measure)
+    {
+        return std::chrono::nanoseconds{static_cast<int64_t>(
+            static_cast<double>(std::chrono::nanoseconds{std::chrono::milliseconds{measure.getTime()}}.count()) / replaySpeedup)};
+    };
+    const auto stride = toWallClock(windowType->getSlide());
+    const auto size = toWallClock(windowType->getSize());
+    PRECONDITION(stride.count() > 0, "Expected a window with a positive stride");
+
+    /// The fill time (B - 1) * S alone must stay below the window size, which bounds the candidates before profiling.
+    const auto largestFillableBatch = static_cast<size_t>((size.count() + stride.count() - 1) / stride.count());
+    const auto largestCandidate
+        = std::max<size_t>(1, std::min<size_t>(configuration.inferenceMaxBatchSize.getValue(), largestFillableBatch));
+    std::vector<size_t> batchSizes;
+    for (size_t batchSize = 1; batchSize <= largestCandidate; batchSize *= 2)
+    {
+        batchSizes.push_back(batchSize);
+    }
+
+    const auto& worker = placement.value()->onNode;
+    const auto profile = getProfile(worker, inferModel, batchSizes);
+    if (!profile.has_value())
+    {
+        NES_WARNING(
+            "Profiling model '{}' on worker '{}' failed ({}), using the configured batch size {}",
+            modelName,
+            worker,
+            profile.error().what(),
+            fixedBatchSize);
+        return fixedBatchSize;
+    }
+
+    std::vector<BatchSizeCandidate> candidates;
+    for (const auto batchSize : batchSizes)
+    {
+        const auto batch = profile->forBatchSize(batchSize);
+        INVARIANT(batch.has_value(), "Expected a profile for batch size {}", batchSize);
+        const auto invocationLatency = batch->medianLatency;
+        const auto resultLatency = stride * static_cast<int64_t>(batchSize - 1) + invocationLatency;
+        candidates.push_back(BatchSizeCandidate{
+            .batchSize = batchSize,
+            .invocationLatency = invocationLatency,
+            .resultLatency = resultLatency,
+            .throughput = invocationLatency.count() > 0
+                ? static_cast<double>(batchSize) * 1e9 / static_cast<double>(invocationLatency.count())
+                : std::numeric_limits<double>::infinity(),
+            .meetsHardSlo = invocationLatency <= stride,
+            .meetsWeakSlo = resultLatency <= size});
+        NES_INFO(
+            "Batch size {} for model '{}' on worker '{}': invocation {} us (hard SLO {} us: {}), result latency {} us (weak SLO {} us: "
+            "{}), throughput {:.0f} tuples/s",
+            batchSize,
+            modelName,
+            worker,
+            invocationLatency.count() / 1000,
+            stride.count() / 1000,
+            candidates.back().meetsHardSlo ? "met" : "violated",
+            resultLatency.count() / 1000,
+            size.count() / 1000,
+            candidates.back().meetsWeakSlo ? "met" : "violated",
+            candidates.back().throughput);
+    }
+
+    /// Prefer candidates meeting both SLOs, then the hard one only, then any; among them, the highest throughput wins and ties go to
+    /// the smaller batch, which has the lower latency.
+    const auto selectFrom = [&candidates](const auto& admissible) -> std::optional<BatchSizeCandidate>
+    {
+        std::optional<BatchSizeCandidate> selected;
+        for (const auto& candidate : candidates | std::views::filter(admissible))
+        {
+            if (!selected.has_value() || candidate.throughput > selected->throughput)
+            {
+                selected = candidate;
+            }
+        }
+        return selected;
+    };
+    if (const auto selected
+        = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo && candidate.meetsWeakSlo; }))
+    {
+        NES_INFO("Selected batch size {} for model '{}' on worker '{}': meets both latency SLOs", selected->batchSize, modelName, worker);
+        return selected->batchSize;
+    }
+    if (const auto selected = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo; }))
+    {
+        NES_WARNING(
+            "Selected batch size {} for model '{}' on worker '{}': no batch size meets the weak latency SLO",
+            selected->batchSize,
+            modelName,
+            worker);
+        return selected->batchSize;
+    }
+    const auto selected = selectFrom([](const BatchSizeCandidate&) { return true; });
+    NES_WARNING(
+        "Selected batch size {} for model '{}' on worker '{}': no batch size meets the hard latency SLO, choosing the highest throughput",
+        selected->batchSize,
+        modelName,
+        worker);
+    return selected->batchSize;
+}
+
+std::expected<ModelProfile, Exception> InferenceImplementationSelector::getProfile(
+    const Host& worker, const InferModelLogicalOperator& inferModel, const std::vector<size_t>& batchSizes) const
+{
+    const auto& model = inferModel.getModel();
+    const auto key = [&](const size_t batchSize)
+    { return std::make_tuple(worker.getRawValue(), model.getName(), model.getPath().string(), batchSize); };
+
+    const std::scoped_lock lock(profileCache->mutex);
+    const auto missingBatchSizes = batchSizes
+        | std::views::filter([&](const size_t batchSize) { return !profileCache->profiles.contains(key(batchSize)); })
+        | std::ranges::to<std::vector>();
+    if (!missingBatchSizes.empty())
+    {
+        auto profile = profiler->profile(
+            worker,
+            ModelProfilingRequest{
+                .model = model.getImported(),
+                .batchSizes = missingBatchSizes,
+                .warmupIterations = configuration.inferenceProfilingWarmupIterations.getValue(),
+                .measurementIterations = configuration.inferenceProfilingIterations.getValue()});
+        if (!profile.has_value())
+        {
+            return std::unexpected(profile.error());
+        }
+        for (const auto& batch : profile->batches)
+        {
+            profileCache->profiles.insert_or_assign(key(batch.batchSize), batch);
+        }
+    }
+
+    ModelProfile profile;
+    for (const auto batchSize : batchSizes)
+    {
+        if (const auto cached = profileCache->profiles.find(key(batchSize)); cached != profileCache->profiles.end())
+        {
+            profile.batches.push_back(cached->second);
+        }
     }
     return profile;
 }
-
 }

@@ -35,6 +35,18 @@ enum class StreamJoinStrategy : uint8_t
     OPTIMIZER_CHOOSES
 };
 
+/// How the batch size of inference operators is chosen.
+enum class InferenceBatchSizeStrategy : uint8_t
+{
+    /// Use the configured inference_batch_size for every inference operator.
+    FIXED,
+    /// Submit a profiling job to the worker hosting an inference operator fed by a time window and choose the batch size with the
+    /// highest throughput that meets the latency SLOs derived from the window: a batched invocation must finish within the window
+    /// stride (hard), and the batch fill time plus the invocation must finish within the window size (weak). Other inference
+    /// operators use the configured inference_batch_size.
+    OPTIMIZER_CHOOSES
+};
+
 /// How an inference operator over k compatible payload fields of a joined record invokes the model.
 enum class PostJoinInferenceStrategy : uint8_t
 {
@@ -62,6 +74,25 @@ public:
     QueryOptimizerNetworkConfiguration network = {"network", "Network configuration overrides for query decomposition"};
 
     UIntOption inferenceBatchSize = {"inference_batch_size", "1", "Inference Batch Size", {std::make_shared<NonZeroValidation>()}};
+
+    EnumOption<InferenceBatchSizeStrategy> inferenceBatchSizeStrategy
+        = {"inference_batch_size_strategy",
+           InferenceBatchSizeStrategy::FIXED,
+           "How the batch size of inference operators is chosen [FIXED|OPTIMIZER_CHOOSES]. OPTIMIZER_CHOOSES profiles candidate "
+           "batch sizes on the worker hosting an inference operator fed by a time window and picks the highest-throughput batch size "
+           "that meets the window's latency SLOs."};
+
+    UIntOption inferenceMaxBatchSize
+        = {"inference_max_batch_size",
+           "256",
+           "Largest batch size OPTIMIZER_CHOOSES considers. Candidates are the powers of two up to this size.",
+           {std::make_shared<NonZeroValidation>()}};
+
+    FloatOption inferenceReplaySpeedup
+        = {"inference_replay_speedup",
+           "1.0",
+           "Factor by which the sources replay event time faster than wall-clock time. OPTIMIZER_CHOOSES divides the window stride "
+           "and size by it to obtain the wall-clock arrival interval and latency SLOs of window results."};
 
     EnumOption<PostJoinInferenceStrategy> postJoinInferenceStrategy
         = {"post_join_inference_strategy",
@@ -92,6 +123,9 @@ private:
             &joinStrategy,
             &network,
             &inferenceBatchSize,
+            &inferenceBatchSizeStrategy,
+            &inferenceMaxBatchSize,
+            &inferenceReplaySpeedup,
             &postJoinInferenceStrategy,
             &postJoinInferenceMinimumSpeedup,
             &inferenceProfilingWarmupIterations,

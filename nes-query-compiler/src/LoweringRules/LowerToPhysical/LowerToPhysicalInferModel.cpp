@@ -43,6 +43,7 @@
 #include <Operators/Windows/JoinLogicalOperator.hpp>
 #include <Operators/Windows/WindowedAggregationLogicalOperator.hpp>
 #include <Runtime/Execution/OperatorHandler.hpp>
+#include <Traits/InferenceBatchSizeTrait.hpp>
 #include <Traits/MemoryLayoutTypeTrait.hpp>
 #include <Traits/OutputOriginIdsTrait.hpp>
 #include <Traits/PostJoinInferenceImplementationTrait.hpp>
@@ -99,6 +100,12 @@ LogicalOperator getInferenceInputChild(const LogicalOperator& inferModelOperator
 
 uint64_t getInferenceBatchSize(const LogicalOperator& inferModelOperator)
 {
+    /// A batch size selected by the optimizer takes precedence over the one the inference sequence operator was created with.
+    if (const auto batchSizeTrait = getTrait<InferenceBatchSizeTrait>(inferModelOperator.getTraitSet()); batchSizeTrait.has_value())
+    {
+        return batchSizeTrait.value()->batchSize;
+    }
+
     const auto children = inferModelOperator.getChildren();
     if (children.size() != 1)
     {
