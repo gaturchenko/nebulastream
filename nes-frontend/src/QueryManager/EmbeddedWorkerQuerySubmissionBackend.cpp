@@ -115,10 +115,7 @@ std::expected<ModelProfile, Exception> EmbeddedInferenceProfiler::profile(const 
     CPPTRACE_TRY
     {
         const auto mergedConfig = mergeWorkerConfiguration(config.value(), workerConfiguration);
-        return profileInferenceModel(
-            request,
-            mergedConfig.workerConfiguration.defaultQueryExecution,
-            mergedConfig.workerConfiguration.queryEngine.numberOfWorkerThreads.getValue());
+        return profileInferenceModel(request, mergedConfig.workerConfiguration);
     }
     CPPTRACE_CATCH(...)
     {

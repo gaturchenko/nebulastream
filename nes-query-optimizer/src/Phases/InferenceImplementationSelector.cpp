@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <ranges>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -45,6 +46,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include <ErrorHandling.hpp>
 #include <InferenceProfiler.hpp>
+#include <ModelCatalog.hpp>
 #include <ModelProfile.hpp>
 #include <QueryOptimizerConfiguration.hpp>
 
@@ -94,6 +96,36 @@ std::vector<LogicalOperator> withoutInferenceSequence(std::vector<LogicalOperato
         return children;
     }
     return children.front().getChildren();
+}
+
+/// Reports what the model costs on the worker, so that the memory a deployment needs can be compared against what the worker has.
+void logMemoryProfile(const Host& worker, const std::string& modelName, const InferenceMemoryProfile& memory)
+{
+    const auto threads = memory.worker.numberOfWorkerThreads;
+    if (!memory.session.measured)
+    {
+        NES_WARNING("No memory assessment for model '{}' on worker '{}'", modelName, worker);
+        return;
+    }
+    NES_INFO(
+        "Inference memory for model '{}' on worker '{}': first session {} B, each additional session {} B private or {} B sharing "
+        "the compiled model; {} sessions need {} B with a private compiled model each or {} B sharing one; a prediction cache of {} "
+        "entries needs {} B thread-local or {} B global; the worker has {} B physical memory, {} B of which its buffer pool "
+        "reserves, leaving {} B",
+        modelName,
+        worker,
+        memory.session.firstPrivateSessionBytes,
+        memory.session.additionalPrivateSessionBytes,
+        memory.session.additionalSharedSessionBytes,
+        threads,
+        memory.session.privateDeploymentBytes(threads),
+        memory.session.sharedDeploymentBytes(threads),
+        memory.predictionCache.entries,
+        memory.predictionCache.threadLocalBytes,
+        memory.predictionCache.globalBytes,
+        memory.worker.physicalMemoryBytes,
+        memory.worker.bufferPoolBytes,
+        memory.worker.availableBytes());
 }
 
 struct BatchSizeCandidate
@@ -215,6 +247,9 @@ PostJoinInferenceImplementation InferenceImplementationSelector::selectPostJoinI
         speedup,
         configuration.postJoinInferenceMinimumSpeedup.getValue(),
         magic_enum::enum_name(implementation));
+
+    /// The batched alternative invokes the model once per joined record with all its payloads, the sequential one with single tuples.
+    assessMemory(worker, inferModel, implementation == PostJoinInferenceImplementation::BATCHED ? numberOfPayloads : 1);
     return implementation;
 }
 
@@ -331,28 +366,48 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
         }
         return selected;
     };
-    if (const auto selected
-        = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo && candidate.meetsWeakSlo; }))
+    const auto selectedBatchSize = [&]() -> uint64_t
     {
-        NES_INFO("Selected batch size {} for model '{}' on worker '{}': meets both latency SLOs", selected->batchSize, modelName, worker);
-        return selected->batchSize;
-    }
-    if (const auto selected = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo; }))
-    {
+        if (const auto selected
+            = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo && candidate.meetsWeakSlo; }))
+        {
+            NES_INFO(
+                "Selected batch size {} for model '{}' on worker '{}': meets both latency SLOs", selected->batchSize, modelName, worker);
+            return selected->batchSize;
+        }
+        if (const auto selected = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo; }))
+        {
+            NES_WARNING(
+                "Selected batch size {} for model '{}' on worker '{}': no batch size meets the weak latency SLO",
+                selected->batchSize,
+                modelName,
+                worker);
+            return selected->batchSize;
+        }
+        const auto selected = selectFrom([](const BatchSizeCandidate&) { return true; });
         NES_WARNING(
-            "Selected batch size {} for model '{}' on worker '{}': no batch size meets the weak latency SLO",
+            "Selected batch size {} for model '{}' on worker '{}': no batch size meets the hard latency SLO, choosing the highest "
+            "throughput",
             selected->batchSize,
             modelName,
             worker);
         return selected->batchSize;
+    }();
+
+    assessMemory(worker, inferModel, selectedBatchSize);
+    return selectedBatchSize;
+}
+
+std::optional<InferenceMemoryProfile>
+InferenceImplementationSelector::getMemoryProfile(const Host& worker, const RegisteredModel& model) const
+{
+    const std::scoped_lock lock(profileCache->mutex);
+    const auto cached = profileCache->memoryProfiles.find(std::make_tuple(worker.getRawValue(), model.getName(), model.getPath().string()));
+    if (cached == profileCache->memoryProfiles.end())
+    {
+        return std::nullopt;
     }
-    const auto selected = selectFrom([](const BatchSizeCandidate&) { return true; });
-    NES_WARNING(
-        "Selected batch size {} for model '{}' on worker '{}': no batch size meets the hard latency SLO, choosing the highest throughput",
-        selected->batchSize,
-        modelName,
-        worker);
-    return selected->batchSize;
+    return cached->second;
 }
 
 std::expected<ModelProfile, Exception> InferenceImplementationSelector::getProfile(
@@ -374,7 +429,8 @@ std::expected<ModelProfile, Exception> InferenceImplementationSelector::getProfi
                 .model = model.getImported(),
                 .batchSizes = missingBatchSizes,
                 .warmupIterations = configuration.inferenceProfilingWarmupIterations.getValue(),
-                .measurementIterations = configuration.inferenceProfilingIterations.getValue()});
+                .measurementIterations = configuration.inferenceProfilingIterations.getValue(),
+                .assessMemoryForBatchSize = std::nullopt});
         if (!profile.has_value())
         {
             return std::unexpected(profile.error());
@@ -394,5 +450,34 @@ std::expected<ModelProfile, Exception> InferenceImplementationSelector::getProfi
         }
     }
     return profile;
+}
+
+void InferenceImplementationSelector::assessMemory(
+    const Host& worker, const InferModelLogicalOperator& inferModel, const size_t deployedBatchSize) const
+{
+    const auto& model = inferModel.getModel();
+    const auto memoryKey = std::make_tuple(worker.getRawValue(), model.getName(), model.getPath().string());
+
+    const std::scoped_lock lock(profileCache->mutex);
+    if (profileCache->memoryProfiles.contains(memoryKey))
+    {
+        return;
+    }
+
+    auto profile = profiler->profile(
+        worker,
+        ModelProfilingRequest{
+            .model = model.getImported(),
+            .batchSizes = {},
+            .warmupIterations = 0,
+            .measurementIterations = 1,
+            .assessMemoryForBatchSize = deployedBatchSize});
+    if (!profile.has_value())
+    {
+        NES_WARNING("Assessing the memory of model '{}' on worker '{}' failed: {}", model.getName(), worker, profile.error().what());
+        return;
+    }
+    profileCache->memoryProfiles.insert_or_assign(memoryKey, profile->memory);
+    logMemoryProfile(worker, model.getName(), profile->memory);
 }
 }

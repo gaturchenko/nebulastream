@@ -19,10 +19,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <numeric>
 #include <random>
+#include <utility>
 #include <vector>
+#include <unistd.h>
+#ifdef __GLIBC__
+    #include <malloc.h>
+#endif
 
+#include <Util/Logger/Logger.hpp>
 #include <ErrorHandling.hpp>
 #include <Inference.hpp>
 #include <InferenceRuntime.hpp>
@@ -48,6 +55,35 @@ void fillSyntheticInput(std::byte* input, const size_t inputSize)
         std::memcpy(input + (i * sizeof(float)), &value, sizeof(float));
     }
     std::memset(input + (numberOfFloats * sizeof(float)), 0, inputSize - (numberOfFloats * sizeof(float)));
+}
+
+/// Resident set size of this process. Reading it from /proc is cheap enough: it is only sampled around session setup, never on
+/// the inference path.
+size_t residentSetBytes()
+{
+    std::ifstream statm{"/proc/self/statm"};
+    size_t totalPages = 0;
+    size_t residentPages = 0;
+    if (!(statm >> totalPages >> residentPages))
+    {
+        return 0;
+    }
+    return residentPages * static_cast<size_t>(::sysconf(_SC_PAGE_SIZE));
+}
+
+/// Returns unused heap to the operating system so that the next measurement sees the memory of the session under test rather than
+/// the allocator's free lists. Without this, freeing a session would leave its memory resident and hide the next growth.
+void releaseFreedMemory()
+{
+#ifdef __GLIBC__
+    ::malloc_trim(0);
+#endif
+}
+
+size_t residentSetGrowth(const size_t before)
+{
+    const auto after = residentSetBytes();
+    return after > before ? after - before : 0;
 }
 
 BatchProfile profileBatchSize(
@@ -85,6 +121,60 @@ BatchProfile profileBatchSize(
         .minLatency = latencies.front()};
 }
 
+}
+
+SessionMemoryProfile measureSessionMemory(
+    const CompiledModel& model,
+    const size_t batchSize,
+    const InferenceRuntimeOptions& privateOptions,
+    const InferenceRuntimeOptions& sharedOptions)
+{
+    PRECONDITION(batchSize > 0, "Cannot measure a model invocation with an empty batch");
+    SessionMemoryProfile memory{
+        .measuredBatchSize = batchSize, .modelPayloadBytes = model.getData().size() + model.getAuxiliaryData().size(), .measured = true};
+
+    /// The very first session of a process also loads the backend's plugins and warms its allocators, which would otherwise be
+    /// attributed to the model. A throwaway session absorbs that one-time cost so the measurements below are per session.
+    {
+        InferenceRuntime warmup;
+        warmup.setup(model, batchSize, privateOptions);
+    }
+
+    const auto measureDeployment
+        = [&model, batchSize](InferenceRuntimeOptions deploymentOptions, size_t& firstSession, size_t& additionalSession)
+    {
+        releaseFreedMemory();
+        auto beforeFirst = residentSetBytes();
+        InferenceRuntime first;
+        first.setup(model, batchSize, deploymentOptions);
+        firstSession = residentSetGrowth(beforeFirst);
+
+        auto beforeSecond = residentSetBytes();
+        InferenceRuntime second;
+        second.setup(model, batchSize, deploymentOptions);
+        additionalSession = residentSetGrowth(beforeSecond);
+
+        return std::pair{first.getInputSize(), first.getOutputSize()};
+    };
+
+    releaseFreedMemory();
+    const auto beforeAssessment = residentSetBytes();
+    const auto [inputBufferBytes, outputBufferBytes]
+        = measureDeployment(privateOptions, memory.firstPrivateSessionBytes, memory.additionalPrivateSessionBytes);
+    memory.inputBufferBytes = inputBufferBytes;
+    memory.outputBufferBytes = outputBufferBytes;
+
+    measureDeployment(sharedOptions, memory.firstSharedSessionBytes, memory.additionalSharedSessionBytes);
+
+    /// Everything the assessment allocated is released once its sessions are gone. What stays resident is what the backend keeps
+    /// behind its own API, notably a compiled model it holds in a process-wide cache.
+    releaseFreedMemory();
+    NES_INFO(
+        "Memory assessment at batch size {} left {} B resident after its sessions were destroyed",
+        batchSize,
+        residentSetGrowth(beforeAssessment));
+
+    return memory;
 }
 
 ModelProfile profileModel(

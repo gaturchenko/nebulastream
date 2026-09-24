@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -30,6 +31,7 @@
 #include <Traits/PostJoinInferenceImplementationTrait.hpp>
 #include <ErrorHandling.hpp>
 #include <InferenceProfiler.hpp>
+#include <ModelCatalog.hpp>
 #include <ModelProfile.hpp>
 #include <QueryOptimizerConfiguration.hpp>
 
@@ -54,6 +56,9 @@ namespace NES
 ///
 /// The inference sequence operator, inserted before the batch size is known to restore the record order of batched inference, is
 /// removed below inference operators that end up invoking the model with single tuples.
+///
+/// Once an operator's invocation is decided, the worker assesses what the model costs in memory there, using sessions set up for
+/// the decided batch size.
 class InferenceImplementationSelector
 {
 public:
@@ -61,18 +66,26 @@ public:
 
     [[nodiscard]] LogicalPlan apply(const LogicalPlan& plan) const;
 
+    /// What inference with `model` costs in memory on `worker`, once a profiling job has assessed it.
+    [[nodiscard]] std::optional<InferenceMemoryProfile> getMemoryProfile(const Host& worker, const RegisteredModel& model) const;
+
 private:
-    /// Profiles are reused across queries that place the same model on the same worker, per batch size.
+    /// Profiles are reused across queries that place the same model on the same worker: invocation latencies per batch size, and
+    /// the memory assessment, which the worker only performs while it is not cached yet.
     struct ProfileCache
     {
         std::mutex mutex;
         std::map<std::tuple<std::string, std::string, std::string, size_t>, BatchProfile> profiles;
+        std::map<std::tuple<std::string, std::string, std::string>, InferenceMemoryProfile> memoryProfiles;
     };
 
     [[nodiscard]] LogicalOperator apply(const LogicalOperator& logicalOperator) const;
     [[nodiscard]] PostJoinInferenceImplementation
     selectPostJoinImplementation(const LogicalOperator& logicalOperator, const InferModelLogicalOperator& inferModel) const;
     [[nodiscard]] uint64_t selectBatchSize(const LogicalOperator& logicalOperator, const InferModelLogicalOperator& inferModel) const;
+    /// Assesses what the model costs in memory on the worker, with runtime sessions set up for the batch size the operator was
+    /// decided to use. Runs once per model and worker.
+    void assessMemory(const Host& worker, const InferModelLogicalOperator& inferModel, size_t deployedBatchSize) const;
     [[nodiscard]] std::expected<ModelProfile, Exception>
     getProfile(const Host& worker, const InferModelLogicalOperator& inferModel, const std::vector<size_t>& batchSizes) const;
 

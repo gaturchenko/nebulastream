@@ -72,7 +72,14 @@ public:
 
     std::expected<ModelProfile, Exception> profile(const Host& worker, const ModelProfilingRequest& request) override
     {
-        jobs.emplace_back(worker, request.batchSizes);
+        if (request.assessMemoryForBatchSize.has_value())
+        {
+            memoryJobs.emplace_back(worker, request.assessMemoryForBatchSize.value());
+        }
+        else
+        {
+            jobs.emplace_back(worker, request.batchSizes);
+        }
         if (failing)
         {
             return std::unexpected(InferenceRuntimeFailure("profiling failed"));
@@ -88,10 +95,26 @@ public:
                 .meanLatency = batchLatency,
                 .minLatency = batchLatency});
         }
+        if (request.assessMemoryForBatchSize.has_value())
+        {
+            profile.memory.session = SessionMemoryProfile{
+                .measuredBatchSize = request.assessMemoryForBatchSize.value(),
+                .modelPayloadBytes = 4096,
+                .inputBufferBytes = 3136,
+                .outputBufferBytes = 40,
+                .firstPrivateSessionBytes = 8 * 1024 * 1024,
+                .additionalPrivateSessionBytes = 6 * 1024 * 1024,
+                .firstSharedSessionBytes = 8 * 1024 * 1024,
+                .additionalSharedSessionBytes = 1024 * 1024,
+                .measured = true};
+            profile.memory.worker = WorkerMemoryProfile{
+                .physicalMemoryBytes = 8UL * 1024 * 1024 * 1024, .bufferPoolBytes = 1024 * 1024, .numberOfWorkerThreads = 4};
+        }
         return profile;
     }
 
     std::function<std::chrono::nanoseconds(size_t)> latency;
+    std::vector<std::pair<Host, size_t>> memoryJobs;
     bool failing = false;
     std::vector<std::pair<Host, std::vector<size_t>>> jobs;
 };
@@ -455,6 +478,61 @@ TEST_F(InferenceImplementationSelectorTest, RemovesInferenceSequenceForSingleTup
     ASSERT_EQ(singleTuplePlan.getRootOperators().front().getChildren().size(), 1);
     EXPECT_TRUE(
         singleTuplePlan.getRootOperators().front().getChildren().front().tryGetAs<WindowedAggregationLogicalOperator>().has_value());
+}
+
+/// The memory assessment costs extra runtime sessions on the worker, so it must happen once per model and worker, and the sessions
+/// must be set up for the batch size the operator was decided to use.
+TEST_F(InferenceImplementationSelectorTest, AssessesMemoryOncePerModelAndWorkerForTheSelectedBatchSize)
+{
+    auto profiler = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{1000}, std::chrono::microseconds{200}));
+    const InferenceImplementationSelector selector{createBatchSizeConfiguration(), profiler};
+
+    const auto plan = selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)));
+    ASSERT_EQ(getSelectedBatchSize(plan), 16);
+    ASSERT_EQ(profiler->memoryJobs.size(), 1);
+    EXPECT_EQ(profiler->memoryJobs.front().first, worker);
+    EXPECT_EQ(profiler->memoryJobs.front().second, 16);
+
+    const auto memory = selector.getMemoryProfile(worker, loadVarsizedModel());
+    ASSERT_TRUE(memory.has_value());
+    EXPECT_TRUE(memory->session.measured);
+    EXPECT_EQ(memory->session.measuredBatchSize, 16);
+    EXPECT_EQ(memory->session.privateDeploymentBytes(4), (8 * 1024 * 1024) + (3 * 6 * 1024 * 1024));
+    EXPECT_EQ(memory->session.sharedDeploymentBytes(4), (8 * 1024 * 1024) + (3 * 1024 * 1024));
+
+    /// A second query still profiles latencies it has not measured yet, but does not assess the memory again.
+    (void)selector.apply(createWindowedInferencePlan(createSlidingWindow(35, 10)));
+    EXPECT_EQ(profiler->memoryJobs.size(), 1);
+    EXPECT_FALSE(selector.getMemoryProfile(Host{"worker-2:8080"}, loadVarsizedModel()).has_value());
+}
+
+/// Post-join inference invokes the model with one batch of k payloads or with single tuples, and the assessment follows that choice.
+TEST_F(InferenceImplementationSelectorTest, AssessesMemoryForThePostJoinInvocation)
+{
+    auto batching = std::make_shared<FakeInferenceProfiler>(std::chrono::nanoseconds{100}, std::chrono::nanoseconds{120});
+    const InferenceImplementationSelector batchedSelector{createConfiguration(PostJoinInferenceStrategy::OPTIMIZER_CHOOSES), batching};
+    (void)batchedSelector.apply(createPostJoinInferencePlan({"s1$pixels", "s2$pixels", "s3$pixels"}, worker));
+    ASSERT_EQ(batching->memoryJobs.size(), 1);
+    EXPECT_EQ(batching->memoryJobs.front().second, 3);
+
+    auto sequential = std::make_shared<FakeInferenceProfiler>(std::chrono::nanoseconds{100}, std::chrono::nanoseconds{195});
+    const InferenceImplementationSelector sequentialSelector{createConfiguration(PostJoinInferenceStrategy::OPTIMIZER_CHOOSES), sequential};
+    (void)sequentialSelector.apply(createPostJoinInferencePlan({"s1$pixels", "s2$pixels"}, worker));
+    ASSERT_EQ(sequential->memoryJobs.size(), 1);
+    EXPECT_EQ(sequential->memoryJobs.front().second, 1);
+}
+
+TEST_F(InferenceImplementationSelectorTest, DoesNotAssessMemoryWithoutADecisionToMake)
+{
+    auto profiler = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{1000}, std::chrono::microseconds{200}));
+
+    const InferenceImplementationSelector fixedBatchSize{QueryOptimizerConfiguration{}, profiler};
+    (void)fixedBatchSize.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)));
+
+    const InferenceImplementationSelector fixedPostJoin{createConfiguration(PostJoinInferenceStrategy::BATCHED), profiler};
+    (void)fixedPostJoin.apply(createPostJoinInferencePlan({"s1$pixels", "s2$pixels"}, worker));
+
+    EXPECT_TRUE(profiler->memoryJobs.empty());
 }
 
 }

@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ranges>
 #include <vector>
 
@@ -40,6 +41,10 @@ void serializeModelProfilingRequest(const ModelProfilingRequest& request, Profil
     }
     serialized->set_warmupiterations(request.warmupIterations);
     serialized->set_measurementiterations(request.measurementIterations);
+    if (request.assessMemoryForBatchSize.has_value())
+    {
+        serialized->set_assessmemoryforbatchsize(request.assessMemoryForBatchSize.value());
+    }
 }
 
 ModelProfilingRequest deserializeModelProfilingRequest(const ProfileModelRequest& serialized)
@@ -54,7 +59,10 @@ ModelProfilingRequest deserializeModelProfilingRequest(const ProfileModelRequest
         .batchSizes = serialized.batchsizes() | std::views::transform([](const uint64_t size) { return static_cast<size_t>(size); })
             | std::ranges::to<std::vector>(),
         .warmupIterations = serialized.warmupiterations(),
-        .measurementIterations = serialized.measurementiterations()};
+        .measurementIterations = serialized.measurementiterations(),
+        .assessMemoryForBatchSize = serialized.has_assessmemoryforbatchsize()
+            ? std::optional{static_cast<size_t>(serialized.assessmemoryforbatchsize())}
+            : std::nullopt};
 }
 
 void serializeModelProfile(const ModelProfile& profile, ProfileModelReply* serialized)
@@ -68,6 +76,28 @@ void serializeModelProfile(const ModelProfile& profile, ProfileModelReply* seria
         batchProfile->set_meanlatencyinnanoseconds(batch.meanLatency.count());
         batchProfile->set_minlatencyinnanoseconds(batch.minLatency.count());
     }
+
+    auto* sessionMemory = serialized->mutable_sessionmemory();
+    sessionMemory->set_measuredbatchsize(profile.memory.session.measuredBatchSize);
+    sessionMemory->set_modelpayloadbytes(profile.memory.session.modelPayloadBytes);
+    sessionMemory->set_inputbufferbytes(profile.memory.session.inputBufferBytes);
+    sessionMemory->set_outputbufferbytes(profile.memory.session.outputBufferBytes);
+    sessionMemory->set_firstprivatesessionbytes(profile.memory.session.firstPrivateSessionBytes);
+    sessionMemory->set_additionalprivatesessionbytes(profile.memory.session.additionalPrivateSessionBytes);
+    sessionMemory->set_firstsharedsessionbytes(profile.memory.session.firstSharedSessionBytes);
+    sessionMemory->set_additionalsharedsessionbytes(profile.memory.session.additionalSharedSessionBytes);
+    sessionMemory->set_measured(profile.memory.session.measured);
+
+    auto* cacheMemory = serialized->mutable_predictioncachememory();
+    cacheMemory->set_entries(profile.memory.predictionCache.entries);
+    cacheMemory->set_bytesperentry(profile.memory.predictionCache.bytesPerEntry);
+    cacheMemory->set_threadlocalbytes(profile.memory.predictionCache.threadLocalBytes);
+    cacheMemory->set_globalbytes(profile.memory.predictionCache.globalBytes);
+
+    auto* workerMemory = serialized->mutable_workermemory();
+    workerMemory->set_physicalmemorybytes(profile.memory.worker.physicalMemoryBytes);
+    workerMemory->set_bufferpoolbytes(profile.memory.worker.bufferPoolBytes);
+    workerMemory->set_numberofworkerthreads(profile.memory.worker.numberOfWorkerThreads);
 }
 
 ModelProfile deserializeModelProfile(const ProfileModelReply& serialized)
@@ -82,6 +112,29 @@ ModelProfile deserializeModelProfile(const ProfileModelReply& serialized)
             .meanLatency = std::chrono::nanoseconds{batch.meanlatencyinnanoseconds()},
             .minLatency = std::chrono::nanoseconds{batch.minlatencyinnanoseconds()}});
     }
+
+    profile.memory.session = SessionMemoryProfile{
+        .measuredBatchSize = serialized.sessionmemory().measuredbatchsize(),
+        .modelPayloadBytes = serialized.sessionmemory().modelpayloadbytes(),
+        .inputBufferBytes = serialized.sessionmemory().inputbufferbytes(),
+        .outputBufferBytes = serialized.sessionmemory().outputbufferbytes(),
+        .firstPrivateSessionBytes = serialized.sessionmemory().firstprivatesessionbytes(),
+        .additionalPrivateSessionBytes = serialized.sessionmemory().additionalprivatesessionbytes(),
+        .firstSharedSessionBytes = serialized.sessionmemory().firstsharedsessionbytes(),
+        .additionalSharedSessionBytes = serialized.sessionmemory().additionalsharedsessionbytes(),
+        .measured = serialized.sessionmemory().measured()};
+
+    profile.memory.predictionCache = PredictionCacheMemoryProfile{
+        .entries = serialized.predictioncachememory().entries(),
+        .bytesPerEntry = serialized.predictioncachememory().bytesperentry(),
+        .threadLocalBytes = serialized.predictioncachememory().threadlocalbytes(),
+        .globalBytes = serialized.predictioncachememory().globalbytes()};
+
+    profile.memory.worker = WorkerMemoryProfile{
+        .physicalMemoryBytes = serialized.workermemory().physicalmemorybytes(),
+        .bufferPoolBytes = serialized.workermemory().bufferpoolbytes(),
+        .numberOfWorkerThreads = serialized.workermemory().numberofworkerthreads()};
+
     return profile;
 }
 

@@ -26,6 +26,7 @@
 #include <cstring>
 #include <functional>
 #include <ios>
+#include <memory>
 #include <mutex>
 #include <numeric>
 #include <sstream>
@@ -70,6 +71,10 @@ ov::Shape makeRuntimeShape(std::vector<size_t> shape, size_t batchSize)
     return ov::Shape(shape.begin(), shape.end());
 }
 
+}
+
+namespace NES::detail
+{
 /// Identifies a compiled artifact for the shared-compiled-model cache. Anything that
 /// changes the compiled result must appear here: the model bytes (hash + length, to
 /// keep collisions astronomically unlikely without storing weight-sized keys) and
@@ -110,6 +115,37 @@ struct CompiledModelKeyHash
 
 namespace NES
 {
+
+namespace detail
+{
+/// The process-wide OpenVINO runtime state: one core, the models compiled from it, and the lock guarding both. They are only
+/// touched while a session is set up, never on the inference path.
+ov::Core& openVinoCore()
+{
+    static ov::Core core;
+    return core;
+}
+
+std::mutex& openVinoCoreMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+SharedCompiledModels& sharedCompiledModels()
+{
+    static SharedCompiledModels models;
+    return models;
+}
+}
+
+size_t liveSharedCompiledModelCount()
+{
+    const std::scoped_lock lock(detail::openVinoCoreMutex());
+    return static_cast<size_t>(
+        std::ranges::count_if(detail::sharedCompiledModels(), [](const auto& entry) { return !entry.second.expired(); }));
+}
+
 RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t batchSize, const InferenceRuntimeOptions& options)
 {
     /// NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) byte-to-text for OpenVINO XML payload
@@ -117,13 +153,17 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
     std::vector<std::uint8_t> modelBin(model.getAuxiliaryData().size());
     std::ranges::transform(model.getAuxiliaryData(), modelBin.begin(), [](std::byte value) { return static_cast<std::uint8_t>(value); });
 
-    static ov::Core sharedCore;
-    static std::mutex coreMutex;
+    auto& sharedCore = detail::openVinoCore();
+    auto& coreMutex = detail::openVinoCoreMutex();
     /// Cache of compiled models shared across worker-thread sessions and inference
     /// operators, guarded by coreMutex (only touched at setup, never on the infer
     /// hot path). Enabled by openvino_share_compiled_model; otherwise every session
     /// compiles its own private copy exactly as before.
-    static std::unordered_map<CompiledModelKey, ov::CompiledModel, CompiledModelKeyHash> compiledModelCache;
+    ///
+    /// The entries are weak: the cache lets live sessions share one compiled model, it does not keep one alive. An entry whose
+    /// sessions have all been destroyed is dropped at the next setup, so a model that was only compiled to be measured does not
+    /// stay resident for the rest of the process.
+    auto& compiledModelCache = detail::sharedCompiledModels();
 
     auto runtimeInputShape = model.getInputShape();
     auto runtimeOutputShape = model.getOutputShape();
@@ -167,10 +207,9 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
     ov::CompiledModel compiledModel;
     if (options.openvinoShareCompiledModel)
     {
-        const CompiledModelKey key{
+        const detail::CompiledModelKey key{
             .dataHash = std::hash<std::string_view>{}(std::string_view(modelXml)),
-            .auxHash = std::hash<std::string_view>{}(
-                std::string_view(reinterpret_cast<const char*>(modelBin.data()), modelBin.size())),
+            .auxHash = std::hash<std::string_view>{}(std::string_view(reinterpret_cast<const char*>(modelBin.data()), modelBin.size())),
             .dataSize = modelXml.size(),
             .auxSize = modelBin.size(),
             .batchSize = batchSize,
@@ -178,15 +217,18 @@ RuntimeMetadata OpenVinoRuntimeBackend::setup(const CompiledModel& model, size_t
             .numStreams = static_cast<int>(options.openvinoNumStreams),
             .pinning = options.openvinoEnableCpuPinning,
             .dynamicBatch = dynamicBatchEnabled};
+        std::erase_if(compiledModelCache, [](const auto& entry) { return entry.second.expired(); });
         if (const auto it = compiledModelCache.find(key); it != compiledModelCache.end())
         {
-            compiledModel = it->second;
+            sharedCompiledModel = it->second.lock();
         }
-        else
+        if (!sharedCompiledModel)
         {
-            compiledModel = compile();
-            compiledModelCache.emplace(key, compiledModel);
+            sharedCompiledModel = std::make_shared<ov::CompiledModel>(compile());
+            compiledModelCache.insert_or_assign(key, sharedCompiledModel);
         }
+        /// This session keeps its compiled model alive through `sharedCompiledModel` for as long as the session exists.
+        compiledModel = *sharedCompiledModel;
     }
     else
     {
@@ -221,9 +263,7 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
         if (inputBufferSize % inputTupleSize != 0)
         {
             throw NES::InferenceRuntimeFailure(
-                "Model Execution failed. Input buffer size {} B is not a multiple of tuple size {} B",
-                inputBufferSize,
-                inputTupleSize);
+                "Model Execution failed. Input buffer size {} B is not a multiple of tuple size {} B", inputBufferSize, inputTupleSize);
         }
         const auto currentBatchSize = inputBufferSize / inputTupleSize;
         currentInputShape.front() = currentBatchSize;
@@ -241,7 +281,8 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
     {
         if (currentInputShape != inputShape || currentOutputShape != outputShape)
         {
-            throw NES::InferenceRuntimeFailure("Model Execution failed. OpenVINO runtime was set up with static batch size {}", inputShape.front());
+            throw NES::InferenceRuntimeFailure(
+                "Model Execution failed. OpenVINO runtime was set up with static batch size {}", inputShape.front());
         }
         prepareExternalTensors(inputShape, outputShape, inputBuffer, outputBuffer);
         inferRequest.infer();
@@ -262,10 +303,7 @@ void OpenVinoRuntimeBackend::infer(std::byte* inputBuffer, size_t inputBufferSiz
 }
 
 void OpenVinoRuntimeBackend::prepareExternalTensors(
-    const ov::Shape& currentInputShape,
-    const ov::Shape& currentOutputShape,
-    std::byte* inputBuffer,
-    std::byte* outputBuffer)
+    const ov::Shape& currentInputShape, const ov::Shape& currentOutputShape, std::byte* inputBuffer, std::byte* outputBuffer)
 {
     if (!usingExternalTensors || externalInputBuffer != inputBuffer || inputTensor.get_shape() != currentInputShape)
     {
