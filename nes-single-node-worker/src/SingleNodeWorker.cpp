@@ -234,10 +234,7 @@ std::expected<ModelProfile, Exception> SingleNodeWorker::profileModel(const Mode
 {
     CPPTRACE_TRY
     {
-        return profileInferenceModel(
-            request,
-            configuration.workerConfiguration.defaultQueryExecution,
-            configuration.workerConfiguration.queryEngine.numberOfWorkerThreads.getValue());
+        return profileInferenceModel(request, configuration.workerConfiguration);
     }
     CPPTRACE_CATCH(...)
     {

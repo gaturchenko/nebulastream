@@ -21,3 +21,8 @@ endfunction()
 
 add_nes_test_inference(ModelLoaderTest ModelLoaderTest.cpp)
 add_nes_test_inference(ModelCatalogTest ModelCatalogTest.cpp)
+
+if (NES_ENABLE_OPENVINO_INFERENCE_BACKEND)
+    add_nes_test(SharedCompiledModelTest SharedCompiledModelTest.cpp)
+    target_link_libraries(SharedCompiledModelTest nes-inference nes-inference-runtime)
+endif ()

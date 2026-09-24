@@ -34,6 +34,20 @@ struct ProfiledInvocationOptions
 /// Measures the latency of single model invocations: for every requested batch size, a fresh runtime session is set up exactly
 /// as a worker thread would set it up, warmed up and then invoked `measurementIterations` times on a deterministic synthetic
 /// input. Only the backend invocation is timed, setup and input preparation are not.
+/// Measures how much memory the runtime sessions of a model need, once with every session compiling its own copy of the model
+/// (`privateOptions`) and once with the sessions sharing one compiled model (`sharedOptions`). Both option sets must be the ones
+/// the deployed sessions would be set up with, because the backend compiles a shared model differently: one stream per worker
+/// thread in a throughput deployment rather than a single-stream latency one. Each step sets up a session and records the growth of the process's resident
+/// set, so the numbers include everything the backend allocates behind its own API.
+///
+/// The backend's cache of shared compiled models references them weakly, so neither does a model compiled by an earlier session
+/// distort this measurement, nor does the one compiled here outlive the sessions that measured it.
+[[nodiscard]] SessionMemoryProfile measureSessionMemory(
+    const CompiledModel& model,
+    size_t batchSize,
+    const InferenceRuntimeOptions& privateOptions,
+    const InferenceRuntimeOptions& sharedOptions);
+
 [[nodiscard]] ModelProfile profileModel(
     const CompiledModel& model,
     const std::vector<size_t>& batchSizes,

@@ -16,7 +16,9 @@
 
 #include <cstddef>
 
+#include <Configuration/WorkerConfiguration.hpp>
 #include <Inference.hpp>
+#include <InferenceConfiguration.hpp>
 #include <ModelProfile.hpp>
 #include <QueryExecutionConfiguration.hpp>
 
@@ -29,9 +31,18 @@ namespace NES
 /// Whether batched inference operators lowered under `configuration` let the backend run partially filled batches.
 [[nodiscard]] bool usesDynamicInferenceBatches(const QueryExecutionConfiguration& configuration);
 
-/// Executes a profiling job on this worker: compiles the model and measures its invocation latency per requested batch size with
-/// the runtime options the lowered inference operators would use on a worker with `numberOfWorkerThreads` threads.
-[[nodiscard]] ModelProfile
-profileInferenceModel(const ModelProfilingRequest& request, const QueryExecutionConfiguration& configuration, size_t numberOfWorkerThreads);
+/// Memory the prediction cache of one inference operator needs, for both scopes. The record and prediction bytes of the entries
+/// are exact; the bookkeeping per entry is approximated, which is negligible for the models NES targets, where one cached record
+/// is orders of magnitude larger than its metadata.
+[[nodiscard]] PredictionCacheMemoryProfile estimatePredictionCacheMemory(
+    PredictionCacheType cacheType, size_t entries, size_t inputBytes, size_t outputBytes, size_t numberOfWorkerThreads);
+
+/// The worker's physical memory and what its global buffer pool reserves of it.
+[[nodiscard]] WorkerMemoryProfile getWorkerMemoryProfile(const WorkerConfiguration& configuration);
+
+/// Executes a profiling job on this worker: compiles the model, measures its invocation latency per requested batch size with the
+/// runtime options the lowered inference operators would use, and reports what the model and its prediction cache would cost in
+/// memory on this worker.
+[[nodiscard]] ModelProfile profileInferenceModel(const ModelProfilingRequest& request, const WorkerConfiguration& configuration);
 
 }

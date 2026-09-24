@@ -105,6 +105,7 @@ message ProfileModelRequest {
   repeated uint64 batchSizes = 2;
   uint64 warmupIterations = 3;
   uint64 measurementIterations = 4;
+  optional uint64 assessMemoryForBatchSize = 5;
 }
 
 message BatchProfile {
@@ -115,6 +116,34 @@ message BatchProfile {
   uint64 minLatencyInNanoSeconds = 5;
 }
 
+message SessionMemoryProfile {
+  uint64 measuredBatchSize = 1;
+  uint64 modelPayloadBytes = 2;
+  uint64 inputBufferBytes = 3;
+  uint64 outputBufferBytes = 4;
+  uint64 firstPrivateSessionBytes = 5;
+  uint64 additionalPrivateSessionBytes = 6;
+  uint64 firstSharedSessionBytes = 7;
+  uint64 additionalSharedSessionBytes = 8;
+  bool measured = 9;
+}
+
+message PredictionCacheMemoryProfile {
+  uint64 entries = 1;
+  uint64 bytesPerEntry = 2;
+  uint64 threadLocalBytes = 3;
+  uint64 globalBytes = 4;
+}
+
+message WorkerMemoryProfile {
+  uint64 physicalMemoryBytes = 1;
+  uint64 bufferPoolBytes = 2;
+  uint64 numberOfWorkerThreads = 3;
+}
+
 message ProfileModelReply {
   repeated BatchProfile batches = 1;
+  SessionMemoryProfile sessionMemory = 2;
+  PredictionCacheMemoryProfile predictionCacheMemory = 3;
+  WorkerMemoryProfile workerMemory = 4;
 }

@@ -16,8 +16,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <openvino/core/shape.hpp>
 #include <openvino/core/type/element_type.hpp>
+#include <openvino/runtime/compiled_model.hpp>
+#include <openvino/runtime/core.hpp>
 #include <openvino/runtime/infer_request.hpp>
 #include <openvino/runtime/tensor.hpp>
 #include <Model.hpp>
@@ -25,6 +30,22 @@
 
 namespace NES
 {
+
+namespace detail
+{
+struct CompiledModelKey;
+struct CompiledModelKeyHash;
+/// Compiled models that live sessions share, referenced weakly so that an entry does not outlive the sessions using it.
+using SharedCompiledModels = std::unordered_map<CompiledModelKey, std::weak_ptr<ov::CompiledModel>, CompiledModelKeyHash>;
+
+ov::Core& openVinoCore();
+std::mutex& openVinoCoreMutex();
+SharedCompiledModels& sharedCompiledModels();
+}
+
+/// Number of compiled models that are currently shared by live sessions. Entries of destroyed sessions are not counted.
+[[nodiscard]] size_t liveSharedCompiledModelCount();
+
 class OpenVinoRuntimeBackend final : public RuntimeBackend
 {
 public:
@@ -36,12 +57,11 @@ public:
 
 private:
     void prepareExternalTensors(
-        const ov::Shape& currentInputShape,
-        const ov::Shape& currentOutputShape,
-        std::byte* inputBuffer,
-        std::byte* outputBuffer);
+        const ov::Shape& currentInputShape, const ov::Shape& currentOutputShape, std::byte* inputBuffer, std::byte* outputBuffer);
     void prepareOwnedTensors(const ov::Shape& currentInputShape, const ov::Shape& currentOutputShape);
 
+    /// Keeps the shared compiled model of this session alive; the process-wide cache only references it weakly.
+    std::shared_ptr<ov::CompiledModel> sharedCompiledModel;
     ov::InferRequest inferRequest;
     ov::element::Type inputElementType;
     ov::Shape inputShape;
