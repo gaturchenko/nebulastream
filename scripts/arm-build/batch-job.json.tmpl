@@ -1,0 +1,65 @@
+{
+  "taskGroups": [
+    {
+      "taskSpec": {
+        "runnables": [
+          {
+            "container": {
+              "imageUri": "ubuntu:24.04",
+              "entrypoint": "/bin/bash",
+              "commands": [
+                "-c",
+                "set -euo pipefail; export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y -qq --no-install-recommends curl ca-certificates python3 >/dev/null; TOKEN=$(curl -sf -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import sys,json;print(json.load(sys.stdin)[\"access_token\"])'); curl -fsSL -H \"Authorization: Bearer ${TOKEN}\" -o /work/build_nes_arm.sh '@BUILD_SCRIPT_URL@'; exec bash /work/build_nes_arm.sh"
+              ],
+              "volumes": ["/var/tmp/nes-build:/work"],
+              "options": "--network=host"
+            },
+            "environment": {
+              "variables": {
+                "NES_SOURCE_URI": "@SOURCE_URI@",
+                "NES_ARTIFACT_URI": "@ARTIFACT_URI@",
+                "NES_VCPKG_CACHE_URI": "@VCPKG_CACHE_URI@",
+                "NES_TARGETS": "@TARGETS@",
+                "NES_BUILD_TYPE": "@BUILD_TYPE@",
+                "NES_TRIPLET": "arm64-linux-none-local",
+                "JOBS": "@JOBS@"
+              }
+            }
+          }
+        ],
+        "computeResource": {
+          "cpuMilli": @CPU_MILLI@,
+          "memoryMib": @MEMORY_MIB@
+        },
+        "maxRunDuration": "@MAX_RUN_DURATION@",
+        "maxRetryCount": 2,
+        "lifecyclePolicies": [
+          {
+            "action": "RETRY_TASK",
+            "actionCondition": {
+              "exitCodes": [50001]
+            }
+          }
+        ]
+      },
+      "taskCount": 1,
+      "parallelism": 1
+    }
+  ],
+  "allocationPolicy": {
+    "instances": [
+      {
+        "policy": {
+          "machineType": "@MACHINE_TYPE@",
+          "provisioningModel": "@PROVISIONING_MODEL@",
+          "bootDisk": {
+            "sizeGb": @DISK_GB@
+          }
+        }
+      }
+    ]
+  },
+  "logsPolicy": {
+    "destination": "CLOUD_LOGGING"
+  }
+}

@@ -23,6 +23,11 @@ if (NOT _NES_TOOLCHAIN_FILE)
     endif ()
     if (VCPKG_TARGET_ARCHITECTURE STREQUAL "x64")
         set(CMAKE_SYSTEM_PROCESSOR x86_64 CACHE STRING "")
+    elseif (VCPKG_TARGET_ARCHITECTURE STREQUAL "arm64")
+        # Setting CMAKE_SYSTEM_NAME below disables CMake's own processor detection, so the processor has to be named here as
+        # well. Ports that branch on CMAKE_SYSTEM_PROCESSOR otherwise see an empty value and take their x86 path: nautilus,
+        # for instance, then misses its ARM guard and looks for an LLVM matching the clang version.
+        set(CMAKE_SYSTEM_PROCESSOR aarch64 CACHE STRING "")
     endif ()
     set(CMAKE_SYSTEM_NAME Linux CACHE STRING "")
 
