@@ -4,15 +4,18 @@
 The NES ``HttpSink`` writes a per-record timing CSV (``torchserve_timings.csv``) into
 each repetition directory, with columns::
 
-    seq_number,chunk_number,tuple_index,creation_ts_ms,post_ts_ms,recv_ts_ms,
+    seq_number,chunk_number,tuple_index,creation_ts_ms,post_ts_us,recv_ts_us,
     num_arrays,request_bytes,response_bytes,http_status
 
 All timestamps are wall-clock epoch milliseconds. From them we derive, per
 repetition:
 
-  * end-to-end latency  = recv_ts_ms - creation_ts_ms  (join-output-ready -> prediction back)
-  * round-trip latency  = recv_ts_ms - post_ts_ms      (the external serving hop)
-  * serialization time  = post_ts_ms - creation_ts_ms  (NES buffer -> request on the wire)
+  * end-to-end latency  = recv_ts - creation_ts  (join-output-ready -> prediction back)
+  * round-trip latency  = recv_ts - post_ts      (the external serving hop)
+  * serialization time  = post_ts - creation_ts  (NES buffer -> request on the wire)
+
+  post_ts/recv_ts are microseconds in current sink logs and milliseconds in older ones; both are
+  accepted and normalised to milliseconds. creation_ts is always milliseconds.
   * end-to-end throughput = records / (max(recv) - min(post)) seconds
 
 Optionally, if the runner captured a TorchServe Prometheus scrape at the start and
@@ -136,13 +139,25 @@ def parse_timings_csv(path: Path) -> List[Dict[str, float]]:
     return rows
 
 
+def _timestamps_ms(records: List[Dict[str, float]], field: str) -> "np.ndarray":
+    """Read <field>_us (preferred) or the legacy <field>_ms, returning milliseconds either way."""
+    if any(f"{field}_us" in record for record in records):
+        return np.array([(r.get(f"{field}_us") or 0.0) / 1000.0 for r in records], dtype=float)
+    return np.array([r.get(f"{field}_ms") or 0.0 for r in records], dtype=float)
+
+
 def summarize_timings(records: List[Dict[str, float]]) -> Optional[Dict[str, float]]:
     if not records:
         return None
 
     creation = np.array([r.get("creation_ts_ms") or 0.0 for r in records], dtype=float)
-    post = np.array([r.get("post_ts_ms") or 0.0 for r in records], dtype=float)
-    recv = np.array([r.get("recv_ts_ms") or 0.0 for r in records], dtype=float)
+    # The sink stamps post/recv in MICROseconds (a millisecond clock quantised the round trip into
+    # whole-millisecond steps). Older logs carry *_ms columns; accept both and work in ms, so every
+    # metric name below keeps meaning what it says. creation_ts stays milliseconds -- it is the
+    # TupleBuffer's own creation timestamp, which NES records in ms, so end-to-end latency keeps
+    # millisecond granularity no matter how finely the sink stamps its own two points.
+    post = _timestamps_ms(records, "post_ts")
+    recv = _timestamps_ms(records, "recv_ts")
     status = np.array([r.get("http_status") or 0.0 for r in records], dtype=float)
     req_bytes = np.array([r.get("request_bytes") or 0.0 for r in records], dtype=float)
     resp_bytes = np.array([r.get("response_bytes") or 0.0 for r in records], dtype=float)

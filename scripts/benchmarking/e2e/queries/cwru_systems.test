@@ -1,0 +1,110 @@
+#  CWRU bearing-vibration framework comparison (Flink+OpenVINO / NES / TorchServe).
+#
+#  Sibling of queries/waymo/systems.test, same query numbering so scripts/run_systems.sh can drive
+#  all workloads the same way:
+#    :01 UDF         -- kept for parity with the ablation tests; SUBSTITUTED in the comparison by the
+#                       Flink+OpenVINO baseline (baselines/.../scripts/run-pi-cwru-sarad.sh)
+#    :02 NES         -- MODEL_INFERENCE, latency sink
+#    :03 TorchServe  -- same preprocessing, HTTP sink to the TorchServe endpoint
+#
+#  Window geometry: the source is paced at 48 000 tuples/s, so SIZE 200 ms is exactly the model's
+#  9600-sample input and ADVANCE 100 ms is 4800 samples. ADVANCE is 100 ms rather than the 10 ms of
+#  ablation_cwru_lat.test: SARAD costs ~60 ms per inference on the Pi, so a 10 ms advance demands
+#  100 inferences/s = 6 core-seconds per second from 3 worker threads. All three systems saturate
+#  there and the P95 latency this comparison reports would measure queue backlog instead of
+#  per-system overhead. At 100 ms the offered load is 10 inferences/s -- the Waymo comparison's rate
+#  -- which every system serves at roughly 20% utilisation.
+#
+#  The Flink baseline must be run with the matching geometry (WINDOW_SAMPLES=9600,
+#  ADVANCE_SAMPLES=4800, RATE=48000, PARALLELISM=3) and on the same CSV.
+
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [3]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [4096]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [2048]
+
+CREATE LOGICAL SOURCE cwruSource(timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR cwruSource TYPE TCP SET(
+    48000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/cwru-bearing/X228_FE_time.csv
+
+CREATE SINK cwruVarsizedLatency(
+    anomaly_score VARSIZED NOT NULL,
+    ingestion_time UINT64 NOT NULL
+) TYPE LATENCY SET (
+    'results/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+# The HTTP sink opens one keep-alive connection per NES worker thread, so the client can keep as
+# many requests in flight as the engine has lanes. With a single connection the sink serialises
+# every request behind one socket and caps throughput at 1/service-time, which charges TorchServe
+# for a queue that is really ours. TorchServe must be given the matching number of workers --
+# run_systems.sh derives both from number_of_worker_threads above.
+CREATE SINK cwruVarsizedHttp(payload VARSIZED NOT NULL) TYPE Http SET(
+    8080 AS `SINK`.port,
+    3 AS `SINK`.connections,
+    'sarad' AS `SINK`.`model`,
+    'results/torchserve_timings.csv' AS `SINK`.log_path
+);
+
+CREATE MODEL sarad ('/home/gaturchenko/navi/models-benchmarking/models/sarad/sarad_medium.onnx')
+INPUT (value_200_ms VARSIZED)
+OUTPUT (anomaly_score VARSIZED);
+
+# UDF
+SELECT
+    SARAD_SIZE_200_STRIDE_10_UDF(value_200_ms) AS anomaly_score,
+    ingestion_time
+FROM (
+    SELECT
+        ARRAY_AGG(value) AS value_200_ms,
+        MAX(ingestion_time) AS ingestion_time
+    FROM (
+        SELECT timestamp, value, CURRENT_TIME() AS ingestion_time
+        FROM cwruSource
+    )
+    WINDOW SLIDING(timestamp, SIZE 200 ms, ADVANCE BY 100 ms)
+)
+INTO cwruVarsizedLatency;
+----
+
+# NES
+SELECT
+    anomaly_score,
+    ingestion_time
+FROM MODEL_INFERENCE(sarad, (
+        SELECT
+            ARRAY_AGG(value) AS value_200_ms,
+            MAX(ingestion_time) AS ingestion_time
+        FROM (
+            SELECT timestamp, value, CURRENT_TIME() AS ingestion_time
+            FROM cwruSource
+        )
+        WINDOW SLIDING(timestamp, SIZE 200 ms, ADVANCE BY 100 ms)
+    )
+)
+INTO cwruVarsizedLatency;
+----
+
+# TorchServe
+# The outer projection must ALIAS the aggregate: a windowed aggregation qualifies its output as
+# CWRUSOURCE$VALUE_200_MS, which no sink schema can name. The NES query above does not need this
+# because MODEL_INFERENCE rebuilds the schema from the model's OUTPUT declaration. The inner
+# CURRENT_TIME()/MAX pair is kept so this query does the same preprocessing work as the NES one.
+SELECT
+    value_200_ms AS payload
+FROM (
+    SELECT
+        ARRAY_AGG(value) AS value_200_ms,
+        MAX(ingestion_time) AS ingestion_time
+    FROM (
+        SELECT timestamp, value, CURRENT_TIME() AS ingestion_time
+        FROM cwruSource
+    )
+    WINDOW SLIDING(timestamp, SIZE 200 ms, ADVANCE BY 100 ms)
+)
+INTO cwruVarsizedHttp;
+----

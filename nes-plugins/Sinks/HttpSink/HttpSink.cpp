@@ -18,6 +18,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -55,10 +56,16 @@ namespace NES
 namespace
 {
 
-/// Milliseconds since the Unix epoch on the wall clock (comparable to TupleBuffer creation timestamps).
-std::int64_t nowMs()
+/// Microseconds since the Unix epoch on the wall clock.
+///
+/// Microseconds, not milliseconds: at these latencies a millisecond clock quantises the round trip
+/// into whole-millisecond steps, which shows up as suspiciously integral percentiles next to the
+/// LatencySink's microsecond ones. Note this only sharpens the two stamps the sink takes itself --
+/// end-to-end latency is measured against the TupleBuffer's creation timestamp, which NES records
+/// in milliseconds, so that span keeps millisecond granularity whatever this clock does.
+std::int64_t nowUs()
 {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 void appendLittleEndian(std::string& out, const std::uint32_t value)
@@ -107,6 +114,7 @@ HttpSink::HttpSink(BackpressureController backpressureController, const SinkDesc
     , port(static_cast<std::uint16_t>(sinkDescriptor.getFromConfig(ConfigParametersHttp::PORT)))
     , endpointPath("/predictions/" + sinkDescriptor.getFromConfig(ConfigParametersHttp::MODEL))
     , logPath(sinkDescriptor.getFromConfig(ConfigParametersHttp::LOG_PATH))
+    , connections(std::max<std::size_t>(1, sinkDescriptor.getFromConfig(ConfigParametersHttp::CONNECTIONS)))
 {
     /// Precompute the byte offset of every VARSIZED field's inline VariableSizedAccess within a tuple.
     /// The null-handling byte (if the field is nullable) precedes the value, so it is skipped.
@@ -121,13 +129,8 @@ HttpSink::HttpSink(BackpressureController backpressureController, const SinkDesc
     }
 }
 
-void HttpSink::connectSocket()
+int HttpSink::openConnection() const
 {
-    if (socketFd >= 0)
-    {
-        return;
-    }
-
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -160,19 +163,37 @@ void HttpSink::connectSocket()
     {
         throw CannotOpenSink("HttpSink: could not connect to {}:{}", host, port);
     }
-    socketFd = fd;
+    return fd;
 }
 
-void HttpSink::closeSocket() noexcept
+void HttpSink::closeConnection(int& fd) noexcept
 {
-    if (socketFd >= 0)
+    if (fd >= 0)
     {
-        ::close(socketFd);
-        socketFd = -1;
+        ::close(fd);
+        fd = -1;
     }
 }
 
-int HttpSink::postRecord(const std::string& body, std::size_t& responseBytes)
+std::size_t HttpSink::acquireConnection()
+{
+    std::unique_lock lock(poolMutex);
+    connectionReleased.wait(lock, [this] { return !freeConnections.empty(); });
+    const std::size_t slot = freeConnections.back();
+    freeConnections.pop_back();
+    return slot;
+}
+
+void HttpSink::releaseConnection(const std::size_t slot) noexcept
+{
+    {
+        const std::scoped_lock lock(poolMutex);
+        freeConnections.push_back(slot);
+    }
+    connectionReleased.notify_one();
+}
+
+int HttpSink::postRecord(const int fd, const std::string& body, std::size_t& responseBytes) const
 {
     responseBytes = 0;
 
@@ -184,7 +205,7 @@ int HttpSink::postRecord(const std::string& body, std::size_t& responseBytes)
     request += "Content-Length: " + std::to_string(body.size()) + "\r\n";
     request += "Connection: keep-alive\r\n\r\n";
 
-    if (!sendAll(socketFd, request.data(), request.size()) || !sendAll(socketFd, body.data(), body.size()))
+    if (!sendAll(fd, request.data(), request.size()) || !sendAll(fd, body.data(), body.size()))
     {
         return -1;
     }
@@ -195,7 +216,7 @@ int HttpSink::postRecord(const std::string& body, std::size_t& responseBytes)
     std::size_t headerEnd = std::string::npos;
     while (headerEnd == std::string::npos)
     {
-        const ssize_t n = ::recv(socketFd, buffer.data(), buffer.size(), 0);
+        const ssize_t n = ::recv(fd, buffer.data(), buffer.size(), 0);
         if (n <= 0)
         {
             if (n < 0 && errno == EINTR)
@@ -229,7 +250,7 @@ int HttpSink::postRecord(const std::string& body, std::size_t& responseBytes)
     std::size_t bodyReceived = response.size() - bodyStart;
     while (bodyReceived < contentLength)
     {
-        const ssize_t n = ::recv(socketFd, buffer.data(), buffer.size(), 0);
+        const ssize_t n = ::recv(fd, buffer.data(), buffer.size(), 0);
         if (n <= 0)
         {
             if (n < 0 && errno == EINTR)
@@ -258,21 +279,35 @@ void HttpSink::start(PipelineExecutionContext&)
     {
         throw CannotOpenSink("HttpSink: could not open timing log: logPath={}", logPath);
     }
-    logStream << "seq_number,chunk_number,tuple_index,creation_ts_ms,post_ts_ms,recv_ts_ms,num_arrays,request_bytes,response_bytes,"
+    logStream << "seq_number,chunk_number,tuple_index,creation_ts_ms,post_ts_us,recv_ts_us,num_arrays,request_bytes,response_bytes,"
                  "http_status\n";
 
-    connectSocket();
+    /// Open the whole pool up front. A connection established lazily under load would charge its
+    /// TCP handshake to the first request that needed it, which lands in the measured round trip.
+    connectionFds.assign(connections, -1);
+    freeConnections.clear();
+    freeConnections.reserve(connections);
+    for (std::size_t slot = 0; slot < connections; ++slot)
+    {
+        connectionFds[slot] = openConnection();
+        freeConnections.push_back(slot);
+    }
+    NES_DEBUG("HTTP sink opened {} keep-alive connection(s) to {}:{}", connections, host, port);
 }
 
 void HttpSink::stop(PipelineExecutionContext&)
 {
-    closeSocket();
+    for (auto& fd : connectionFds)
+    {
+        closeConnection(fd);
+    }
+    freeConnections.clear();
     if (logStream.is_open())
     {
         logStream.flush();
         logStream.close();
     }
-    NES_INFO("HTTP Sink completed. Records sent: {}", recordsSent);
+    NES_INFO("HTTP Sink completed. Records sent: {}", recordsSent.load());
 }
 
 void HttpSink::execute(const TupleBuffer& inputTupleBuffer, PipelineExecutionContext&)
@@ -290,11 +325,12 @@ void HttpSink::execute(const TupleBuffer& inputTupleBuffer, PipelineExecutionCon
     const auto chunkNumber = inputTupleBuffer.getChunkNumber().getRawValue();
     const auto numArrays = static_cast<std::uint32_t>(varSizedOffsets.size());
 
-    const std::scoped_lock lock(sendMutex);
     for (std::uint64_t tuple = 0; tuple < numberOfTuples; ++tuple)
     {
         const std::byte* record = base + (tuple * tupleSize);
 
+        /// Built before a connection is taken: body assembly touches only this buffer, so holding
+        /// a pooled socket across it would idle a lane that another thread could be using.
         std::string body;
         appendLittleEndian(body, numArrays);
         for (const auto fieldOffset : varSizedOffsets)
@@ -306,22 +342,38 @@ void HttpSink::execute(const TupleBuffer& inputTupleBuffer, PipelineExecutionCon
             body.append(reinterpret_cast<const char*>(content.data()), content.size());
         }
 
-        const std::int64_t postMs = nowMs();
+        const std::size_t slot = acquireConnection();
+        const std::int64_t postUs = nowUs();
         std::size_t responseBytes = 0;
-        int status = postRecord(body, responseBytes);
+        int status = postRecord(connectionFds[slot], body, responseBytes);
         if (status < 0)
         {
-            /// The persistent connection dropped (e.g. server closed keep-alive); reconnect and retry once.
-            closeSocket();
-            connectSocket();
-            status = postRecord(body, responseBytes);
+            /// This connection dropped (e.g. the server closed keep-alive); reopen it and retry
+            /// once. Only this slot is affected, so the other lanes keep running.
+            closeConnection(connectionFds[slot]);
+            try
+            {
+                connectionFds[slot] = openConnection();
+                status = postRecord(connectionFds[slot], body, responseBytes);
+            }
+            catch (...)
+            {
+                releaseConnection(slot);
+                throw;
+            }
         }
-        const std::int64_t recvMs = nowMs();
+        const std::int64_t recvUs = nowUs();
+        releaseConnection(slot);
 
-        logStream << sequenceNumber << ',' << chunkNumber << ',' << tuple << ',' << creationTs << ',' << postMs << ',' << recvMs << ','
-                  << numArrays << ',' << body.size() << ',' << responseBytes << ',' << status << '\n';
+        {
+            const std::scoped_lock logLock(logMutex);
+            logStream << sequenceNumber << ',' << chunkNumber << ',' << tuple << ',' << creationTs << ',' << postUs << ',' << recvUs << ','
+                      << numArrays << ',' << body.size() << ',' << responseBytes << ',' << status << '\n';
+        }
         ++recordsSent;
     }
+
+    const std::scoped_lock logLock(logMutex);
     logStream.flush();
 }
 

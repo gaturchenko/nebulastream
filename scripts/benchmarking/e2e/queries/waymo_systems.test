@@ -1,0 +1,61 @@
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [512]
+#GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1289748]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1437696]
+
+CREATE LOGICAL SOURCE waymoSource(timestamp UINT64, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR waymoSource TYPE TCP SET(
+  10 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/waymo/camera_5.csv
+
+CREATE SINK waymoVarsizedLatency(
+    detectedObjects VARSIZED NOT NULL,
+    ingestion_time UINT64 NOT NULL
+) TYPE LATENCY SET (
+    'results/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+# The HTTP sink opens one keep-alive connection per NES worker thread, so the client can keep as
+# many requests in flight as the engine has lanes. With a single connection the sink serialises
+# every request behind one socket and caps throughput at 1/service-time, which charges TorchServe
+# for a queue that is really ours. TorchServe must be given the matching number of workers --
+# run_systems.sh derives both from number_of_worker_threads above.
+CREATE SINK waymoVarsizedHttp(framePreprocessed VARSIZED NOT NULL) TYPE Http SET(
+    8080 AS `SINK`.port,
+    2 AS `SINK`.connections,
+    'squeezedet' AS `SINK`.`model`,
+    'results/torchserve_timings.csv' AS `SINK`.log_path
+);
+
+CREATE MODEL squeezedet ('/home/gaturchenko/navi/models-benchmarking/models/squeezedet/squeezedet.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (detectedObjects VARSIZED);
+
+# UDF
+SELECT SQUEEZEDET_UDF(
+    RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(120), UINT32(80))
+) AS detectedObjects, CURRENT_TIME() AS ingestion_time
+FROM waymoSource
+INTO waymoVarsizedLatency;
+----
+
+# NES
+SELECT detectedObjects, ingestion_time
+FROM MODEL_INFERENCE(squeezedet, (
+        SELECT
+            RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(120), UINT32(80)) AS framePreprocessed,
+	    CURRENT_TIME() AS ingestion_time
+        FROM waymoSource
+    )
+)
+INTO waymoVarsizedLatency;
+----
+
+# TorchServe
+SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(120), UINT32(80)) AS framePreprocessed
+FROM waymoSource
+INTO waymoVarsizedHttp;
+----

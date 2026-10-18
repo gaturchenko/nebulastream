@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -52,10 +54,20 @@ namespace NES
 ///     uint32 byteLength (LE)
 ///     byteLength raw bytes (the field content, i.e. IEEE-754 float32 little-endian)
 ///
-/// Requests are issued synchronously over a single persistent keep-alive connection guarded by a
-/// mutex; the round-trip therefore applies natural backpressure upstream. This serializes requests,
-/// which is the honest baseline against a single-worker TorchServe. For concurrent serving, run
-/// multiple sink instances / connections.
+/// Requests are issued synchronously: a worker thread blocks on its round trip, which applies
+/// natural backpressure upstream. How MANY may be in flight at once is the `connections` setting.
+///
+/// With `connections` = 1 (the default) every request is serialized behind one keep-alive socket.
+/// That measures a single-lane client, which is only a fair counterpart to a single-worker server;
+/// against a server with N workers it caps throughput at 1/service-time and charges the server for
+/// a queue that is really ours. With `connections` = N the sink keeps a pool of N keep-alive
+/// sockets, so up to N worker threads can have a request outstanding simultaneously. Set it to the
+/// query's worker-thread count AND give the server that many workers, or the comparison measures
+/// whichever side was left single-lane.
+///
+/// The pool mutex is held only while handing out and returning a socket -- never across a round
+/// trip -- so the requests themselves genuinely overlap. A thread that finds the pool empty waits
+/// for a peer to return one, which is what preserves the backpressure.
 class HttpSink final : public Sink
 {
 public:
@@ -77,14 +89,18 @@ protected:
     std::ostream& toString(std::ostream& os) const override { return os << "HttpSink"; }
 
 private:
-    /// (Re)establishes the persistent TCP connection to the HTTP server. Throws CannotOpenSink on failure.
-    void connectSocket();
-    /// Closes the persistent connection if open.
-    void closeSocket() noexcept;
-    /// Sends one POST with the given body over the persistent connection and drains the response.
+    /// Opens one keep-alive connection to the HTTP server. Throws CannotOpenSink on failure.
+    [[nodiscard]] int openConnection() const;
+    /// Closes a connection if open and sets the descriptor back to -1.
+    static void closeConnection(int& fd) noexcept;
+    /// Blocks until a pooled connection is free and returns its slot index.
+    [[nodiscard]] std::size_t acquireConnection();
+    /// Returns a slot to the pool and wakes one waiter.
+    void releaseConnection(std::size_t slot) noexcept;
+    /// Sends one POST with the given body over @p fd and drains the response.
     /// Returns the HTTP status code, or -1 if the connection failed (caller may reconnect + retry).
     /// Sets @p responseBytes to the response Content-Length on success.
-    [[nodiscard]] int postRecord(const std::string& body, std::size_t& responseBytes);
+    [[nodiscard]] int postRecord(int fd, const std::string& body, std::size_t& responseBytes) const;
 
     std::shared_ptr<const Schema> schema;
     std::size_t tupleSize;
@@ -96,10 +112,18 @@ private:
     std::string endpointPath;
     std::string logPath;
 
-    int socketFd = -1;
-    std::mutex sendMutex;
+    /// Pool of keep-alive sockets. Only the thread holding a slot touches that slot's descriptor,
+    /// so the descriptors themselves need no further synchronisation.
+    std::size_t connections;
+    std::vector<int> connectionFds;
+    std::vector<std::size_t> freeConnections;
+    std::mutex poolMutex;
+    std::condition_variable connectionReleased;
+
+    /// Separate from the pool: several threads finish round trips concurrently and all append here.
+    std::mutex logMutex;
     std::ofstream logStream;
-    std::uint64_t recordsSent = 0;
+    std::atomic<std::uint64_t> recordsSent{0};
 };
 
 /// NOLINTBEGIN(cert-err58-cpp)
@@ -121,6 +145,14 @@ struct ConfigParametersHttp
         std::nullopt,
         [](const std::unordered_map<std::string, std::string>& config) { return DescriptorConfig::tryGet(MODEL, config); }};
 
+    /// Keep-alive sockets held open, i.e. the maximum number of requests in flight at once.
+    /// 1 reproduces the original single-lane client; set it to the query's worker-thread count to
+    /// measure a server that has that many workers.
+    static inline const DescriptorConfig::ConfigParameter<std::size_t> CONNECTIONS{
+        "connections",
+        std::size_t{1},
+        [](const std::unordered_map<std::string, std::string>& config) { return DescriptorConfig::tryGet(CONNECTIONS, config); }};
+
     /// Path to the per-record timing CSV written by the sink.
     static inline const DescriptorConfig::ConfigParameter<std::string> LOG_PATH{
         "log_path",
@@ -128,7 +160,7 @@ struct ConfigParametersHttp
         [](const std::unordered_map<std::string, std::string>& config) { return DescriptorConfig::tryGet(LOG_PATH, config); }};
 
     static inline std::unordered_map<std::string, DescriptorConfig::ConfigParameterContainer> parameterMap
-        = DescriptorConfig::createConfigParameterContainerMap(HOST, PORT, MODEL, LOG_PATH);
+        = DescriptorConfig::createConfigParameterContainerMap(HOST, PORT, MODEL, CONNECTIONS, LOG_PATH);
 };
 /// NOLINTEND(cert-err58-cpp)
 

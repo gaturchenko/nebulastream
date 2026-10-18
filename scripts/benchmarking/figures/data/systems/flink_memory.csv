@@ -1,0 +1,4 @@
+workload,lanes,private_peak_rss_mb,shared_peak_rss_mb
+waymo,2,639.0,527.0
+cwru,3,2018.0,915.0
+musan,2,2252.0,1316.0

@@ -1,0 +1,112 @@
+#  MUSAN audio framework comparison (Flink+OpenVINO / NES / TorchServe).
+#
+#  Sibling of queries/waymo/systems.test, same query numbering so scripts/run_systems.sh can drive
+#  all workloads the same way:
+#    :01 UDF         -- kept for parity with the ablation tests; SUBSTITUTED in the comparison by the
+#                       Flink+OpenVINO baseline (baselines/.../scripts/run-pi-musan-mhatt.sh)
+#    :02 NES         -- MODEL_INFERENCE, latency sink
+#    :03 TorchServe  -- same preprocessing, HTTP sink to the TorchServe endpoint
+#
+#  ONE audio stream, unlike ablation_musan_lat.test: the framework comparison measures per-system
+#  overhead on a single inference pipeline, so the three-source join (and with it the post-join
+#  batching question the ablation studies) is deliberately out of scope here.
+#
+#  Window geometry: the source is paced at 16 000 tuples/s, so SIZE 1 sec is exactly the model's
+#  16000-sample input and ADVANCE 333 ms is 5328 samples -- 3 inferences/s against ~82 ms per
+#  inference, i.e. an unsaturated operating point on 2 worker threads. The Flink baseline must be
+#  run with the matching geometry (WINDOW_SAMPLES=16000, ADVANCE_SAMPLES=5328, RATE=16000,
+#  PARALLELISM=2) and on the same CSV.
+#
+#  The 60 s subset keeps a run to about a minute per system; the full capture is 583 s.
+
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [16384]
+GlobalConfiguration worker.default_max_inflight_buffers: [16]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [12228]
+
+CREATE LOGICAL SOURCE musanSource0242(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+CREATE PHYSICAL SOURCE FOR musanSource0242 TYPE TCP SET(
+    16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/musan/musan-us-gov-0242-60s.csv
+
+CREATE SINK musanVarsizedLatency(
+    keywordProb VARSIZED NOT NULL,
+    ingestion_time UINT64 NOT NULL
+) TYPE LATENCY SET (
+    'results/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+# The HTTP sink opens one keep-alive connection per NES worker thread, so the client can keep as
+# many requests in flight as the engine has lanes. With a single connection the sink serialises
+# every request behind one socket and caps throughput at 1/service-time, which charges TorchServe
+# for a queue that is really ours. TorchServe must be given the matching number of workers --
+# run_systems.sh derives both from number_of_worker_threads above.
+CREATE SINK musanVarsizedHttp(payload VARSIZED NOT NULL) TYPE Http SET(
+    8080 AS `SINK`.port,
+    2 AS `SINK`.connections,
+    'mhatt_rnn' AS `SINK`.`model`,
+    'results/torchserve_timings.csv' AS `SINK`.log_path
+);
+
+CREATE MODEL mhatt_rnn ('/home/gaturchenko/navi/models-benchmarking/models/mhatt-rnn/saved_model')
+INPUT (audio1sec VARSIZED)
+OUTPUT (keywordProb VARSIZED);
+
+# UDF
+SELECT
+    MHATT_RNN_UDF(audio1sec) AS keywordProb,
+    ingestion_time
+FROM (
+    SELECT
+        ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec,
+        MAX(ingestion_time) AS ingestion_time
+    FROM (
+        SELECT timestamp, audioSample, CURRENT_TIME() AS ingestion_time
+        FROM musanSource0242
+    )
+    WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+)
+INTO musanVarsizedLatency;
+----
+
+# NES
+SELECT
+    keywordProb,
+    ingestion_time
+FROM MODEL_INFERENCE(mhatt_rnn, (
+        SELECT
+            ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec,
+            MAX(ingestion_time) AS ingestion_time
+        FROM (
+            SELECT timestamp, audioSample, CURRENT_TIME() AS ingestion_time
+            FROM musanSource0242
+        )
+        WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+    )
+)
+INTO musanVarsizedLatency;
+----
+
+# TorchServe
+# The outer projection must ALIAS the aggregate: a windowed aggregation qualifies its output as
+# MUSANSOURCE0242$AUDIO1SEC, which no sink schema can name. The NES query above does not need this
+# because MODEL_INFERENCE rebuilds the schema from the model's OUTPUT declaration. The inner
+# CURRENT_TIME()/MAX pair is kept so this query does the same preprocessing work as the NES one.
+SELECT
+    audio1sec AS payload
+FROM (
+    SELECT
+        ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec,
+        MAX(ingestion_time) AS ingestion_time
+    FROM (
+        SELECT timestamp, audioSample, CURRENT_TIME() AS ingestion_time
+        FROM musanSource0242
+    )
+    WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+)
+INTO musanVarsizedHttp;
+----

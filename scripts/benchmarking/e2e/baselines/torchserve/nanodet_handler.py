@@ -15,8 +15,9 @@ So no image decoding or normalization happens here — the handler only reshapes
 ``(1, 3, H, W)`` and runs the model. This mirrors what the NES ``MODEL_INFERENCE``
 path does (feed the tensor straight to the model), keeping the comparison fair.
 
-The model is an ONNX file, executed with onnxruntime (not torch), so this handler
-overrides ``initialize`` to build an ``ort.InferenceSession`` from the archived file.
+The model is an ONNX file, executed with OpenVINO (not torch), so this handler overrides
+``initialize`` to build a compiled OpenVINO model from the archived file. Every system in the
+comparison runs OpenVINO so the measurement isolates serving overhead (see squeezedet_handler.py).
 
 Package with::
 
@@ -36,7 +37,7 @@ import os
 import struct
 
 import numpy as np
-import onnxruntime as ort
+import openvino as ov
 from ts.torch_handler.base_handler import BaseHandler
 
 # Input geometry defaults. The actual size is set per-run from an "input_geometry.json" bundled into
@@ -73,15 +74,27 @@ class NanodetHandler(BaseHandler):
         if not os.path.isfile(model_path):
             raise RuntimeError(f"Missing ONNX model file: {model_path}")
 
-        # CPU-only, single-threaded session for parity with the NES worker setup.
-        session_options = ort.SessionOptions()
-        session_options.intra_op_num_threads = int(os.environ.get("NANODET_INTRA_OP_THREADS", "1"))
-        session_options.inter_op_num_threads = 1
-        self.session = ort.InferenceSession(
-            model_path, sess_options=session_options, providers=["CPUExecutionProvider"]
+        core = ov.Core()
+        model = core.read_model(model_path)
+
+        # Pin the dynamic batch dimension to 1: the sink sends one frame per request.
+        shape = model.input().get_partial_shape()
+        if shape[0].is_dynamic:
+            shape[0] = 1
+            model.reshape(shape)
+
+        # CPU-only and single-threaded for parity with the NES worker setup.
+        self.compiled = core.compile_model(
+            model,
+            "CPU",
+            {
+                "PERFORMANCE_HINT": "LATENCY",
+                "EXECUTION_MODE_HINT": "ACCURACY",
+                "NUM_STREAMS": "0",
+                "INFERENCE_NUM_THREADS": os.environ.get("NANODET_INFERENCE_THREADS", "1"),
+            },
         )
-        self.input_name = self.session.get_inputs()[0].name
-        self.output_names = [out.name for out in self.session.get_outputs()]
+        self.output_ports = list(self.compiled.outputs)
 
         # Input geometry: prefer the bundled input_geometry.json (written by run_systems.sh), else
         # fall back to the 192x192 default.
@@ -121,7 +134,12 @@ class NanodetHandler(BaseHandler):
         return np.concatenate(tensors, axis=0).astype(np.float32)
 
     def inference(self, data, *args, **kwargs):
-        return self.session.run(self.output_names, {self.input_name: data})
+        # The batch dimension is pinned to 1, so a request carrying several frames is run frame by frame.
+        per_frame = [self.compiled(frame[np.newaxis, ...]) for frame in data]
+        return [
+            np.concatenate([result[port] for result in per_frame], axis=0)
+            for port in self.output_ports
+        ]
 
     def postprocess(self, data):
         # `data` is a list of output tensors (one per model output head). NES emits the
@@ -134,8 +152,8 @@ class NanodetHandler(BaseHandler):
         for size in self._split_sizes:
             summary = {
                 "outputs": [
-                    {"name": name, "shape": list(out[start : start + size].shape)}
-                    for name, out in zip(self.output_names, data)
+                    {"name": port.get_any_name(), "shape": list(out[start : start + size].shape)}
+                    for port, out in zip(self.output_ports, data)
                 ]
             }
             results.append(json.dumps(summary))
