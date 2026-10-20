@@ -89,10 +89,11 @@ def workloads_table(reps_dir: Path) -> pd.DataFrame:
 def sweep_table(sweep_dir: Path) -> pd.DataFrame:
     # "rep[0-9]", not "rep*": the Flink arm has both <...>_rep1.csv and <...>_rep1_fastparse.csv in
     # one directory, and a trailing star silently folds the second set into the first.
-    # The Flink arm reads the "_fastparse" runs: the plain ones predate the replacement of its
-    # per-line CSV parser with a direct column slice, a defect that capped the job at 14.5
-    # frames/s. They stay on the Pi but are no longer aggregated, since nothing plots them.
-    series = [(NES, NES, ""), (FLINK, FLINK, "_fastparse"), (TORCHSERVE, TORCHSERVE, "")]
+    # All three arms read the plain file names. The Flink arm briefly used a "_fastparse" suffix,
+    # from the generation that fixed its per-line CSV parser; those runs have since been superseded
+    # by a full re-sweep after env.setBufferTimeout(0), which writes the plain names again. Reading
+    # the suffix now would silently serve the older, slower curve -- it did, until this was fixed.
+    series = [(NES, NES, ""), (FLINK, FLINK, ""), (TORCHSERVE, TORCHSERVE, "")]
     rows = []
     for name, system, suffix in series:
         for rate in RATES:

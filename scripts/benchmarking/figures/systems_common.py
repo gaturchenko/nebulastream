@@ -19,10 +19,13 @@ COLOR = {NES: "#2a78d6", FLINK: "#eb6834", TORCHSERVE: "#1baf7a"}
 ORDER = [NES, FLINK, TORCHSERVE]
 
 WORKLOADS = ["waymo", "cwru", "musan"]
+# Panel titles name the TASK, not the dataset/model pair. Across a paper the reader is comparing
+# kinds of inference workload, and "Waymo / SqueezeDet" makes them resolve a dataset and an
+# architecture before they can see that. The dataset and model belong in the text and the caption.
 WORKLOAD_TITLE = {
-    "waymo": r"Waymo / SqueezeDet",
-    "cwru": r"CWRU / SARAD",
-    "musan": r"MUSAN / MHAtt-RNN",
+    "waymo": "Object Detection",
+    "cwru": "Anomaly Detection",
+    "musan": "Keyword Spotting",
 }
 # The offered load each workload's published operating point runs at, for the panel subtitles.
 WORKLOAD_RATE = {"waymo": "10 frames/s", "cwru": "10 windows/s", "musan": "3 windows/s"}

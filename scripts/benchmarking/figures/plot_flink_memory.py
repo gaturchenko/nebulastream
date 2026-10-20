@@ -66,7 +66,7 @@ def plot_memory(data: dict) -> None:
         ax.text(index, p * 1.02, f"{v / p * 100:.0f}\\%", ha="center", va="bottom", fontsize=VALUE_FS)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{WORKLOAD_TITLE[w].split(' / ')[0]}\n{{\\small {data[w][2]} lanes}}"
+    ax.set_xticklabels([f"{WORKLOAD_TITLE[w]}\n{{\\small {data[w][2]} lanes}}"
                         for w in WORKLOADS], fontsize=LABEL_FS)
     ax.set_ylabel("Peak resident memory [MB]", fontsize=LABEL_FS)
     ax.set_ylim(0, private.max() * 1.18)

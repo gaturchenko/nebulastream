@@ -85,7 +85,7 @@ def plot_breakdown(data: dict) -> None:
         ax.text(xi, total * 1.02, f"{total:.0f} ms", ha="center", va="bottom", fontsize=VALUE_FS)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([WORKLOAD_TITLE[w].split(" / ")[0] for w in WORKLOADS], fontsize=LABEL_FS)
+    ax.set_xticklabels([WORKLOAD_TITLE[w] for w in WORKLOADS], fontsize=LABEL_FS)
     ax.set_ylabel("Mean end-to-end latency [ms]", fontsize=LABEL_FS)
     ax.set_ylim(0, bottoms.max() * 1.16)
     ax.tick_params(axis="y", labelsize=TICK_FS)
