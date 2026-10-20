@@ -138,8 +138,9 @@ struct BatchSizeCandidate
     std::chrono::nanoseconds invocationLatency;
     std::chrono::nanoseconds resultLatency;
     double throughput;
-    bool meetsHardSlo;
-    bool meetsWeakSlo;
+    double utilization;
+    bool keepsUp;
+    bool meetsLatencySlo;
 };
 
 }
@@ -299,6 +300,8 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
     /// Window results arrive once per stride of event time; the replay speedup converts the stride and size to wall-clock time.
     const auto replaySpeedup = static_cast<double>(configuration.inferenceReplaySpeedup.getValue());
     PRECONDITION(replaySpeedup > 0, "The inference replay speedup must be positive, but is {}", replaySpeedup);
+    const auto maxUtilization = static_cast<double>(configuration.inferenceMaxUtilization.getValue());
+    PRECONDITION(maxUtilization > 0, "The inference maximum utilization must be positive, but is {}", maxUtilization);
     const auto toWallClock = [replaySpeedup](const Windowing::TimeMeasure& measure)
     {
         return std::chrono::nanoseconds{static_cast<int64_t>(
@@ -338,6 +341,8 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
         INVARIANT(batch.has_value(), "Expected a profile for batch size {}", batchSize);
         const auto invocationLatency = batch->medianLatency;
         const auto resultLatency = stride * static_cast<int64_t>(batchSize - 1) + invocationLatency;
+        /// A batch of B results arrives every B strides, which is the time its invocation has before the next batch is complete.
+        const auto utilization = static_cast<double>(invocationLatency.count()) / static_cast<double>(stride.count() * batchSize);
         candidates.push_back(BatchSizeCandidate{
             .batchSize = batchSize,
             .invocationLatency = invocationLatency,
@@ -345,59 +350,69 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
             .throughput = invocationLatency.count() > 0
                 ? static_cast<double>(batchSize) * 1e9 / static_cast<double>(invocationLatency.count())
                 : std::numeric_limits<double>::infinity(),
-            .meetsHardSlo = invocationLatency <= stride,
-            .meetsWeakSlo = resultLatency <= size});
+            .utilization = utilization,
+            .keepsUp = utilization <= maxUtilization,
+            .meetsLatencySlo = resultLatency <= size});
         NES_INFO(
-            "Batch size {} for model '{}' on worker '{}': invocation {} us (hard SLO {} us: {}), result latency {} us (weak SLO {} us: "
-            "{}), throughput {:.0f} tuples/s",
+            "Batch size {} for model '{}' on worker '{}': invocation {} us, utilization {:.2f} (max {:.2f}: {}), result latency {} us "
+            "(SLO {} us: {}), throughput {:.0f} tuples/s",
             batchSize,
             modelName,
             worker,
             invocationLatency.count() / 1000,
-            stride.count() / 1000,
-            candidates.back().meetsHardSlo ? "met" : "violated",
+            utilization,
+            maxUtilization,
+            candidates.back().keepsUp ? "keeps up" : "falls behind",
             resultLatency.count() / 1000,
             size.count() / 1000,
-            candidates.back().meetsWeakSlo ? "met" : "violated",
+            candidates.back().meetsLatencySlo ? "met" : "violated",
             candidates.back().throughput);
     }
 
-    /// Prefer candidates meeting both SLOs, then the hard one only, then any; among them, the highest throughput wins and ties go to
-    /// the smaller batch, which has the lower latency.
-    const auto selectFrom = [&candidates](const auto& admissible) -> std::optional<BatchSizeCandidate>
+    /// Returns the admissible candidate that the comparison prefers; ties go to the smaller batch, which is visited first.
+    const auto selectFrom = [&candidates](const auto& admissible, const auto& isBetter) -> std::optional<BatchSizeCandidate>
     {
         std::optional<BatchSizeCandidate> selected;
         for (const auto& candidate : candidates | std::views::filter(admissible))
         {
-            if (!selected.has_value() || candidate.throughput > selected->throughput)
+            if (!selected.has_value() || isBetter(candidate, selected.value()))
             {
                 selected = candidate;
             }
         }
         return selected;
     };
+    const auto higherThroughput = [](const BatchSizeCandidate& candidate, const BatchSizeCandidate& selected)
+    { return candidate.throughput > selected.throughput; };
+    const auto lowerResultLatency = [](const BatchSizeCandidate& candidate, const BatchSizeCandidate& selected)
+    { return candidate.resultLatency < selected.resultLatency; };
     const auto selectedBatchSize = [&]() -> uint64_t
     {
-        if (const auto selected
-            = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo && candidate.meetsWeakSlo; }))
+        /// Among the batch sizes that keep up and meet the SLO, the highest throughput leaves the most CPU time to other work.
+        if (const auto selected = selectFrom(
+                [](const BatchSizeCandidate& candidate) { return candidate.keepsUp && candidate.meetsLatencySlo; }, higherThroughput))
         {
             NES_INFO(
-                "Selected batch size {} for model '{}' on worker '{}': meets both latency SLOs", selected->batchSize, modelName, worker);
-            return selected->batchSize;
-        }
-        if (const auto selected = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.meetsHardSlo; }))
-        {
-            NES_WARNING(
-                "Selected batch size {} for model '{}' on worker '{}': no batch size meets the weak latency SLO",
+                "Selected batch size {} for model '{}' on worker '{}': keeps up and meets the latency SLO",
                 selected->batchSize,
                 modelName,
                 worker);
             return selected->batchSize;
         }
-        const auto selected = selectFrom([](const BatchSizeCandidate&) { return true; });
+        /// Falling behind lets the backlog, and with it the latency, grow without bound, so keeping up takes precedence over the SLO.
+        if (const auto selected = selectFrom([](const BatchSizeCandidate& candidate) { return candidate.keepsUp; }, lowerResultLatency))
+        {
+            NES_WARNING(
+                "Selected batch size {} for model '{}' on worker '{}': no batch size that keeps up meets the latency SLO, choosing the "
+                "lowest result latency among those that keep up",
+                selected->batchSize,
+                modelName,
+                worker);
+            return selected->batchSize;
+        }
+        const auto selected = selectFrom([](const BatchSizeCandidate&) { return true; }, higherThroughput);
         NES_WARNING(
-            "Selected batch size {} for model '{}' on worker '{}': no batch size meets the hard latency SLO, choosing the highest "
-            "throughput",
+            "Selected batch size {} for model '{}' on worker '{}': no batch size keeps up, choosing the highest throughput",
             selected->batchSize,
             modelName,
             worker);

@@ -341,8 +341,9 @@ TEST_F(InferenceImplementationSelectorTest, IgnoresSingleFieldInference)
 }
 
 /// Window of 200 ms, stride 10 ms: the fill time admits candidates up to 16. With 1 ms + 0.2 ms per tuple, batch 16 takes 4.2 ms
-/// (hard SLO 10 ms) and its first result 154.2 ms (weak SLO 200 ms), and it has the highest throughput.
-TEST_F(InferenceImplementationSelectorTest, SelectsHighestThroughputBatchSizeMeetingBothSlos)
+/// of the 160 ms in which its batch arrives (utilization 0.03) and its first result 154.2 ms (SLO 200 ms), and it has the highest
+/// throughput.
+TEST_F(InferenceImplementationSelectorTest, SelectsHighestThroughputBatchSizeThatKeepsUpAndMeetsTheSlo)
 {
     auto profiler = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{1000}, std::chrono::microseconds{200}));
     const InferenceImplementationSelector selector{createBatchSizeConfiguration(), profiler};
@@ -355,19 +356,20 @@ TEST_F(InferenceImplementationSelectorTest, SelectsHighestThroughputBatchSizeMee
     EXPECT_EQ(profiler->jobs.front().second, (std::vector<size_t>{1, 2, 4, 8, 16}));
 }
 
-/// With 2 ms + 1 ms per tuple, batch 16 takes 18 ms and misses the 10 ms stride, batch 8 takes exactly 10 ms.
-TEST_F(InferenceImplementationSelectorTest, HardSloBoundsTheInvocationLatency)
+/// With 2 ms + 1 ms per tuple, batch 16 takes 18 ms, longer than the 10 ms stride, but a batch of 16 arrives only every 160 ms, so
+/// it keeps up (utilization 0.11) and its first result takes 168 ms (SLO 200 ms).
+TEST_F(InferenceImplementationSelectorTest, AdmitsBatchInvocationsLongerThanTheStride)
 {
     auto profiler
         = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{2000}, std::chrono::microseconds{1000}));
     const InferenceImplementationSelector selector{createBatchSizeConfiguration(), profiler};
 
-    EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 8);
+    EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 16);
 }
 
 /// Window of 35 ms, stride 10 ms: only candidates up to 4 can fill in time. With a constant 6 ms invocation, the first result of
-/// batch 4 takes 36 ms and misses the weak SLO, batch 2 takes 16 ms.
-TEST_F(InferenceImplementationSelectorTest, WeakSloBoundsTheBatchFillTime)
+/// batch 4 takes 36 ms and misses the SLO, batch 2 takes 16 ms.
+TEST_F(InferenceImplementationSelectorTest, LatencySloBoundsTheBatchFillTime)
 {
     auto profiler = std::make_shared<FakeInferenceProfiler>([](size_t) { return std::chrono::nanoseconds{std::chrono::milliseconds{6}}; });
     const InferenceImplementationSelector selector{createBatchSizeConfiguration(), profiler};
@@ -379,16 +381,45 @@ TEST_F(InferenceImplementationSelectorTest, WeakSloBoundsTheBatchFillTime)
     EXPECT_EQ(profiler->jobs.front().second, (std::vector<size_t>{1, 2, 4}));
 }
 
-/// Replaying twice as fast halves the wall-clock stride to 5 ms, so batch 4 (6 ms) misses the hard SLO that it met in real time.
-TEST_F(InferenceImplementationSelectorTest, ReplaySpeedupScalesTheSlos)
+/// With 5 ms + 0.5 ms per tuple, the first result of batch 16 takes 163 ms in real time (SLO 200 ms). Replaying four times as fast
+/// shrinks the wall-clock window to 50 ms and the stride to 2.5 ms, so batch 16 takes 50.5 ms and misses the SLO, batch 8 26.5 ms.
+TEST_F(InferenceImplementationSelectorTest, ReplaySpeedupScalesTheSlo)
 {
-    auto profiler
-        = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{2000}, std::chrono::microseconds{1000}));
-    auto configuration = createBatchSizeConfiguration();
-    configuration.inferenceReplaySpeedup.setValue(2.0F);
-    const InferenceImplementationSelector selector{configuration, profiler};
+    const auto latency = linearLatency(std::chrono::microseconds{5000}, std::chrono::microseconds{500});
+    const InferenceImplementationSelector realTimeSelector{createBatchSizeConfiguration(), std::make_shared<FakeInferenceProfiler>(latency)};
+    EXPECT_EQ(getSelectedBatchSize(realTimeSelector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 16);
 
-    EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 2);
+    auto configuration = createBatchSizeConfiguration();
+    configuration.inferenceReplaySpeedup.setValue(4.0F);
+    const InferenceImplementationSelector selector{configuration, std::make_shared<FakeInferenceProfiler>(latency)};
+    EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 8);
+}
+
+/// Window of 35 ms, stride 10 ms: candidates up to 4. Batch 1 (9.5 ms, utilization 0.95) and batch 2 (17 ms, 0.85) exceed the
+/// default maximum utilization of 0.8; only batch 4 (20 ms, 0.5) keeps up, although its first result takes 50 ms and misses the SLO.
+/// Falling behind would let the latency grow without bound, so batch 4 is selected. Allowing a utilization of 0.9 admits batch 2,
+/// which keeps up and meets the SLO (27 ms).
+TEST_F(InferenceImplementationSelectorTest, PrefersKeepingUpOverTheLatencySlo)
+{
+    const auto latency = [](const size_t batchSize) -> std::chrono::nanoseconds
+    {
+        switch (batchSize)
+        {
+            case 1:
+                return std::chrono::microseconds{9500};
+            case 2:
+                return std::chrono::microseconds{17000};
+            default:
+                return std::chrono::microseconds{20000};
+        }
+    };
+    const InferenceImplementationSelector selector{createBatchSizeConfiguration(), std::make_shared<FakeInferenceProfiler>(latency)};
+    EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(35, 10)))), 4);
+
+    auto configuration = createBatchSizeConfiguration();
+    configuration.inferenceMaxUtilization.setValue(0.9F);
+    const InferenceImplementationSelector relaxedSelector{configuration, std::make_shared<FakeInferenceProfiler>(latency)};
+    EXPECT_EQ(getSelectedBatchSize(relaxedSelector.apply(createWindowedInferencePlan(createSlidingWindow(35, 10)))), 2);
 }
 
 TEST_F(InferenceImplementationSelectorTest, RespectsMaximumBatchSize)
@@ -403,11 +434,12 @@ TEST_F(InferenceImplementationSelectorTest, RespectsMaximumBatchSize)
     EXPECT_EQ(profiler->jobs.front().second, (std::vector<size_t>{1, 2, 4}));
 }
 
-/// If even a single-tuple invocation misses the stride, the highest-throughput batch size is selected to keep up as well as possible.
-TEST_F(InferenceImplementationSelectorTest, FallsBackToHighestThroughputIfNoBatchSizeMeetsTheHardSlo)
+/// With 200 ms + 1 ms per tuple, even batch 16 (216 ms every 160 ms) falls behind, so the highest-throughput batch size is selected
+/// to fall behind as little as possible.
+TEST_F(InferenceImplementationSelectorTest, FallsBackToHighestThroughputIfNoBatchSizeKeepsUp)
 {
     auto profiler
-        = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{20000}, std::chrono::microseconds{1000}));
+        = std::make_shared<FakeInferenceProfiler>(linearLatency(std::chrono::microseconds{200000}, std::chrono::microseconds{1000}));
     const InferenceImplementationSelector selector{createBatchSizeConfiguration(), profiler};
 
     EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 16);

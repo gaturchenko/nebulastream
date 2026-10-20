@@ -49,11 +49,14 @@ namespace NES
 /// invocation.
 ///
 /// Batch size: an inference operator consuming the results of an unkeyed time window receives one result per window stride S.
-/// Batching B results therefore delays the first of them by the fill time (B - 1) * S before the batch is invoked in t(B). The
-/// window defines two latency SLOs: a batched invocation must finish within the stride, t(B) <= S (hard, otherwise invocations
-/// fall behind the arriving results), and a result must be inferred within the window size, (B - 1) * S + t(B) <= W (weak).
-/// Under OPTIMIZER_CHOOSES, the worker profiles t(B) for power-of-two candidates, and the batch size with the highest throughput
-/// B / t(B) that meets both SLOs is selected, relaxing the weak and then the hard SLO if no candidate meets them.
+/// Batching B results therefore delays the first of them by the fill time (B - 1) * S before the batch is invoked in t(B). Two
+/// constraints bound the batch size from opposite sides. A batch of B results arrives every B * S, so a batch size keeps up only if
+/// its utilization t(B) / (B * S) stays below the configured maximum, which leaves headroom for queueing; small batches that cannot
+/// amortize the per-invocation cost fall behind at high rates. And a result must be inferred within the window size, the latency
+/// SLO (B - 1) * S + t(B) <= W, which large batches miss at low rates. Under OPTIMIZER_CHOOSES, the worker profiles t(B) for
+/// power-of-two candidates, and among those meeting both constraints the batch size with the highest throughput B / t(B) is
+/// selected. If none does, the batch size with the lowest result latency among those that keep up is selected, and if none keeps
+/// up, the one with the highest throughput.
 ///
 /// The inference sequence operator, inserted before the batch size is known to restore the record order of batched inference, is
 /// removed below inference operators that end up invoking the model with single tuples.

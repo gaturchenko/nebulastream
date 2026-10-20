@@ -41,8 +41,9 @@ enum class InferenceBatchSizeStrategy : uint8_t
     /// Use the configured inference_batch_size for every inference operator.
     FIXED,
     /// Submit a profiling job to the worker hosting an inference operator fed by a time window and choose the batch size with the
-    /// highest throughput that meets the latency SLOs derived from the window: a batched invocation must finish within the window
-    /// stride (hard), and the batch fill time plus the invocation must finish within the window size (weak). Other inference
+    /// highest throughput among those that keep up with the window results and meet the latency SLO derived from the window. A
+    /// batch size keeps up if its invocation occupies at most inference_max_utilization of the B strides in which a batch of B
+    /// results arrives; it meets the SLO if the batch fill time plus the invocation stays within the window size. Other inference
     /// operators use the configured inference_batch_size.
     OPTIMIZER_CHOOSES
 };
@@ -90,7 +91,7 @@ public:
            InferenceBatchSizeStrategy::FIXED,
            "How the batch size of inference operators is chosen [FIXED|OPTIMIZER_CHOOSES]. OPTIMIZER_CHOOSES profiles candidate "
            "batch sizes on the worker hosting an inference operator fed by a time window and picks the highest-throughput batch size "
-           "that meets the window's latency SLOs."};
+           "that keeps up with the window results and meets the window's latency SLO."};
 
     UIntOption inferenceMaxBatchSize
         = {"inference_max_batch_size",
@@ -102,7 +103,14 @@ public:
         = {"inference_replay_speedup",
            "1.0",
            "Factor by which the sources replay event time faster than wall-clock time. OPTIMIZER_CHOOSES divides the window stride "
-           "and size by it to obtain the wall-clock arrival interval and latency SLOs of window results."};
+           "and size by it to obtain the wall-clock arrival interval and latency SLO of window results."};
+
+    FloatOption inferenceMaxUtilization
+        = {"inference_max_utilization",
+           "0.8",
+           "Largest fraction of the time between two batches that OPTIMIZER_CHOOSES lets a batched invocation occupy. A batch size "
+           "above it does not keep up with the window results: the headroom absorbs the queueing that makes latency diverge as the "
+           "utilization approaches 1."};
 
     EnumOption<InferenceMemoryStrategy> inferenceMemoryStrategy
         = {"inference_memory_strategy",
@@ -148,6 +156,7 @@ private:
             &inferenceBatchSizeStrategy,
             &inferenceMaxBatchSize,
             &inferenceReplaySpeedup,
+            &inferenceMaxUtilization,
             &inferenceMemoryStrategy,
             &inferenceMemoryBudgetFraction,
             &postJoinInferenceStrategy,
