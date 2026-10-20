@@ -76,7 +76,7 @@ void emitCreatedBatchesProxy(OperatorHandler* ptrOpHandler, PipelineExecutionCon
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
 
-    auto batchesToBeEmitted = opHandler->getCreatedBatches(true);
+    auto batchesToBeEmitted = opHandler->claimCreatedBatches(true);
     for (const auto& batch : batchesToBeEmitted)
     {
         const SequenceData sequenceData{SequenceNumber(batch->batchId), INITIAL_CHUNK_NUMBER, true};
@@ -89,7 +89,7 @@ void emitRemainingBatchesProxy(OperatorHandler* ptrOpHandler, PipelineExecutionC
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
 
-    auto batchesToBeEmitted = opHandler->getCreatedBatches(false);
+    auto batchesToBeEmitted = opHandler->claimCreatedBatches(false);
     for (const auto& batch : batchesToBeEmitted)
     {
         const SequenceData sequenceData{SequenceNumber(batch->batchId), INITIAL_CHUNK_NUMBER, true};

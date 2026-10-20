@@ -69,7 +69,7 @@ void emitInterBufferBatchesProxy(OperatorHandler* ptrOpHandler, PipelineExecutio
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
 
-    auto batchesToBeEmitted = opHandler->getCreatedBatches(true);
+    auto batchesToBeEmitted = opHandler->claimCreatedBatches(true);
 
     for (const auto& batch : batchesToBeEmitted)
     {
@@ -84,7 +84,7 @@ void emitRemainingBatchesProxy(OperatorHandler* ptrOpHandler, PipelineExecutionC
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
 
-    auto batchesToBeEmitted = opHandler->getCreatedBatches(false);
+    auto batchesToBeEmitted = opHandler->claimCreatedBatches(false);
 
     for (const auto& batch : batchesToBeEmitted)
     {

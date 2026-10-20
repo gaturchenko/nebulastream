@@ -68,7 +68,7 @@ void emitBatchesProxy(
     PRECONDITION(pipelineCtx != nullptr, "pipeline context should not be null");
     auto* opHandler = getBatchHandler(ptrOpHandler);
 
-    auto batchesToBeEmitted = opHandler->getCreatedBatches(false);
+    auto batchesToBeEmitted = opHandler->claimCreatedBatches(false);
 
     for (size_t index = 0; index < batchesToBeEmitted.size(); ++index)
     {

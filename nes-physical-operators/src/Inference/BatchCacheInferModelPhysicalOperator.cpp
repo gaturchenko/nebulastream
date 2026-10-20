@@ -809,6 +809,9 @@ void BatchCacheInferModelPhysicalOperator::open(ExecutionContext& ctx, RecordBuf
         nautilus::invoke(setReplacementPosition, batchRuntime, ctx.workerThreadId, predictionCache->getReplacementPos());
         nautilus::invoke(markBatchProcessed, operatorHandler, emittedBatch);
         closeChild(ctx, recordBuffer);
+        /// Release the batch, and with it the pages of its paged vector, as soon as its outputs are emitted. Collecting only at
+        /// termination kept one page per batch alive, which exhausts the buffer pool within a minute when a window feeds small batches.
+        nautilus::invoke(garbageCollectBatches, operatorHandler);
     }
 }
 

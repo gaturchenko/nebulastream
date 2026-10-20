@@ -89,7 +89,8 @@ public:
     [[nodiscard]] Batch* getOrCreateNewBatch();
     [[nodiscard]] Batch* createNewPostJoinBatch(PostJoinBatchMetadata metadata);
     [[nodiscard]] std::shared_ptr<Batch> getBatch(uint64_t requestedBatchId) const;
-    [[nodiscard]] std::vector<std::shared_ptr<Batch>> getCreatedBatches(bool fullBatchesOnly) const;
+    /// Returns the batches that are still being filled, or only the full ones, and marks them as emitted.
+    [[nodiscard]] std::vector<std::shared_ptr<Batch>> claimCreatedBatches(bool fullBatchesOnly);
     void garbageCollectBatches();
     void emitBatchesToProbe(Batch& batch, const SequenceData& sequenceData, PipelineExecutionContext* pipelineCtx, Timestamp watermarkTs);
 

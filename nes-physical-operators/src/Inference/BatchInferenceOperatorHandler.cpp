@@ -189,8 +189,11 @@ std::shared_ptr<Batch> BatchInferenceOperatorHandler::getBatch(const uint64_t re
     return *it;
 }
 
-std::vector<std::shared_ptr<Batch>> BatchInferenceOperatorHandler::getCreatedBatches(const bool fullBatchesOnly) const
+std::vector<std::shared_ptr<Batch>> BatchInferenceOperatorHandler::claimCreatedBatches(const bool fullBatchesOnly)
 {
+    /// Claiming a batch marks it as emitted under the lock, so a batch is handed to exactly one emitting thread. Marking it only after
+    /// emitBuffer let two worker threads closing concurrently emit the same batch, and could overwrite the PROCESSED state that the
+    /// probe set in between, so that the batch was never garbage collected.
     const std::scoped_lock lock(batchesMutex);
     std::vector<std::shared_ptr<Batch>> createdBatches;
     for (const auto& batch : batches)
@@ -203,6 +206,7 @@ std::vector<std::shared_ptr<Batch>> BatchInferenceOperatorHandler::getCreatedBat
         {
             continue;
         }
+        batch->setState(BatchState::MARKED_AS_EMITTED);
         createdBatches.emplace_back(batch);
     }
     return createdBatches;
@@ -234,7 +238,6 @@ void BatchInferenceOperatorHandler::emitBatchesToProbe(
     new (bufferMemory.data()) EmittedBatch{batch.batchId};
 
     pipelineCtx->emitBuffer(tupleBuffer);
-    batch.setState(BatchState::MARKED_AS_EMITTED);
 
     NES_TRACE(
         "Emitted batch {} with watermarkTs {} {} originId {} tuples {}",
