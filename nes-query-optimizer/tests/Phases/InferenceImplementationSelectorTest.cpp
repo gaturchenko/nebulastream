@@ -341,7 +341,7 @@ TEST_F(InferenceImplementationSelectorTest, IgnoresSingleFieldInference)
 }
 
 /// Window of 200 ms, stride 10 ms: the fill time admits candidates up to 16. With 1 ms + 0.2 ms per tuple, batch 16 takes 4.2 ms
-/// of the 160 ms in which its batch arrives (utilization 0.03) and its first result 154.2 ms (SLO 200 ms), and it has the highest
+/// of the 160 ms in which its batch arrives (utilization 0.03) and its first result 154.2 ms (SLO 0.9 * 200 ms), and it has the highest
 /// throughput.
 TEST_F(InferenceImplementationSelectorTest, SelectsHighestThroughputBatchSizeThatKeepsUpAndMeetsTheSlo)
 {
@@ -357,7 +357,7 @@ TEST_F(InferenceImplementationSelectorTest, SelectsHighestThroughputBatchSizeTha
 }
 
 /// With 2 ms + 1 ms per tuple, batch 16 takes 18 ms, longer than the 10 ms stride, but a batch of 16 arrives only every 160 ms, so
-/// it keeps up (utilization 0.11) and its first result takes 168 ms (SLO 200 ms).
+/// it keeps up (utilization 0.11) and its first result takes 168 ms (SLO 180 ms).
 TEST_F(InferenceImplementationSelectorTest, AdmitsBatchInvocationsLongerThanTheStride)
 {
     auto profiler
@@ -368,7 +368,7 @@ TEST_F(InferenceImplementationSelectorTest, AdmitsBatchInvocationsLongerThanTheS
 }
 
 /// Window of 35 ms, stride 10 ms: only candidates up to 4 can fill in time. With a constant 6 ms invocation, the first result of
-/// batch 4 takes 36 ms and misses the SLO, batch 2 takes 16 ms.
+/// batch 4 takes 36 ms and misses the SLO of 31.5 ms, batch 2 takes 16 ms.
 TEST_F(InferenceImplementationSelectorTest, LatencySloBoundsTheBatchFillTime)
 {
     auto profiler = std::make_shared<FakeInferenceProfiler>([](size_t) { return std::chrono::nanoseconds{std::chrono::milliseconds{6}}; });
@@ -381,8 +381,9 @@ TEST_F(InferenceImplementationSelectorTest, LatencySloBoundsTheBatchFillTime)
     EXPECT_EQ(profiler->jobs.front().second, (std::vector<size_t>{1, 2, 4}));
 }
 
-/// With 5 ms + 0.5 ms per tuple, the first result of batch 16 takes 163 ms in real time (SLO 200 ms). Replaying four times as fast
-/// shrinks the wall-clock window to 50 ms and the stride to 2.5 ms, so batch 16 takes 50.5 ms and misses the SLO, batch 8 26.5 ms.
+/// With 5 ms + 0.5 ms per tuple, the first result of batch 16 takes 163 ms in real time (SLO 180 ms). Replaying four times as fast
+/// shrinks the wall-clock window to 50 ms (SLO 45 ms) and the stride to 2.5 ms, so batch 16 takes 50.5 ms and misses the SLO, batch
+/// 8 26.5 ms.
 TEST_F(InferenceImplementationSelectorTest, ReplaySpeedupScalesTheSlo)
 {
     const auto latency = linearLatency(std::chrono::microseconds{5000}, std::chrono::microseconds{500});
@@ -395,8 +396,22 @@ TEST_F(InferenceImplementationSelectorTest, ReplaySpeedupScalesTheSlo)
     EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 8);
 }
 
+/// With 1 ms + 0.2 ms per tuple, the first result of batch 16 takes 154.2 ms, within the default SLO of 0.9 * 200 ms. Leaving
+/// three quarters of the window to the predicted latency (150 ms) excludes it, and batch 8 (72.6 ms) is selected.
+TEST_F(InferenceImplementationSelectorTest, LatencySloFractionLeavesRoomForUnprofiledDelays)
+{
+    const auto latency = linearLatency(std::chrono::microseconds{1000}, std::chrono::microseconds{200});
+    const InferenceImplementationSelector selector{createBatchSizeConfiguration(), std::make_shared<FakeInferenceProfiler>(latency)};
+    EXPECT_EQ(getSelectedBatchSize(selector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 16);
+
+    auto configuration = createBatchSizeConfiguration();
+    configuration.inferenceLatencySloFraction.setValue(0.75F);
+    const InferenceImplementationSelector strictSelector{configuration, std::make_shared<FakeInferenceProfiler>(latency)};
+    EXPECT_EQ(getSelectedBatchSize(strictSelector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 8);
+}
+
 /// Window of 35 ms, stride 10 ms: candidates up to 4. Batch 1 (9.5 ms, utilization 0.95) and batch 2 (17 ms, 0.85) exceed the
-/// default maximum utilization of 0.8; only batch 4 (20 ms, 0.5) keeps up, although its first result takes 50 ms and misses the SLO.
+/// default maximum utilization of 0.8; only batch 4 (20 ms, 0.5) keeps up, although its first result takes 50 ms and misses the 31.5 ms SLO.
 /// Falling behind would let the latency grow without bound, so batch 4 is selected. Allowing a utilization of 0.9 admits batch 2,
 /// which keeps up and meets the SLO (27 ms).
 TEST_F(InferenceImplementationSelectorTest, PrefersKeepingUpOverTheLatencySlo)

@@ -53,8 +53,9 @@ namespace NES
 /// constraints bound the batch size from opposite sides. A batch of B results arrives every B * S, so a batch size keeps up only if
 /// its utilization t(B) / (B * S) stays below the configured maximum, which leaves headroom for queueing; small batches that cannot
 /// amortize the per-invocation cost fall behind at high rates. And a result must be inferred within the window size, the latency
-/// SLO (B - 1) * S + t(B) <= W, which large batches miss at low rates. Under OPTIMIZER_CHOOSES, the worker profiles t(B) for
-/// power-of-two candidates, and among those meeting both constraints the batch size with the highest throughput B / t(B) is
+/// SLO (B - 1) * S + t(B) <= f * W, which large batches miss at low rates; the configured fraction f < 1 leaves room for the delays
+/// that t(B) does not include, such as closing the window and queueing for a worker thread. Under OPTIMIZER_CHOOSES, the worker
+/// profiles t(B) for power-of-two candidates, and among those meeting both constraints the batch size with the highest throughput B / t(B) is
 /// selected. If none does, the batch size with the lowest result latency among those that keep up is selected, and if none keeps
 /// up, the one with the highest throughput.
 ///

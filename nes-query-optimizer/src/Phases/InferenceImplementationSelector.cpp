@@ -302,6 +302,11 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
     PRECONDITION(replaySpeedup > 0, "The inference replay speedup must be positive, but is {}", replaySpeedup);
     const auto maxUtilization = static_cast<double>(configuration.inferenceMaxUtilization.getValue());
     PRECONDITION(maxUtilization > 0, "The inference maximum utilization must be positive, but is {}", maxUtilization);
+    const auto latencySloFraction = static_cast<double>(configuration.inferenceLatencySloFraction.getValue());
+    PRECONDITION(
+        latencySloFraction > 0 && latencySloFraction <= 1,
+        "The inference latency SLO fraction must be in (0, 1], but is {}",
+        latencySloFraction);
     const auto toWallClock = [replaySpeedup](const Windowing::TimeMeasure& measure)
     {
         return std::chrono::nanoseconds{static_cast<int64_t>(
@@ -310,6 +315,9 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
     const auto stride = toWallClock(windowType->getSlide());
     const auto size = toWallClock(windowType->getSize());
     PRECONDITION(stride.count() > 0, "Expected a window with a positive stride");
+    /// The profile covers the model invocation only; the rest of the window size absorbs the window close, queueing and scheduling
+    /// delays a result also incurs.
+    const auto latencySlo = std::chrono::nanoseconds{static_cast<int64_t>(static_cast<double>(size.count()) * latencySloFraction)};
 
     /// The fill time (B - 1) * S alone must stay below the window size, which bounds the candidates before profiling.
     const auto largestFillableBatch = static_cast<size_t>((size.count() + stride.count() - 1) / stride.count());
@@ -352,7 +360,7 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
                 : std::numeric_limits<double>::infinity(),
             .utilization = utilization,
             .keepsUp = utilization <= maxUtilization,
-            .meetsLatencySlo = resultLatency <= size});
+            .meetsLatencySlo = resultLatency <= latencySlo});
         NES_INFO(
             "Batch size {} for model '{}' on worker '{}': invocation {} us, utilization {:.2f} (max {:.2f}: {}), result latency {} us "
             "(SLO {} us: {}), throughput {:.0f} tuples/s",
@@ -364,7 +372,7 @@ InferenceImplementationSelector::selectBatchSize(const LogicalOperator& logicalO
             maxUtilization,
             candidates.back().keepsUp ? "keeps up" : "falls behind",
             resultLatency.count() / 1000,
-            size.count() / 1000,
+            latencySlo.count() / 1000,
             candidates.back().meetsLatencySlo ? "met" : "violated",
             candidates.back().throughput);
     }

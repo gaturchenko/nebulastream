@@ -7,6 +7,7 @@
 # Usage:
 #   scripts/arm-build/submit_arm_build.sh --bucket gs://my-bucket
 #   scripts/arm-build/submit_arm_build.sh --bucket gs://my-bucket --submit
+#   scripts/arm-build/submit_arm_build.sh --bucket gs://my-bucket --log-level INFO --submit   # keep optimizer/plan INFO logs
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,6 +27,8 @@ MEMORY_MIB="65536"
 MAX_RUN_DURATION="21600s"
 TARGETS="systest nes-single-node-worker"
 BUILD_TYPE="Release"
+# Compile-time NES_LOG_LEVEL; a Release build compiles everything below ERROR out, including the optimizer's decisions.
+LOG_LEVEL="ERROR"
 OUT_DIR="${TMPDIR:-/tmp}"
 SUBMIT="false"
 
@@ -45,6 +48,7 @@ while [[ $# -gt 0 ]]; do
         --max-run-duration) MAX_RUN_DURATION="$2"; shift 2 ;;
         --targets) TARGETS="$2"; shift 2 ;;
         --build-type) BUILD_TYPE="$2"; shift 2 ;;
+        --log-level) LOG_LEVEL="$2"; shift 2 ;;
         --out-dir) OUT_DIR="$2"; shift 2 ;;
         --submit) SUBMIT="true"; shift ;;
         -h|--help) usage 0 ;;
@@ -103,6 +107,7 @@ sed \
     -e "s|@VCPKG_CACHE_URI@|${VCPKG_CACHE_URI}|g" \
     -e "s|@TARGETS@|${TARGETS}|g" \
     -e "s|@BUILD_TYPE@|${BUILD_TYPE}|g" \
+    -e "s|@LOG_LEVEL@|${LOG_LEVEL}|g" \
     -e "s|@JOBS@|$((CPU_MILLI / 1000))|g" \
     -e "s|@CPU_MILLI@|${CPU_MILLI}|g" \
     -e "s|@MEMORY_MIB@|${MEMORY_MIB}|g" \

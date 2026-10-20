@@ -43,8 +43,8 @@ enum class InferenceBatchSizeStrategy : uint8_t
     /// Submit a profiling job to the worker hosting an inference operator fed by a time window and choose the batch size with the
     /// highest throughput among those that keep up with the window results and meet the latency SLO derived from the window. A
     /// batch size keeps up if its invocation occupies at most inference_max_utilization of the B strides in which a batch of B
-    /// results arrives; it meets the SLO if the batch fill time plus the invocation stays within the window size. Other inference
-    /// operators use the configured inference_batch_size.
+    /// results arrives; it meets the SLO if the batch fill time plus the invocation stays within inference_latency_slo_fraction of
+    /// the window size. Other inference operators use the configured inference_batch_size.
     OPTIMIZER_CHOOSES
 };
 
@@ -112,6 +112,13 @@ public:
            "above it does not keep up with the window results: the headroom absorbs the queueing that makes latency diverge as the "
            "utilization approaches 1."};
 
+    FloatOption inferenceLatencySloFraction
+        = {"inference_latency_slo_fraction",
+           "0.9",
+           "Fraction of the window size that the predicted result latency of a batch size, its fill time plus the profiled invocation, "
+           "may take under OPTIMIZER_CHOOSES. The rest absorbs the window close, queueing and scheduling delays that the profile does "
+           "not include."};
+
     EnumOption<InferenceMemoryStrategy> inferenceMemoryStrategy
         = {"inference_memory_strategy",
            InferenceMemoryStrategy::FIXED,
@@ -157,6 +164,7 @@ private:
             &inferenceMaxBatchSize,
             &inferenceReplaySpeedup,
             &inferenceMaxUtilization,
+            &inferenceLatencySloFraction,
             &inferenceMemoryStrategy,
             &inferenceMemoryBudgetFraction,
             &postJoinInferenceStrategy,

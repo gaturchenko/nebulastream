@@ -20,6 +20,7 @@ NES_VCPKG_CACHE_URI="${NES_VCPKG_CACHE_URI:-}"
 NES_LLVM_VERSION="${NES_LLVM_VERSION:-21-with-fix-173075}"
 NES_TRIPLET="${NES_TRIPLET:-arm64-linux-none-local}"
 NES_BUILD_TYPE="${NES_BUILD_TYPE:-Release}"
+NES_LOG_LEVEL="${NES_LOG_LEVEL:-ERROR}"
 NES_TARGETS="${NES_TARGETS:-systest nes-single-node-worker}"
 NES_LLVM_TOOLCHAIN_VERSION="${NES_LLVM_TOOLCHAIN_VERSION:-19}"
 # The stdlib token of the prebuilt LLVM asset. It is the name of the standard library itself, which is not the "local" that
@@ -218,6 +219,7 @@ log "Configuring"
 # prebuilt LLVM downloaded above is the libstdc++ build, so the standard library has to be the system one on both sides.
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE="${NES_BUILD_TYPE}" \
+    -DNES_LOG_LEVEL="${NES_LOG_LEVEL}" \
     -DCMAKE_C_COMPILER="clang-${NES_LLVM_TOOLCHAIN_VERSION}" \
     -DCMAKE_CXX_COMPILER="clang++-${NES_LLVM_TOOLCHAIN_VERSION}" \
     -DCMAKE_TOOLCHAIN_FILE="${SRC_DIR}/vcpkg-repository/scripts/buildsystems/vcpkg.cmake" \

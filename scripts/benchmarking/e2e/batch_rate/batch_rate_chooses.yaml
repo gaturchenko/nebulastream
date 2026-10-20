@@ -1,0 +1,3 @@
+"optimizer.inference_batch_size_strategy": ["OPTIMIZER_CHOOSES"]
+"optimizer.inference_max_utilization": [0.8]
+"optimizer.inference_latency_slo_fraction": [0.9]

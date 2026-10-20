@@ -1,0 +1,133 @@
+#  Source-rate x batch-size micro-benchmark on the Pi (N-BEATS, window-fed batched inference).
+#
+#  Inference fed by a time window lowers to InterBufferBatchingPhysicalOperator, which waits for B
+#  window results before invoking the model (no timeout). A batch therefore costs (B - 1) strides of
+#  fill time, so the throughput-optimal batch size misses the latency SLO at low arrival rates, while
+#  small batches cannot amortise the per-invocation cost at high ones. OPTIMIZER_CHOOSES resolves the
+#  trade-off from the worker's model profile.
+#
+#  Synthetic series (gen_batch_rate_data.py --step-ms 1): one sample per ms of event time, replayed in
+#  real time by the TCP mock source (1000 tuples/s), so event time equals wall-clock time and
+#  inference_replay_speedup stays 1. SIZE 75 ms is exactly the 75 values nbeats_size_300_stride_30.onnx
+#  consumes and doubles as the latency SLO; the rate axis is the window ADVANCE, one section each:
+#
+#    :01 ADVANCE 40 ms ->   25 results/s        :05 ADVANCE 3 ms ->  333 results/s
+#    :02 ADVANCE 20 ms ->   50 results/s        :06 ADVANCE 2 ms ->  500 results/s
+#    :03 ADVANCE 10 ms ->  100 results/s        :07 ADVANCE 1 ms -> 1000 results/s
+#    :04 ADVANCE  5 ms ->  200 results/s
+#
+#  FLUSH_INTERVAL_MS 1: the default 100 ms flush would hand the windowing ~100 tuples per buffer, close
+#  windows in bursts and fill batches far faster than the nominal arrival rate.
+#  ingestion_time is the MAX of CURRENT_TIME() over the window, i.e. when its last tuple was processed,
+#  so the measured latency is window close + batch fill + queueing + invocation.
+#
+#  Driven by run_batch_rate.sh (sweep) and process_batch_rate.py (results); the sink path must match
+#  the driver's results directory, which is where run_systests_lat.py collects latency_timings.csv.
+
+# Fixed for every cell, so they live here rather than in the sweep YAMLs: run_systests_lat.py names each result directory
+# after its swept keys, and with these included the name exceeds the 255-byte file name limit.
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
+GlobalConfiguration worker.default_query_execution.inference.use_batch_deduplication: [false]
+GlobalConfiguration worker.default_query_execution.inference.prediction_cache_type: [NONE]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [1]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [0]
+GlobalConfiguration worker.default_query_execution.inference.openvino_enable_cpu_pinning: [false]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [4096]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [8192]
+
+CREATE LOGICAL SOURCE series(timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR series TYPE TCP SET(
+    1000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/synthetic/batch_rate.csv
+
+CREATE SINK forecastLatency(
+    forecast VARSIZED NOT NULL,
+    ingestion_time UINT64 NOT NULL
+) TYPE LATENCY SET (
+    'results/batch_rate/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+CREATE MODEL nbeats300 ('/home/gaturchenko/navi/models-benchmarking/models/nbeats/nbeats_size_300_stride_30.onnx')
+INPUT (value_75_ms VARSIZED)
+OUTPUT (forecast VARSIZED);
+
+# ADVANCE 40 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 40 ms)
+    )
+)
+INTO forecastLatency;
+----
+
+# ADVANCE 20 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 20 ms)
+    )
+)
+INTO forecastLatency;
+----
+
+# ADVANCE 10 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 10 ms)
+    )
+)
+INTO forecastLatency;
+----
+
+# ADVANCE 5 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 5 ms)
+    )
+)
+INTO forecastLatency;
+----
+
+# ADVANCE 3 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 3 ms)
+    )
+)
+INTO forecastLatency;
+----
+
+# ADVANCE 2 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 2 ms)
+    )
+)
+INTO forecastLatency;
+----
+
+# ADVANCE 1 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 1 ms)
+    )
+)
+INTO forecastLatency;
+----
