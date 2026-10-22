@@ -34,6 +34,10 @@ target_link_libraries(nes-single-node-worker-lib
 
 add_executable(nes-single-node-worker src/SingleNodeWorkerStarter.cpp)
 target_link_libraries(nes-single-node-worker PRIVATE nes-single-node-worker-lib)
+
+# Runs the optimizer's model profiling job standalone (scripts/benchmarking/e2e/post_join_pilot)
+add_executable(nes-model-profiler src/ModelProfilerStarter.cpp)
+target_link_libraries(nes-model-profiler PRIVATE nes-single-node-worker-lib)
 if (ENABLE_BATS_TESTS)
     add_test(
             NAME worker-offline-test
