@@ -18,6 +18,9 @@ font- and figure-size constants at the top of its body, and a `__main__` block.
 | `plot_flink_memory.py` | `flink-memory.pdf` | `data/systems/flink_memory.csv` |
 | `plot_ablation.py` | `e2e-audio.pdf`, `e2e-ts.pdf` | `data/ablation/*.csv` |
 | `plot_musan_audio.py` | `musan-audio.pdf` | `data/musan/*_envelope.csv` |
+| `plot_batch_rate.py` | `batch-rate.pdf` | `data/batch_rate/batch_rate_runs.csv` |
+| `plot_batch_throughput.py` | `batch-throughput.pdf` | `data/batch_rate/batch_throughput_runs.csv`, `data/batch_rate/batch_rate_profile.csv` |
+| `plot_batch_rate_throughput.py` | `batch-rate-throughput.pdf` (full width, both panels) | as the two above |
 
 ## Running
 
@@ -79,3 +82,19 @@ protanopia (OKLab Delta E 0.7) -- `e2e-systems.pdf` still carries that pairing.
 - `musan/` — per-bin min/max waveform envelopes of the three MUSAN US-gov speech
   recordings used as benchmark sources; regenerate from the raw WAVs with
   `python prepare_musan_waveforms.py /path/to/MUSAN/raw`.
+- `batch_rate/` — source-rate x batch-size micro-benchmark on the Pi (N-BEATS, window-fed batched
+  inference; `e2e/batch_rate/`): 7 offered rates x 8 fixed batch sizes plus OPTIMIZER_CHOOSES,
+  3 repetitions each. The CSVs are `process_batch_rate.py`'s aggregates: one row per run
+  (`batch_rate_runs.csv`), the per-cell medians, the optimizer's per-candidate profile parsed
+  from the INFO log, and the cells with missing repetitions (batch sizes 1 and 2 at 1000/s fall
+  behind until the buffer pool runs out). The raw per-run results stay on the Pi under
+  `~/navi/results/batch_rate`.
+
+  `batch_throughput_*.csv` are the sustainable-throughput companion (`run_batch_throughput.sh`,
+  `process_batch_throughput.py`): the same rate-limited query and worker settings, each fixed
+  batch size run at a ~1.25x ladder of offered rates around its capacity, plus the same window
+  without inference; 3 repetitions of 30 s. A run sustains its rate if it delivers >= 99% of it
+  (the mock source backpressures, so latency alone would hide a shortfall). Every run waited for
+  the SoC to cool below 70 C: without the wait the high-rate cells reached the Pi 4's 80 C soft
+  limit, and the 12 runs that were throttled were re-measured. Raw results:
+  `~/navi/results/batch_throughput` (throttled originals in `batch_throughput_throttled`).

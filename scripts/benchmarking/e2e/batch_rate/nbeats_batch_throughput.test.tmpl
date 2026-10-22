@@ -1,0 +1,65 @@
+#  Sustainable-throughput companion of nbeats_batch_rate.test (source-rate x batch-size micro-benchmark on the Pi).
+#
+#  Template: run_batch_throughput.sh writes one .test per offered rate, substituting @TUPLE_RATE@ and @DATA@. Everything
+#  else is identical to nbeats_batch_rate.test, so each run is the same kind of rate-limited run as the latency sweep and
+#  only the offered rate differs. With one sample per ms of event time and ADVANCE 1 ms, every tuple closes one window,
+#  so the offered rate in results/s is MOCK_TUPLE_RATE; above 1000 tuples/s the source replays event time faster than
+#  real time. A batch size sustains a rate if it delivers the results at that rate; the largest such rate is its
+#  sustainable throughput.
+#
+#    :01 the inference query, as in nbeats_batch_rate.test with ADVANCE 1 ms
+#    :02 the same window without inference, to show where windowing and the source cap the rate, not the model
+#
+#  The mock TCP source paces tuples with blocking writes, so a query that falls behind backpressures the source instead
+#  of queueing: ingestion_time is taken when NES reads a tuple and the latency hides the shortfall. Sustainability is
+#  therefore judged by the delivered result rate (process_batch_throughput.py), not by latency.
+
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
+GlobalConfiguration worker.default_query_execution.inference.use_batch_deduplication: [false]
+GlobalConfiguration worker.default_query_execution.inference.prediction_cache_type: [NONE]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [1]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [0]
+GlobalConfiguration worker.default_query_execution.inference.openvino_enable_cpu_pinning: [false]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [4096]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [8192]
+
+CREATE LOGICAL SOURCE series(timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR series TYPE TCP SET(
+    @TUPLE_RATE@ AS `SOURCE`.MOCK_TUPLE_RATE,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE @DATA@
+
+CREATE SINK forecastLatency(
+    forecast VARSIZED NOT NULL,
+    ingestion_time UINT64 NOT NULL
+) TYPE LATENCY SET (
+    'results/batch_throughput/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+CREATE MODEL nbeats300 ('/home/gaturchenko/navi/models-benchmarking/models/nbeats/nbeats_size_300_stride_30.onnx')
+INPUT (value_75_ms VARSIZED)
+OUTPUT (forecast VARSIZED);
+
+# Inference, ADVANCE 1 ms
+SELECT forecast, ingestion_time
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 1 ms)
+    )
+)
+INTO forecastLatency;
+----
+
+# Window only, ADVANCE 1 ms
+SELECT value_75_ms AS forecast, ingestion_time
+FROM (
+        SELECT ARRAY_AGG(value) AS value_75_ms, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, CURRENT_TIME() AS ingestion_time FROM series)
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 1 ms)
+    )
+INTO forecastLatency;
+----
