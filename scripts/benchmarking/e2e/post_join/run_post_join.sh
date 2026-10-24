@@ -32,6 +32,10 @@ CHOOSES_ADVANCE_MS="${CHOOSES_ADVANCE_MS:-1000}"
 # Join-only queries at these k and ADVANCEs show where the sources, windows and joins alone cap the rate.
 CONTROL_KS="${CONTROL_KS:-8}"
 CONTROL_ADVANCES_MS="${CONTROL_ADVANCES_MS:-200}"
+# Inference options to pass on the command line as well, e.g. WORKER_OPTIONS="openvino_num_streams=1 openvino_inference_num_threads=4".
+# Only a systest that profiles models for the optimizer with its command-line worker configuration instead of the test file's
+# GlobalConfiguration (before the per-override profiler) needs them, to profile the session as deployed.
+WORKER_OPTIONS="${WORKER_OPTIONS:-}"
 # Seconds of audio per run.
 DURATION_S="${DURATION_S:-60}"
 SAMPLE_S="${SAMPLE_S:-5}"
@@ -81,6 +85,10 @@ config_for() {  # config_for <strategy> <dedup>: path of the one-combination YAM
     local path="${RESULTS}/_configs/${1}_dedup-${2}.yaml"
     printf '"optimizer.post_join_inference_strategy": [%s]\n"worker.default_query_execution.inference.use_batch_deduplication": [%s]\n' \
         "$1" "$2" > "$path"
+    local option
+    for option in $WORKER_OPTIONS; do
+        printf '"worker.default_query_execution.inference.%s": [%s]\n' "${option%%=*}" "${option#*=}" >> "$path"
+    done
     echo "$path"
 }
 

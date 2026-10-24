@@ -25,12 +25,18 @@ HEADER = """\
 #  joined on the window start and fed into MHAtt-RNN once per stream. Sections:
 {sections}
 #
-#  The latency sink measures from the last sample of stream 0's window (ingestion_time) to the joined record's sink.
+#  The latency sink measures from the last sample of stream 0's window (ingestion_time) to the joined record's sink, which
+#  includes closing the windows and joins and so hides small inference costs; the event trace gives the task time of the
+#  inference pipelines, the cost of the two plans themselves (process_post_join.py).
+#
+#  OpenVINO runs one stream with 4 threads per session: with num_streams 0 on the Pi, concurrent inferences from several worker
+#  threads into private sessions grow the worker's memory without bound until the Pi thrashes.
 
+GlobalConfiguration enable_event_trace: [true]
 GlobalConfiguration worker.query_engine.number_of_worker_threads: [{worker_threads}]
 GlobalConfiguration worker.default_query_execution.inference.prediction_cache_type: [NONE]
-GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [1]
-GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [0]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
 GlobalConfiguration worker.default_query_execution.inference.openvino_enable_cpu_pinning: [false]
 GlobalConfiguration worker.default_query_execution.inference.openvino_share_compiled_model: [false]
 GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]

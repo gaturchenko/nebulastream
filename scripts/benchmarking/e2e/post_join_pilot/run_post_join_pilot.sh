@@ -25,9 +25,9 @@ squeezedet=models-benchmarking/models/squeezedet/squeezedet.onnx}"
 # OpenVINO sessions as num_streams:inference_num_threads. An explicit num_streams=0 (NES's default, 0:1) makes OpenVINO 2025.3
 # rebuild its executor config without the thread count, so inference_num_threads has no effect; what it falls back to depends on
 # the build. On x86 (TBB) the zero-stream config is one 1-thread stream run inline on the caller's thread, i.e. one core. On the
-# Pi it occupies ~3.3 of 4 cores (SqueezeDet: 81 ms at 0:1 and 0:4, 82 ms at 1:4, 196 ms at 1:1). 0:1 is what deployed queries
-# run with; 1:1 and 1:4 pin the intra-op parallelism to one core and to all cores.
-SESSIONS="${SESSIONS:-0:1 1:1 1:4}"
+# Pi it occupies ~3.3 of 4 cores (SqueezeDet: 81 ms at 0:1 and 0:4, 82 ms at 1:4, 196 ms at 1:1), but concurrent inferences into
+# private zero-stream sessions leak memory on the Pi. 1:4 is what deployed queries run with; 0:1 and 1:1 are for comparison.
+SESSIONS="${SESSIONS:-1:4}"
 # Batch deduplication (or a prediction cache) makes batched sessions accept partially filled batches, i.e. a dynamic batch
 # dimension, which OpenVINO may compile into slower kernels; single-tuple sessions stay static either way.
 DYNAMIC="${DYNAMIC:-false true}"
