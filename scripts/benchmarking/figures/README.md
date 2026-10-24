@@ -21,6 +21,7 @@ font- and figure-size constants at the top of its body, and a `__main__` block.
 | `plot_batch_rate.py` | `batch-rate.pdf` | `data/batch_rate/batch_rate_runs.csv` |
 | `plot_batch_throughput.py` | `batch-throughput.pdf` | `data/batch_rate/batch_throughput_runs.csv`, `data/batch_rate/batch_rate_profile.csv` |
 | `plot_batch_rate_throughput.py` | `batch-rate-throughput.pdf` (full width, both panels) | as the two above |
+| `plot_post_join.py` | `post-join.pdf` | `data/post_join/post_join_{runs,decisions,pilot_summary}_x86.csv`, `data/post_join/post_join_{pilot_summary,decisions}_pi.csv` |
 
 ## Running
 
@@ -98,3 +99,22 @@ protanopia (OKLab Delta E 0.7) -- `e2e-systems.pdf` still carries that pairing.
   the SoC to cool below 70 C: without the wait the high-rate cells reached the Pi 4's 80 C soft
   limit, and the 12 runs that were throttled were re-measured. Raw results:
   `~/navi/results/batch_throughput` (throttled originals in `batch_throughput_throttled`).
+- `post_join/` — post-join batching decision (`e2e/post_join/`, `e2e/post_join_pilot/`): k MUSAN
+  streams joined on their window start, MHAtt-RNN on each payload, run as one batch-k invocation
+  (BATCHED) or k single ones (SEQUENTIAL), forced or chosen by OPTIMIZER_CHOOSES. Every OpenVINO
+  session runs one stream with four inference threads (`openvino_num_streams=1`,
+  `openvino_inference_num_threads=4`), profiled and deployed alike.
+  `post_join_pilot_summary_{x86,pi}.csv` are the optimizer's profile from `nes-model-profiler`
+  (`summarize_post_join_pilot.py`) per model x OpenVINO session x static/dynamic batch, 3
+  repetitions; `post_join_pilot_thermal_pi.csv` the Pi's temperature during it. The Pi batches at
+  every k, so the decision changes only on x86 (so015, pinned to 4 cores):
+  `post_join_{runs,summary,decisions}_x86.csv` are `process_post_join.py`'s aggregates (one row per
+  run, per-cell medians, and the choice against both forced plans), 3 repetitions of 60 s. The
+  plans are compared by the inference pipelines' task time per joined record from the event trace:
+  end-to-end latency is dominated by closing the windows and joins and differs by ~1% between
+  plans. Raw results stay on so015 under `~/navi-x86/results/post_join`. The Pi ran the same
+  experiment at k = 2, 4 with deduplication, ADVANCE 1000/500/333 ms, 3 repetitions, 60 s
+  (`post_join_{runs,summary,decisions,thermal}_pi.csv`): each run started below 60 °C, and the 20
+  runs that throttled were moved to `~/navi/results/post_join_throttled` and re-measured from
+  below 55 °C. k = 4 SEQUENTIAL at 333 ms throttles every time; it falls behind from 500 ms on
+  regardless. Raw results: `~/navi/results/post_join`.
