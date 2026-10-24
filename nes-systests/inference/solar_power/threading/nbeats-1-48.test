@@ -1,4 +1,7 @@
 GlobalConfiguration enable_event_trace: [true]
+# One OpenVINO stream per worker-thread session, so that each split's inference_num_threads applies: with num_streams 0
+# OpenVINO drops inference_num_threads and runs every inference on one core (x86).
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
 GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [500000]
 GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
 GlobalConfiguration worker.default_query_execution.page_size: [16384]
