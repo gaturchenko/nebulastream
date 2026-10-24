@@ -86,10 +86,74 @@ if command -v sudo >/dev/null 2>&1; then
         || echo "WARNING: could not reset swap; results may carry over pressure from the previous run" >&2
 fi
 
+# Thermal state per arm. The Pi 4's firmware lowers the clock at its 80 C soft limit (vcgencmd get_throttled bits 0-3), and a
+# throttled arm measures the clock governor, not the system. Each arm waits until the SoC is below COOLDOWN_C (0 = no wait),
+# samples temperature and flags every SAMPLE_S seconds while it runs, and is re-run up to THROTTLE_RETRIES times if any sample
+# was flagged. Every attempt is appended to results-thermal/arms.csv, which lies outside results/ like results-reps/; REP_LABEL
+# (set by the wrappers) names the repetition there.
+SAMPLE_S="${SAMPLE_S:-5}"
+COOLDOWN_C="${COOLDOWN_C:-0}"
+THROTTLE_RETRIES="${THROTTLE_RETRIES:-0}"
+THERMAL_LOG=results-thermal/arms.csv
+mkdir -p "$(dirname "$THERMAL_LOG")"
+[[ -s "$THERMAL_LOG" ]] || echo "time,workload,test_file,rate,rep_label,arm,attempt,temp_c_max,flagged_samples,kept" > "$THERMAL_LOG"
+
+cooldown() {
+    [[ "$COOLDOWN_C" == 0 ]] && return
+    local waited=0
+    while (( $(vcgencmd measure_temp | sed 's/[^0-9]*\([0-9]*\).*/\1/') >= COOLDOWN_C )); do
+        sleep 5
+        waited=$(( waited + 5 ))
+    done
+    (( waited > 0 )) && echo "  (cooled down for ${waited} s)"
+}
+
+# run_arm <arm> <cleanup function> <command...>: runs one arm under the thermal rule above. The cleanup function removes a
+# throttled attempt's output before the next attempt.
+run_arm() {
+    local arm="$1" cleanup="$2"
+    shift 2
+    local attempt samples sampler max flagged
+    for (( attempt = 1; attempt <= THROTTLE_RETRIES + 1; attempt++ )); do
+        cooldown
+        samples=$(mktemp)
+        ( while :; do
+            echo "$(vcgencmd measure_temp | sed 's/[^0-9.]//g') $(vcgencmd get_throttled | cut -d= -f2)"
+            sleep "$SAMPLE_S"
+          done ) > "$samples" &
+        sampler=$!
+        "$@"
+        kill "$sampler" 2>/dev/null
+        wait "$sampler" 2>/dev/null
+        max=$(awk '{ if ($1 > m) m = $1 } END { print m + 0 }' "$samples")
+        flagged=0
+        while read -r _ flags; do
+            [[ -n "$flags" ]] && (( flags & 0xF )) && flagged=$(( flagged + 1 ))
+        done < "$samples"
+        rm -f "$samples"
+        local kept=yes
+        (( flagged > 0 && attempt <= THROTTLE_RETRIES )) && kept=no
+        [[ "$kept" == yes && "$flagged" -gt 0 ]] && kept=throttled
+        echo "$(date +%FT%T),${WORKLOAD},${TEST_FILE},${RATE:-},${REP_LABEL:-},${arm},${attempt},${max},${flagged},${kept}" >> "$THERMAL_LOG"
+        echo "  ${arm}: attempt ${attempt}, max ${max} C, ${flagged} throttled samples (${kept})"
+        [[ "$kept" != no ]] && return
+        "$cleanup"
+    done
+}
+clean_flink() { rm -f "$FLINK_STATS"; }
+clean_results_dirs() { rm -rf ./results/*/; }
+
 # Clear stale per-query result directories before measuring. process_results_lat.py scans the whole
 # results/ tree, so a directory left behind by an earlier run -- a manual systest invocation, or a
 # run interrupted before its trailing cleanup -- is silently folded into this run's numbers and
 # cannot be told apart afterwards: the combination label naming the directory is identical.
+# Other experiments keep their results under results/ too, and the processors scan the whole tree, so this only runs when every
+# directory there is a systems run (its query is a *systems*.test); move anything else out of results/ first.
+for dir in ./results/*/; do
+    [[ -d "$dir" ]] || continue
+    compgen -G "${dir}*systems*.test_*" > /dev/null \
+        || { echo "ERROR: $dir is not a systems run; move other experiments out of results/ before running this" >&2; exit 1; }
+done
 rm -rf ./results/*/
 stage_enabled nes && rm -f "results/nes_${WORKLOAD}.csv"
 stage_enabled torchserve && rm -f "results/torchserve_${WORKLOAD}.csv"
@@ -152,19 +216,30 @@ fi
 FLINK_RATE=()
 [[ -n "${RATE:-}" ]] && FLINK_RATE=(RATE="$RATE")
 
+# Flink's inference lanes are NES's worker threads: taken from the .test this run uses, so the two cannot drift apart.
+TEST_PATH="queries/${TEST_FILE}"
+FLINK_PARALLELISM=$(sed -n 's/^GlobalConfiguration worker.query_engine.number_of_worker_threads: \[\([0-9]\+\)\].*/\1/p' "$TEST_PATH" | head -1)
+[[ -n "$FLINK_PARALLELISM" ]] || { echo "No number_of_worker_threads in $TEST_PATH" >&2; exit 1; }
+echo "Flink inference lanes = NES worker threads = $FLINK_PARALLELISM"
+
 if stage_enabled flink; then
-    env QUERY_NAME="${QUERY_NAME:-flink}" PARAM_NAME=baseline PARAM_VALUE=flink REPETITION=0 \
-        MODEL="$MODEL_IR" STATS="$FLINK_STATS" "${FLINK_GEOMETRY[@]}" "${FLINK_RATE[@]}" \
+    run_arm flink clean_flink env QUERY_NAME="${QUERY_NAME:-flink}" PARAM_NAME=baseline PARAM_VALUE=flink REPETITION=0 \
+        MODEL="$MODEL_IR" STATS="$FLINK_STATS" PARALLELISM="$FLINK_PARALLELISM" "${FLINK_GEOMETRY[@]}" "${FLINK_RATE[@]}" \
         "$FLINK_RUN"
 fi
 
 # ---- NES MODEL_INFERENCE ----
+# Processed straight away, so that a TorchServe attempt can be discarded without touching NES's traces.
 if stage_enabled nes; then
-    python3 scripts/run_systests_lat.py \
+    run_arm nes clean_results_dirs python3 scripts/run_systests_lat.py \
         --inference-config "$ST_CONFIG" \
         --queries "${TEST_FILE}:02" \
         --data "$DATA_DIR" \
         --repetitions 1
+    python3 scripts/process_results_lat.py \
+        --results-dir results \
+        --output-csv "results/nes_${WORKLOAD}.csv"
+    rm -rf ./results/*/
 fi
 
 # ---- TorchServe lane check ----
@@ -186,7 +261,6 @@ fi
 # So the check here is NOT parity of lane counts. It is only that the sink can keep the server's
 # workers busy: connections >= workers. The baseline runs in the configuration that measured best
 # for it, which is also the configuration we can defend.
-TEST_PATH="queries/${TEST_FILE}"
 SINK_CONNECTIONS=$(sed -n 's/.*[^0-9]\([0-9]\+\) AS .SINK..connections.*/\1/p' "$TEST_PATH" | head -1)
 CONFIG_WORKERS=$(sed -n 's/^default_workers_per_model=\([0-9]\+\).*/\1/p' "$TS_CONFIG" | tail -1)
 
@@ -244,7 +318,7 @@ if stage_enabled torchserve; then
     curl -s 127.0.0.1:8080/ping
     curl -s 127.0.0.1:8082/metrics | head
 
-    python3 scripts/run_systests_lat.py \
+    run_arm torchserve clean_results_dirs python3 scripts/run_systests_lat.py \
         --inference-config "$UDF_CONFIG" \
         --queries "${TEST_FILE}:03" \
         --data "$DATA_DIR" \
@@ -252,16 +326,8 @@ if stage_enabled torchserve; then
         --repetitions 1
 fi
 
-# Process results. NES traces are the per-query JSON under results/<combo>/... — scan the results
-# DIRECTORY (not the TorchServe timings file, which holds no NES traces). Each processor runs only
-# if its arm did: scanning for traces that were never produced would overwrite a good CSV with an
-# empty one.
-if stage_enabled nes; then
-    python3 scripts/process_results_lat.py \
-        --results-dir results \
-        --output-csv "results/nes_${WORKLOAD}.csv"
-fi
-
+# Process the TorchServe results (NES's were processed after its arm). It runs only if its arm did: scanning for traces that
+# were never produced would overwrite a good CSV with an empty one.
 if stage_enabled torchserve; then
     python3 scripts/process_torchserve_results.py \
         --results-dir results \

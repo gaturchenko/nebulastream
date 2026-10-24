@@ -51,10 +51,10 @@ for mode in private shared; do
             sampler=$!
 
             if [[ "$mode" == "shared" ]]; then
-                FLINK_OV_SHARE_COMPILED_MODEL=1 STAGES=flink ./scripts/run_systems.sh "$profile" > "$log" 2>&1 \
+                FLINK_OV_SHARE_COMPILED_MODEL=1 STAGES=flink REP_LABEL="memory_${mode}_rep${rep}" ./scripts/run_systems.sh "$profile" > "$log" 2>&1 \
                     || echo "  !! run failed, see $log"
             else
-                STAGES=flink ./scripts/run_systems.sh "$profile" > "$log" 2>&1 \
+                STAGES=flink REP_LABEL="memory_${mode}_rep${rep}" ./scripts/run_systems.sh "$profile" > "$log" 2>&1 \
                     || echo "  !! run failed, see $log"
             fi
             kill "$sampler" 2>/dev/null

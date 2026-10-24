@@ -73,7 +73,7 @@ for rep in $(seq 1 "$REPS"); do
             exit 1
         fi
 
-        STAGES="$STAGES" TEST_FILE="$DERIVED_REL" RATE="$rate" \
+        STAGES="$STAGES" TEST_FILE="$DERIVED_REL" RATE="$rate" REP_LABEL="rep${rep}${TAG:+_$TAG}" \
             ./scripts/run_systems.sh "$PROFILE" > "/tmp/sweep_${WORKLOAD}_r${rate}_rep${rep}.log" 2>&1 \
             || echo "  !! run_systems.sh failed, see /tmp/sweep_${WORKLOAD}_r${rate}_rep${rep}.log"
 

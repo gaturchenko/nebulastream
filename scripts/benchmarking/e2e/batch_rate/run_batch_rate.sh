@@ -27,6 +27,8 @@ CONFIGS="${CONFIGS:-fixed chooses}"
 # 60 s of data per run at 1 sample/ms. Cells that fall behind (batch 1 at 1000 results/s) take correspondingly longer.
 ROWS="${ROWS:-60000}"
 SAMPLE_S="${SAMPLE_S:-5}"
+# Each run waits until the SoC has cooled below COOLDOWN_C, so that no run inherits the previous one's heat; 0 disables the wait.
+COOLDOWN_C="${COOLDOWN_C:-0}"
 VENV="${VENV:-models-benchmarking/venv}"
 
 QUERY_DIR=queries/batch-rate
@@ -59,6 +61,15 @@ thermal_sampler() {
             >> "${RESULTS}/thermal.csv"
         sleep "$SAMPLE_S"
     done
+}
+cooldown() {
+    [[ "$COOLDOWN_C" == 0 ]] && return
+    local waited=0
+    while (( $(vcgencmd measure_temp | sed 's/[^0-9]*\([0-9]*\).*/\1/') >= COOLDOWN_C )); do
+        sleep 5
+        waited=$(( waited + 5 ))
+    done
+    (( waited > 0 )) && echo "  (cooled down for ${waited} s)"
 }
 thermal_sampler &
 SAMPLER=$!
@@ -95,6 +106,7 @@ for rep in $(seq 1 "$REPS"); do
         : > "$log"
         echo "### rep $rep/$REPS  ${name}  ($(date +%H:%M:%S), $(( ($(date +%s) - started) / 60 )) min elapsed)"
         for section in $SECTIONS; do
+            cooldown
             python3 scripts/run_systests_lat.py \
                 --inference-config "$variant" \
                 --queries "batch-rate/${TEST_FILE}:${section}" \

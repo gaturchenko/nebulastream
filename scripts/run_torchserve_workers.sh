@@ -53,7 +53,7 @@ for workers in "${WORKERS[@]}"; do
           done ) > "$memlog" 2>&1 &
         sampler=$!
 
-        STAGES=torchserve TS_WORKERS="$workers" \
+        STAGES=torchserve TS_WORKERS="$workers" REP_LABEL="workers${workers}_rep${rep}" \
             ./scripts/run_systems.sh "$PROFILE" \
             > "/tmp/tsworkers_${WORKLOAD}_w${workers}_rep${rep}.log" 2>&1 \
             || echo "  !! run failed, see /tmp/tsworkers_${WORKLOAD}_w${workers}_rep${rep}.log"

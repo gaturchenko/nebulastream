@@ -16,6 +16,8 @@
 set -uo pipefail
 
 REPS="${1:-3}"
+# Numbering starts here, e.g. FIRST_REP=4 STAGES=flink for CWRU's extra Flink repetitions beside reps 1-3.
+FIRST_REP="${FIRST_REP:-1}"
 shift || true
 PROFILES=("$@")
 if [[ ${#PROFILES[@]} -eq 0 ]]; then
@@ -33,12 +35,12 @@ mkdir -p "$REPS_DIR"
 echo "### repetitions=$REPS profiles=${PROFILES[*]} stages=[$STAGES] share_compiled_model=$SHARE"
 started=$(date +%s)
 
-for rep in $(seq 1 "$REPS"); do
+for rep in $(seq "$FIRST_REP" $(( FIRST_REP + REPS - 1 ))); do
     for profile in "${PROFILES[@]}"; do
         # shellcheck source=/dev/null
         source "scripts/systems/${profile}.env"
         echo
-        echo "### rep $rep/$REPS  profile $profile  ($(date +%H:%M:%S))"
+        echo "### rep $rep  profile $profile  ($(date +%H:%M:%S))"
 
         if [[ "$SHARE" == "1" ]]; then
             # Flink only: NES and TorchServe are unaffected by this setting.
@@ -50,7 +52,7 @@ for rep in $(seq 1 "$REPS"); do
                 || echo "  !! flink (shared) failed, see /tmp/reps_${WORKLOAD}_shared_rep${rep}.log"
             deactivate 2>/dev/null || true
         else
-            STAGES="$STAGES" ./scripts/run_systems.sh "$profile" > "/tmp/reps_${WORKLOAD}_rep${rep}.log" 2>&1 \
+            STAGES="$STAGES" REP_LABEL="rep${rep}" ./scripts/run_systems.sh "$profile" > "/tmp/reps_${WORKLOAD}_rep${rep}.log" 2>&1 \
                 || echo "  !! run_systems.sh failed, see /tmp/reps_${WORKLOAD}_rep${rep}.log"
             for system in $STAGES; do
                 src="results/${system}_${WORKLOAD}.csv"
