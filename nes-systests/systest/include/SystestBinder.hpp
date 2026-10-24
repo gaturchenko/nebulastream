@@ -15,6 +15,7 @@
 #pragma once
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -30,6 +31,9 @@ namespace NES::Systest
 /// The systest binder uses the SystestParser to create SystestQuery objects that contain everything to run and validate systest queries.
 /// It has to do more than a traditional binder to be able to extract some information required for validation,
 /// such as the file output schema of the sinks.
+/// Creates the profiler the optimizer runs its profiling jobs on for queries that run with the given configuration override.
+using InferenceProfilerFactory = std::function<std::shared_ptr<InferenceProfiler>(const ConfigurationOverride&)>;
+
 class SystestBinder
 {
 public:
@@ -40,7 +44,7 @@ public:
         const std::filesystem::path& configDir,
         const QueryOptimizerConfiguration& queryOptimizerConfiguration,
         SystestClusterConfiguration clusterConfig,
-        std::shared_ptr<InferenceProfiler> inferenceProfiler);
+        InferenceProfilerFactory inferenceProfilerFor);
 
     /// @return the loaded systest queries and the number of loaded files
     [[nodiscard]] std::pair<std::vector<SystestQuery>, size_t> loadOptimizeQueries(const TestFileMap& discoveredTestFiles);

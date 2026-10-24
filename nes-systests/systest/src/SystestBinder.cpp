@@ -203,6 +203,26 @@ public:
 
     void setConfigurationOverrides(std::vector<ConfigurationOverride> overrides) { configurationOverrides = std::move(overrides); }
 
+    /// Splits this builder into one per configuration override. The optimizer profiles models with the configuration of the
+    /// worker that will run the query, so a query is optimized separately for every configuration it runs with.
+    std::vector<SystestQueryBuilder> splitByConfigurationOverride() &&
+    {
+        std::vector<SystestQueryBuilder> builders;
+        builders.reserve(configurationOverrides.size());
+        for (const auto& configurationOverride : configurationOverrides)
+        {
+            builders.push_back(*this);
+            builders.back().configurationOverrides = {configurationOverride};
+        }
+        return builders;
+    }
+
+    [[nodiscard]] const ConfigurationOverride& getConfigurationOverride() const
+    {
+        PRECONDITION(configurationOverrides.size() == 1, "A builder must be split by configuration override before it is optimized");
+        return configurationOverrides.front();
+    }
+
     void setQueryDefinition(std::string queryDefinition) { this->queryDefinition = std::move(queryDefinition); }
 
     void setBoundPlan(LogicalPlan boundPlan) { this->boundPlan = std::move(boundPlan); }
@@ -385,13 +405,13 @@ struct SystestBinder::Impl
         std::filesystem::path configDir,
         QueryOptimizerConfiguration queryOptimizerConfiguration,
         SystestClusterConfiguration clusterConfiguration,
-        std::shared_ptr<InferenceProfiler> inferenceProfiler)
+        InferenceProfilerFactory inferenceProfilerFor)
         : workingDir(std::move(workingDir))
         , testDataDir(std::move(testDataDir))
         , configDir(std::move(configDir))
         , queryOptimizerConfiguration(std::move(queryOptimizerConfiguration))
         , clusterConfiguration(std::move(clusterConfiguration))
-        , inferenceProfiler(std::move(inferenceProfiler))
+        , inferenceProfilerFor(std::move(inferenceProfilerFor))
     {
         this->workerCatalog = std::make_shared<WorkerCatalog>();
         for (const auto& [host, data, capacity, downstream, config] : this->clusterConfiguration.workers)
@@ -485,13 +505,24 @@ struct SystestBinder::Impl
         auto loadedSystests = loadFromSLTFile(testfile.file, testfile.name(), testfile.sourceCatalog, modelCatalog, sinkProvider);
         std::unordered_set<SystestQueryId> foundQueries;
 
-        const QueryOptimizer queryOptimizer{
-            queryOptimizerConfiguration,
-            testfile.sourceCatalog,
-            testfile.sinkCatalog,
-            copyPtr(workerCatalog),
-            modelCatalog,
-            inferenceProfiler};
+        /// One optimizer per configuration override, each profiling models with that configuration and caching the profiles for
+        /// all queries of the file that run with it.
+        std::unordered_map<ConfigurationOverride, std::unique_ptr<QueryOptimizer>> queryOptimizers;
+        const auto queryOptimizerFor = [&](const ConfigurationOverride& configurationOverride) -> const QueryOptimizer&
+        {
+            auto& queryOptimizer = queryOptimizers[configurationOverride];
+            if (!queryOptimizer)
+            {
+                queryOptimizer = std::make_unique<QueryOptimizer>(
+                    queryOptimizerConfiguration,
+                    testfile.sourceCatalog,
+                    testfile.sinkCatalog,
+                    copyPtr(workerCatalog),
+                    modelCatalog,
+                    inferenceProfilerFor(configurationOverride));
+            }
+            return *queryOptimizer;
+        };
 
         std::vector<SystestQuery> buildSystests;
         for (auto& builder : loadedSystests)
@@ -504,10 +535,13 @@ struct SystestBinder::Impl
             }
 
             foundQueries.insert(builder.getSystemTestQueryId());
-            builder.optimizeQueries(queryOptimizer);
-            for (auto& query : std::move(builder).build())
+            for (auto& builderForOverride : std::move(builder).splitByConfigurationOverride())
             {
-                buildSystests.emplace_back(std::move(query));
+                builderForOverride.optimizeQueries(queryOptimizerFor(builderForOverride.getConfigurationOverride()));
+                for (auto& query : std::move(builderForOverride).build())
+                {
+                    buildSystests.emplace_back(std::move(query));
+                }
             }
         }
 
@@ -1055,7 +1089,7 @@ private:
     std::filesystem::path configDir;
     QueryOptimizerConfiguration queryOptimizerConfiguration;
     SystestClusterConfiguration clusterConfiguration;
-    std::shared_ptr<InferenceProfiler> inferenceProfiler;
+    InferenceProfilerFactory inferenceProfilerFor;
 
     SharedPtr<WorkerCatalog> workerCatalog;
 };
@@ -1066,9 +1100,9 @@ SystestBinder::SystestBinder(
     const std::filesystem::path& configDir,
     const QueryOptimizerConfiguration& queryOptimizerConfiguration,
     SystestClusterConfiguration clusterConfiguration,
-    std::shared_ptr<InferenceProfiler> inferenceProfiler)
+    InferenceProfilerFactory inferenceProfilerFor)
     : impl(std::make_unique<Impl>(
-          workingDir, testDataDir, configDir, queryOptimizerConfiguration, std::move(clusterConfiguration), std::move(inferenceProfiler)))
+          workingDir, testDataDir, configDir, queryOptimizerConfiguration, std::move(clusterConfiguration), std::move(inferenceProfilerFor)))
 {
 }
 

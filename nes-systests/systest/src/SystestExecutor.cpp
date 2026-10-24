@@ -289,18 +289,28 @@ SystestExecutorResult SystestExecutor::executeSystests()
         }
 
         /// Queries are optimized before any worker runs them, so the optimizer's profiling jobs either go to the remote workers
-        /// or run in-process with the configuration of the embedded workers.
-        auto profilingWorkerCatalog = std::make_shared<WorkerCatalog>(config.clusterConfig.workers);
-        std::shared_ptr<InferenceProfiler> inferenceProfiler;
+        /// or run in-process with the configuration of the embedded worker that will run the query: the base configuration with
+        /// the query's configuration override applied, as below. Remote workers keep their own configuration (queries with an
+        /// override are skipped there).
+        Systest::InferenceProfilerFactory inferenceProfilerFor;
         if (config.remoteWorker.getValue())
         {
-            inferenceProfiler = std::make_shared<QueryManagerInferenceProfiler>(
-                std::make_shared<QueryManager>(std::move(profilingWorkerCatalog), createGRPCBackend()));
+            inferenceProfilerFor = [profiler = std::make_shared<QueryManagerInferenceProfiler>(std::make_shared<QueryManager>(
+                                        std::make_shared<WorkerCatalog>(config.clusterConfig.workers), createGRPCBackend()))](
+                                       const Systest::ConfigurationOverride&) -> std::shared_ptr<InferenceProfiler> { return profiler; };
         }
         else
         {
-            inferenceProfiler
-                = std::make_shared<EmbeddedInferenceProfiler>(std::move(profilingWorkerCatalog), singleNodeWorkerConfiguration);
+            inferenceProfilerFor = [workers = config.clusterConfig.workers, singleNodeWorkerConfiguration](
+                                       const Systest::ConfigurationOverride& configurationOverride) -> std::shared_ptr<InferenceProfiler>
+            {
+                auto configCopy = singleNodeWorkerConfiguration;
+                for (const auto& [key, value] : configurationOverride.overrideParameters)
+                {
+                    configCopy.overwriteConfigWithCommandLineInput({{key, value}});
+                }
+                return std::make_shared<EmbeddedInferenceProfiler>(std::make_shared<WorkerCatalog>(workers), std::move(configCopy));
+            };
         }
 
         auto discoveredTestFiles = Systest::loadTestFileMap(config);
@@ -310,7 +320,7 @@ SystestExecutorResult SystestExecutor::executeSystests()
             config.configDir.getValue(),
             config.queryOptimizerConfig.value_or(QueryOptimizerConfiguration{}),
             config.clusterConfig,
-            std::move(inferenceProfiler)};
+            std::move(inferenceProfilerFor)};
         auto [queries, loadedFiles] = binder.loadOptimizeQueries(discoveredTestFiles);
         if (loadedFiles != discoveredTestFiles.size())
         {
