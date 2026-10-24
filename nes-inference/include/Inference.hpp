@@ -55,6 +55,11 @@ struct InferenceRuntimeOptions
 /// would have had.
 [[nodiscard]] InferenceRuntimeOptions resolveSessionOptions(InferenceRuntimeOptions options, size_t numberOfWorkerThreads);
 
+/// Options of a session that a model UDF sets up. A UDF receives no worker configuration, so OpenVINO's stream and thread counts
+/// come from NES_UDF_OPENVINO_NUM_STREAMS and NES_UDF_OPENVINO_INFERENCE_NUM_THREADS, which let a UDF baseline run the session
+/// the worker's inference operators run. Either variable left unset keeps the InferenceRuntimeOptions default.
+[[nodiscard]] InferenceRuntimeOptions udfSessionOptions();
+
 /// Import a model from a file.
 [[nodiscard]] ModelBackend defaultModelBackend();
 std::expected<ImportedModel, ImportError> importModel(const std::filesystem::path& modelPath);

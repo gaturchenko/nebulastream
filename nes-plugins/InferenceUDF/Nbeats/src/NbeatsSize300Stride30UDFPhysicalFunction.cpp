@@ -70,7 +70,7 @@ InferenceRuntime& runtime()
     thread_local auto instance = []
     {
         InferenceRuntime createdRuntime;
-        createdRuntime.setup(compiledModel(), 1);
+        createdRuntime.setup(compiledModel(), 1, udfSessionOptions());
         return createdRuntime;
     }();
     return instance;

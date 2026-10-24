@@ -129,7 +129,7 @@ InferenceRuntime& nanodetRuntime()
     thread_local auto runtime = []
     {
         InferenceRuntime createdRuntime;
-        createdRuntime.setup(nanodetCompiledModel(), 1);
+        createdRuntime.setup(nanodetCompiledModel(), 1, udfSessionOptions());
         return createdRuntime;
     }();
     return runtime;
