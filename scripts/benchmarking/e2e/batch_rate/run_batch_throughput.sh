@@ -34,13 +34,15 @@ VENV="${VENV:-models-benchmarking/venv}"
 
 # Offered rates [results/s] per batch size, a ~1.25x ladder around each batch size's capacity. Batching amortizes only the
 # model invocation: on top of t(B) / B, every result costs ~0.13 ms of windowing, batching and emitting, so the capacity
-# levels off near 1 / (0.13 ms + t(B) / B) (trial runs: B=1 ~510, 2 ~915, 4 ~1570, 8 ~2290 results/s) instead of following
-# the profiled B / t(B). The window-only query sustained 5000 results/s and failed at 12500.
+# levels off near 1 / (0.13 ms + t(B) / B) (trial runs at OpenVINO num_streams 0 x 1 thread: B=1 ~510, 2 ~915, 4 ~1570,
+# 8 ~2290 results/s) instead of following the profiled B / t(B). The window-only query sustained 5000 results/s and failed at
+# 12500. One stream x 4 threads invokes faster (t(1) 1.66 vs 2.0 ms, t(8) 1.88 vs 2.3 ms), which moves the estimate to ~560,
+# ~1010, ~1760 and ~2740 results/s, so B=2, 4 and 8 reach one rate further.
 declare -A RATES=(
     [1]="315 400 500 630 800"
-    [2]="630 800 1000 1250"
-    [4]="1000 1250 1600 2000"
-    [8]="1600 2000 2500 3150"
+    [2]="630 800 1000 1250 1600"
+    [4]="1000 1250 1600 2000 2500"
+    [8]="1600 2000 2500 3150 4000"
     [16]="2500 3150 4000 5000"
     [32]="3150 4000 5000 6300"
     [64]="3150 4000 5000 6300 8000"

@@ -99,8 +99,8 @@ class MhattRnnHandler(BaseHandler):
             {
                 "PERFORMANCE_HINT": "LATENCY",
                 "EXECUTION_MODE_HINT": "ACCURACY",
-                "NUM_STREAMS": "0",
-                "INFERENCE_NUM_THREADS": os.environ.get("MHATT_RNN_INFERENCE_THREADS", "1"),
+                "NUM_STREAMS": os.environ.get("MHATT_RNN_NUM_STREAMS", "1"),
+                "INFERENCE_NUM_THREADS": os.environ.get("MHATT_RNN_INFERENCE_THREADS", "4"),
             },
         )
         self.output_port = self.compiled.output(0)

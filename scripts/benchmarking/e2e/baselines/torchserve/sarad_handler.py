@@ -84,15 +84,15 @@ class SaradHandler(BaseHandler):
             shape[0] = 1
             model.reshape(shape)
 
-        # CPU-only and single-threaded for parity with the NES worker setup.
+        # CPU-only, one stream with four inference threads, the session NES workers use.
         self.compiled = core.compile_model(
             model,
             "CPU",
             {
                 "PERFORMANCE_HINT": "LATENCY",
                 "EXECUTION_MODE_HINT": "ACCURACY",
-                "NUM_STREAMS": "0",
-                "INFERENCE_NUM_THREADS": os.environ.get("SARAD_INFERENCE_THREADS", "1"),
+                "NUM_STREAMS": os.environ.get("SARAD_NUM_STREAMS", "1"),
+                "INFERENCE_NUM_THREADS": os.environ.get("SARAD_INFERENCE_THREADS", "4"),
             },
         )
         self.output_port = self.compiled.output(0)

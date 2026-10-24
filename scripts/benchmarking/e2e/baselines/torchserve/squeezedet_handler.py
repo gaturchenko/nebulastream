@@ -21,8 +21,8 @@ The model is an ONNX file, executed with OpenVINO, so this handler overrides ``i
 build a compiled OpenVINO model from the archived file. OpenVINO reads ONNX directly through its own
 frontend, which is exactly how NES loads the same file, and the Flink baseline runs the IR that ovc
 converts from it -- so all three systems execute the same graph and the comparison isolates serving
-overhead instead of runtime differences. Single-threaded, with the same LATENCY/ACCURACY hints the
-NES OpenVINO backend compiles with.
+overhead instead of runtime differences. One stream with four inference threads, with the same
+LATENCY/ACCURACY hints the NES OpenVINO backend compiles with.
 
 Package with::
 
@@ -89,15 +89,15 @@ class SqueezedetHandler(BaseHandler):
             shape[0] = 1
             model.reshape(shape)
 
-        # CPU-only and single-threaded for parity with the NES worker setup.
+        # CPU-only, one stream with four inference threads, the session NES workers use.
         self.compiled = core.compile_model(
             model,
             "CPU",
             {
                 "PERFORMANCE_HINT": "LATENCY",
                 "EXECUTION_MODE_HINT": "ACCURACY",
-                "NUM_STREAMS": "0",
-                "INFERENCE_NUM_THREADS": os.environ.get("SQUEEZEDET_INFERENCE_THREADS", "1"),
+                "NUM_STREAMS": os.environ.get("SQUEEZEDET_NUM_STREAMS", "1"),
+                "INFERENCE_NUM_THREADS": os.environ.get("SQUEEZEDET_INFERENCE_THREADS", "4"),
             },
         )
         self.output_ports = list(self.compiled.outputs)
