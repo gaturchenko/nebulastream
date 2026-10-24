@@ -65,10 +65,10 @@ const OpenVinoImporter& sharedOpenVinoImporter()
 
 InferenceRuntimeOptions resolveSessionOptions(InferenceRuntimeOptions options, const size_t numberOfWorkerThreads)
 {
-    if (options.openvinoShareCompiledModel && options.openvinoNumStreams == 0)
+    if (options.openvinoShareCompiledModel)
     {
-        options.openvinoNumStreams = numberOfWorkerThreads;
-        options.openvinoInferenceNumThreads = std::max<uint64_t>(options.openvinoInferenceNumThreads, numberOfWorkerThreads);
+        options.openvinoNumStreams = std::max<uint64_t>(options.openvinoNumStreams, numberOfWorkerThreads);
+        options.openvinoInferenceNumThreads *= options.openvinoNumStreams;
     }
     return options;
 }

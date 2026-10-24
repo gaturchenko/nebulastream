@@ -48,11 +48,11 @@ struct InferenceRuntimeOptions
 };
 
 /// Options a worker-thread session is set up with when `numberOfWorkerThreads` sessions run the same model. When sharing the
-/// compiled model, all sessions reuse one ov::CompiledModel (one weight copy). To keep the per-thread parallelism the old
-/// per-session compilation gave for free, that single model must have enough streams for every worker thread AND enough total
-/// threads to feed those streams (streams share one inference_num_threads budget, unlike the old N private models that each
-/// grabbed their own thread). Only "auto" (0) streams are overridden so an explicit ablation value still wins; the thread budget
-/// is raised to at least one per stream so the streams can actually run concurrently.
+/// compiled model, all sessions reuse one ov::CompiledModel (one weight copy). A compiled model holds one graph per stream and an
+/// inference locks its graph, so that single model needs at least one stream per worker thread, or the worker threads would run
+/// their inferences one after another; a larger explicit stream count still wins. inference_num_threads stays per session: the
+/// streams share one thread budget, so the shared model gets inference_num_threads per stream, the threads each private model
+/// would have had.
 [[nodiscard]] InferenceRuntimeOptions resolveSessionOptions(InferenceRuntimeOptions options, size_t numberOfWorkerThreads);
 
 /// Import a model from a file.
