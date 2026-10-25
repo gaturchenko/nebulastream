@@ -27,9 +27,9 @@ activate_optional_plugin("ImageManip" ON)
 activate_optional_plugin("Temporal" ON)
 activate_optional_plugin("Audio" ON)
 activate_optional_plugin("Quantization" ON)
-activate_optional_plugin("InferenceUDF/Nanodet" ON)
-activate_optional_plugin("InferenceUDF/Nbeats" ON)
-activate_optional_plugin("InferenceUDF/ModelZoo" ON)
+activate_optional_plugin("InferenceUDF/Nanodet" ${NES_ENABLE_OPENVINO_INFERENCE_BACKEND})
+activate_optional_plugin("InferenceUDF/Nbeats" ${NES_ENABLE_OPENVINO_INFERENCE_BACKEND})
+activate_optional_plugin("InferenceUDF/ModelZoo" ${NES_ENABLE_OPENVINO_INFERENCE_BACKEND})
 
 if (NES_ENABLES_TESTS)
   # ChecksumSink depends on Checksum.cpp from systest which is only added when tests are enabled.

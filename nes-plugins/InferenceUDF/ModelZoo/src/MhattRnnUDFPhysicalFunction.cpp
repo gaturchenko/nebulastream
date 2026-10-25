@@ -25,10 +25,10 @@
 
 #include <Functions/PhysicalFunction.hpp>
 #include <Inference.hpp>
-#include <InferenceRuntime.hpp>
 #include <Model.hpp>
 #include <ErrorHandling.hpp>
 #include <PhysicalFunctionRegistry.hpp>
+#include <StandaloneOpenVinoSession.hpp>
 
 namespace NES
 {
@@ -65,14 +65,9 @@ const CompiledModel& compiledModel()
     return model;
 }
 
-InferenceRuntime& runtime()
+StandaloneOpenVinoSession& runtime()
 {
-    thread_local auto instance = []
-    {
-        InferenceRuntime createdRuntime;
-        createdRuntime.setup(compiledModel(), 1, udfSessionOptions());
-        return createdRuntime;
-    }();
+    thread_local StandaloneOpenVinoSession instance{compiledModel()};
     return instance;
 }
 

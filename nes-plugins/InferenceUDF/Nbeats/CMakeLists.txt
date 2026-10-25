@@ -10,6 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# The UDFs call OpenVINO directly; its imported targets are only visible in directories that find it.
+find_package(OpenVINO CONFIG REQUIRED COMPONENTS Runtime)
+
 add_plugin(NBEATS_SIZE_120_STRIDE_12_UDF LogicalFunction nes-logical-operators src/NbeatsUDFLogicalFunction.cpp)
 add_plugin(NBEATS_SIZE_300_STRIDE_30_UDF LogicalFunction nes-logical-operators)
 add_plugin(NBEATS_SIZE_600_STRIDE_60_UDF LogicalFunction nes-logical-operators)
@@ -40,6 +43,7 @@ foreach (nbeats_udf_target
         nbeats-size-300-stride-30-udf
         nbeats-size-600-stride-60-udf)
     target_include_directories(${nbeats_udf_target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../include
             ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
             ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
 
@@ -48,4 +52,6 @@ foreach (nbeats_udf_target
             NES_NBEATS_UDF_BINARY_DIR="${PROJECT_BINARY_DIR}")
 
     target_link_libraries(${nbeats_udf_target} PRIVATE nes-inference-runtime)
+    # The UDFs call OpenVINO directly (StandaloneOpenVinoSession), not through the inference runtime.
+    target_link_openvino_runtime(${nbeats_udf_target})
 endforeach ()

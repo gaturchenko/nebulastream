@@ -15,13 +15,8 @@
 #include <Inference.hpp>
 
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <optional>
-#include <string_view>
-#include <system_error>
 #include <expected>
 #include <filesystem>
 #include <utility>
@@ -33,7 +28,6 @@
 #ifdef NES_ENABLE_INFERENCE_BACKEND_OPENVINO
     #include <OpenVINO/OpenVinoImporter.hpp>
 #endif
-#include <ErrorHandling.hpp>
 #include <Model.hpp>
 #include <ModelAccess.hpp>
 
@@ -67,23 +61,6 @@ const OpenVinoImporter& sharedOpenVinoImporter()
 }
 #endif
 
-std::optional<uint64_t> environmentUInt(const char* name)
-{
-    const auto* raw = std::getenv(name);
-    if (raw == nullptr || *raw == '\0')
-    {
-        return std::nullopt;
-    }
-    const std::string_view value{raw};
-    uint64_t parsed = 0;
-    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-    if (error != std::errc{} || end != value.data() + value.size())
-    {
-        throw InvalidConfigParameter("{} must be an unsigned integer, but is '{}'", name, value);
-    }
-    return parsed;
-}
-
 }
 
 InferenceRuntimeOptions resolveSessionOptions(InferenceRuntimeOptions options, const size_t numberOfWorkerThreads)
@@ -92,24 +69,6 @@ InferenceRuntimeOptions resolveSessionOptions(InferenceRuntimeOptions options, c
     {
         options.openvinoNumStreams = std::max<uint64_t>(options.openvinoNumStreams, numberOfWorkerThreads);
         options.openvinoInferenceNumThreads *= options.openvinoNumStreams;
-    }
-    return options;
-}
-
-InferenceRuntimeOptions udfSessionOptions()
-{
-    InferenceRuntimeOptions options;
-    if (const auto streams = environmentUInt("NES_UDF_OPENVINO_NUM_STREAMS"))
-    {
-        options.openvinoNumStreams = *streams;
-    }
-    if (const auto threads = environmentUInt("NES_UDF_OPENVINO_INFERENCE_NUM_THREADS"))
-    {
-        if (*threads == 0)
-        {
-            throw InvalidConfigParameter("NES_UDF_OPENVINO_INFERENCE_NUM_THREADS must be positive");
-        }
-        options.openvinoInferenceNumThreads = *threads;
     }
     return options;
 }

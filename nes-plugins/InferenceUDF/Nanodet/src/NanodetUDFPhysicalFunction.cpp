@@ -25,7 +25,7 @@
 
 #include <Functions/PhysicalFunction.hpp>
 #include <Inference.hpp>
-#include <InferenceRuntime.hpp>
+#include <StandaloneOpenVinoSession.hpp>
 #include <Model.hpp>
 #include <Nautilus/DataTypes/VarVal.hpp>
 #include <Nautilus/DataTypes/VariableSizedData.hpp>
@@ -124,14 +124,9 @@ const CompiledModel& nanodetCompiledModel()
     return model;
 }
 
-InferenceRuntime& nanodetRuntime()
+StandaloneOpenVinoSession& nanodetRuntime()
 {
-    thread_local auto runtime = []
-    {
-        InferenceRuntime createdRuntime;
-        createdRuntime.setup(nanodetCompiledModel(), 1, udfSessionOptions());
-        return createdRuntime;
-    }();
+    thread_local StandaloneOpenVinoSession runtime{nanodetCompiledModel()};
     return runtime;
 }
 

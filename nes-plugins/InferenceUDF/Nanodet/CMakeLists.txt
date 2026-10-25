@@ -10,6 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# The UDFs call OpenVINO directly; its imported targets are only visible in directories that find it.
+find_package(OpenVINO CONFIG REQUIRED COMPONENTS Runtime)
+
 add_plugin(NANODET_UDF LogicalFunction nes-logical-operators src/NanodetUDFLogicalFunction.cpp)
 add_plugin_as_library(
         NANODET_UDF
@@ -19,6 +22,7 @@ add_plugin_as_library(
         src/NanodetUDFPhysicalFunction.cpp)
 
 target_include_directories(nanodet-udf PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
         ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
         ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
 
@@ -27,3 +31,5 @@ target_compile_definitions(nanodet-udf PRIVATE
         NES_NANODET_UDF_BINARY_DIR="${PROJECT_BINARY_DIR}")
 
 target_link_libraries(nanodet-udf PRIVATE nes-inference-runtime)
+# The UDF calls OpenVINO directly (StandaloneOpenVinoSession), not through the inference runtime.
+target_link_openvino_runtime(nanodet-udf)

@@ -10,6 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# The UDFs call OpenVINO directly; its imported targets are only visible in directories that find it.
+find_package(OpenVINO CONFIG REQUIRED COMPONENTS Runtime)
+
 add_plugin(SARAD_SIZE_200_STRIDE_10_UDF LogicalFunction nes-logical-operators src/ModelZooUDFLogicalFunction.cpp)
 add_plugin(MHATT_RNN_UDF LogicalFunction nes-logical-operators)
 add_plugin(SQUEEZEDET_UDF LogicalFunction nes-logical-operators)
@@ -49,6 +52,7 @@ foreach (model_zoo_udf_target
         squeezedet-udf
         squeezedet-192x624-udf)
     target_include_directories(${model_zoo_udf_target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../include
             ${PROJECT_SOURCE_DIR}/nes-physical-operators/registry/include
             ${PROJECT_BINARY_DIR}/nes-physical-operators/registry/templates)
 
@@ -57,4 +61,6 @@ foreach (model_zoo_udf_target
             NES_MODEL_ZOO_UDF_BINARY_DIR="${PROJECT_BINARY_DIR}")
 
     target_link_libraries(${model_zoo_udf_target} PRIVATE nes-inference-runtime)
+    # The UDFs call OpenVINO directly (StandaloneOpenVinoSession), not through the inference runtime.
+    target_link_openvino_runtime(${model_zoo_udf_target})
 endforeach ()
