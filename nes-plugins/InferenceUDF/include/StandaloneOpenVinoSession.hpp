@@ -20,10 +20,12 @@
 #include <exception>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <openvino/openvino.hpp>
 
+#include <Util/Logger/Logger.hpp>
 #include <ErrorHandling.hpp>
 #include <Model.hpp>
 
@@ -33,6 +35,8 @@ namespace NES
 /// The OpenVINO session of a model UDF. A UDF stands for inference in a stream processor without an inference operator, so it
 /// runs the model the way a UDF author would with OpenVINO alone: compiled for the CPU with OpenVINO's default configuration (no
 /// stream, thread, performance-hint or precision properties), with none of the inference operators' runtime or session options.
+/// The one exception is the thread count, capped at the machine's hardware threads: on a 4-core aarch64 machine the default is
+/// 8 inference threads, and concurrent inferences in sessions oversubscribed like that grow OpenVINO's memory without bound.
 /// The only thing shared with them is the model conversion: the session reads the OpenVINO IR that importing and compiling the
 /// model produced, which ovc would produce offline. Each worker thread owns one session: compiled model, infer request and the
 /// request's input and output tensors.
@@ -68,6 +72,16 @@ public:
             auto openVinoModel = core().read_model(xml, weights);
             openVinoModel->reshape(ov::PartialShape(ov::Shape(inputShape.begin(), inputShape.end())));
             compiledModel = core().compile_model(openVinoModel, "CPU");
+            const auto defaultThreads = static_cast<uint64_t>(compiledModel.get_property(ov::inference_num_threads));
+            const auto hardwareThreads = static_cast<uint64_t>(std::thread::hardware_concurrency());
+            if (hardwareThreads > 0 && defaultThreads > hardwareThreads)
+            {
+                NES_INFO(
+                    "Model UDF session: OpenVINO chose {} inference threads by default, capped at the {} hardware threads",
+                    defaultThreads,
+                    hardwareThreads);
+                compiledModel = core().compile_model(openVinoModel, "CPU", ov::inference_num_threads(static_cast<int>(hardwareThreads)));
+            }
             inferRequest = compiledModel.create_infer_request();
             inputTensor = inferRequest.get_input_tensor();
             outputTensor = inferRequest.get_output_tensor();
