@@ -154,6 +154,18 @@ struct ConfigParametersTCP
             return tupleRate;
         }};
 
+    /// Systest mock only: how long the mock server waits after the source connected before it sends the first tuple.
+    static inline const DescriptorConfig::ConfigParameter<uint32_t> MOCK_START_DELAY_MS{
+        "mock_start_delay_ms",
+        0,
+        [](const std::unordered_map<std::string, std::string>& config) { return DescriptorConfig::tryGet(MOCK_START_DELAY_MS, config); }};
+    /// Systest mock only: prefix each tuple with the time the mock server sends it, as an extra first UINT64 field (microseconds
+    /// since the epoch), so that a query can measure latency from arrival.
+    static inline const DescriptorConfig::ConfigParameter<bool> MOCK_SEND_TIMESTAMP{
+        "mock_send_timestamp",
+        false,
+        [](const std::unordered_map<std::string, std::string>& config) { return DescriptorConfig::tryGet(MOCK_SEND_TIMESTAMP, config); }};
+
     static inline std::unordered_map<std::string, DescriptorConfig::ConfigParameterContainer> parameterMap
         = DescriptorConfig::createConfigParameterContainerMap(
             SourceDescriptor::parameterMap,
@@ -166,7 +178,9 @@ struct ConfigParametersTCP
             SOCKET_BUFFER_SIZE,
             SOCKET_BUFFER_TRANSFER_SIZE,
             CONNECT_TIMEOUT,
-            MOCK_TUPLE_RATE);
+            MOCK_TUPLE_RATE,
+            MOCK_START_DELAY_MS,
+            MOCK_SEND_TIMESTAMP);
 };
 
 class TCPSource : public Source

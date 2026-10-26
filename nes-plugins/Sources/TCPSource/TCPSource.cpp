@@ -70,6 +70,23 @@ std::optional<double> getMockTupleRate(const std::unordered_map<std::string, std
     }
     return tupleRate;
 }
+
+TCPDataServerPacing getMockPacing(const std::unordered_map<std::string, std::string>& sourceConfig)
+{
+    const auto startDelay = ConfigParametersTCP::MOCK_START_DELAY_MS.validate(sourceConfig);
+    const auto sendTimestamp = ConfigParametersTCP::MOCK_SEND_TIMESTAMP.validate(sourceConfig);
+    if (not startDelay.has_value() or not sendTimestamp.has_value())
+    {
+        throw InvalidConfigParameter(
+            "Failed validation of config parameter: {} or {}",
+            ConfigParametersTCP::MOCK_START_DELAY_MS.name,
+            ConfigParametersTCP::MOCK_SEND_TIMESTAMP.name);
+    }
+    return TCPDataServerPacing{
+        .tuplesPerSecond = getMockTupleRate(sourceConfig),
+        .startDelay = std::chrono::milliseconds{std::get<uint32_t>(startDelay.value())},
+        .prefixSendTime = std::get<bool>(sendTimestamp.value())};
+}
 }
 
 TCPSource::TCPSource(const SourceDescriptor& sourceDescriptor)
@@ -371,7 +388,7 @@ InlineDataRegistryReturnType InlineDataGeneratedRegistrar::RegisterTCPInlineData
     }
 
     auto mockTCPServer = std::make_unique<TCPDataServer>(
-        std::move(systestAdaptorArguments.tuples), getMockTupleRate(systestAdaptorArguments.physicalSourceConfig.sourceConfig));
+        std::move(systestAdaptorArguments.tuples), getMockPacing(systestAdaptorArguments.physicalSourceConfig.sourceConfig));
 
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::PORT, std::to_string(mockTCPServer->getPort()));
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::HOST, "localhost");
@@ -397,7 +414,7 @@ FileDataRegistryReturnType FileDataGeneratedRegistrar::RegisterTCPFileData(FileD
     }
 
     auto mockTCPServer = std::make_unique<TCPDataServer>(
-        systestAdaptorArguments.testFilePath, getMockTupleRate(systestAdaptorArguments.physicalSourceConfig.sourceConfig));
+        systestAdaptorArguments.testFilePath, getMockPacing(systestAdaptorArguments.physicalSourceConfig.sourceConfig));
 
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::PORT, std::to_string(mockTCPServer->getPort()));
     systestAdaptorArguments.physicalSourceConfig.sourceConfig.emplace(ConfigParametersTCP::HOST, "localhost");

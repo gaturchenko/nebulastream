@@ -74,24 +74,36 @@ private:
     std::optional<std::chrono::steady_clock::duration> tupleInterval;
     std::chrono::steady_clock::time_point nextSend;
 };
+
+/// The tuple as sent: prefixed with the current time in microseconds since the epoch, if requested.
+std::string withSendTime(const std::string& tuple, const bool prefixSendTime)
+{
+    if (not prefixSendTime)
+    {
+        return tuple;
+    }
+    const auto nowUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch());
+    return std::to_string(nowUs.count()) + ',' + tuple;
+}
 }
 
-TCPDataServer::TCPDataServer(std::vector<std::string> tuples, std::optional<double> tuplesPerSecond)
+TCPDataServer::TCPDataServer(std::vector<std::string> tuples, TCPDataServerPacing pacing)
     : acceptor(io_context, tcp::endpoint(tcp::v4(), 0)), work_guard(boost::asio::make_work_guard(io_context))
 {
-    dataProvider = [tuples = std::move(tuples), tuplesPerSecond](tcp::socket& socket)
+    dataProvider = [tuples = std::move(tuples), pacing](tcp::socket& socket)
     {
-        SendRateLimiter rateLimiter{tuplesPerSecond};
+        std::this_thread::sleep_for(pacing.startDelay);
+        SendRateLimiter rateLimiter{pacing.tuplesPerSecond};
         for (const auto& tuple : tuples)
         {
-            std::string data = tuple + "\n";
             rateLimiter.waitBeforeNextTuple();
+            const std::string data = withSendTime(tuple, pacing.prefixSendTime) + "\n";
             boost::asio::write(socket, boost::asio::buffer(data));
         }
     };
 }
 
-TCPDataServer::TCPDataServer(std::filesystem::path filePath, std::optional<double> tuplesPerSecond)
+TCPDataServer::TCPDataServer(std::filesystem::path filePath, TCPDataServerPacing pacing)
     : acceptor(io_context, tcp::endpoint(tcp::v4(), 0)), work_guard(boost::asio::make_work_guard(io_context))
 {
     if (not std::filesystem::exists(filePath))
@@ -99,7 +111,7 @@ TCPDataServer::TCPDataServer(std::filesystem::path filePath, std::optional<doubl
         throw TestException("File to serve TCP data from does not exist: {}", filePath.string());
     }
 
-    dataProvider = [filePath = std::move(filePath), tuplesPerSecond](tcp::socket& socket)
+    dataProvider = [filePath = std::move(filePath), pacing](tcp::socket& socket)
     {
         std::ifstream file(filePath);
         if (not file.is_open())
@@ -107,12 +119,13 @@ TCPDataServer::TCPDataServer(std::filesystem::path filePath, std::optional<doubl
             throw TestException("Failed to open file to serve TCP data from: {}", filePath.string());
         }
 
-        SendRateLimiter rateLimiter{tuplesPerSecond};
+        std::this_thread::sleep_for(pacing.startDelay);
+        SendRateLimiter rateLimiter{pacing.tuplesPerSecond};
         std::string line;
         while (std::getline(file, line))
         {
-            std::string data = line + "\n";
             rateLimiter.waitBeforeNextTuple();
+            const std::string data = withSendTime(line, pacing.prefixSendTime) + "\n";
             boost::asio::write(socket, boost::asio::buffer(data));
         }
     };

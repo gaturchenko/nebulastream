@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -29,6 +30,17 @@
 namespace NES
 {
 
+/// How the TCPDataServer serves its tuples: at a fixed rate (as fast as possible otherwise), after a delay once the source has
+/// connected, and optionally each prefixed with the time it is sent (microseconds since the epoch, the clock of the Latency sink
+/// and CURRENT_TIME()) as an extra first field. With the send time as a query's ingestion time, a latency includes everything the
+/// tuple waits for after arriving; with the delay, the query can finish setting up before the first tuple arrives.
+struct TCPDataServerPacing
+{
+    std::optional<double> tuplesPerSecond;
+    std::chrono::milliseconds startDelay{0};
+    bool prefixSendTime{false};
+};
+
 /// Takes either a vector of strings (representing tuples) or a filepath.
 /// On calling 'run', waits for connections and asynchronously serves the tuples (from vector or filepath) once.
 /// After serving the data, the TCPDataServer closes the connection (triggering an end of stream (EOS)).
@@ -38,8 +50,8 @@ class TCPDataServer
     using DataProvider = std::function<void(tcp::socket&)>;
 
 public:
-    explicit TCPDataServer(std::vector<std::string> tuples, std::optional<double> tuplesPerSecond = std::nullopt);
-    explicit TCPDataServer(std::filesystem::path filePath, std::optional<double> tuplesPerSecond = std::nullopt);
+    explicit TCPDataServer(std::vector<std::string> tuples, TCPDataServerPacing pacing = {});
+    explicit TCPDataServer(std::filesystem::path filePath, TCPDataServerPacing pacing = {});
 
     TCPDataServer(const TCPDataServer&) = delete;
     TCPDataServer operator=(const TCPDataServer&) = delete;
