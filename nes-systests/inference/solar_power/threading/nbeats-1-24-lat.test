@@ -1,0 +1,199 @@
+# Latency counterpart of nbeats-1-24.test: the same budget splits, but the source replays the series at a fixed rate below every
+# split's capacity and a Latency sink records each forecast's latency, so that the splits compare at equal load. Capacity
+# (unpaced throughput) comes from nbeats-1-24.test.
+# 100000 tuples/s (a window every 15 samples: 6667 forecasts/s, ~70% of the slowest split's 9570/s),
+# the whole series in ~74 s.
+# FLUSH_INTERVAL_MS 1: the default flush would hand the windowing buffers of ~100 ms of tuples and close windows in bursts.
+# ingestion_time is the MAX of the send times over the window, i.e. when its last tuple was sent.
+# The TCP mock source sends each tuple with its send time as an extra first field (MOCK_SEND_TIMESTAMP), and the query takes that
+# as the ingestion time, so a latency is everything a result waits for after its input was sent: parsing, the channel between
+# the two node queries, queueing for a worker and inference. A timestamp taken inside the query (CURRENT_TIME()) would miss the
+# waiting before the first pipeline runs, which grows as fewer workers serve longer inferences.
+# Each split reads its own copy of the source, so that the mock can wait before sending (MOCK_START_DELAY_MS) until the query has
+# set up: the inference pipeline compiles one OpenVINO session per worker at start (~0.04 s each on so015),
+# and data sent meanwhile would queue behind it. The delay is 5 s plus 0.1 s per worker. CONNECT_TIMEOUT_SECONDS is also the
+# source's socket receive timeout, so it must exceed the delay.
+# Driven by scripts/benchmarking/e2e/run_threading_lat.sh; process_threading_lat.py drops each run's first seconds as warm-up.
+GlobalConfiguration enable_event_trace: [true]
+# One OpenVINO stream per worker-thread session, so that each split's inference_num_threads applies.
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [500000]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [16384]
+
+CREATE SINK solarPowerLatency(powerProdNext2Min VARSIZED NOT NULL, ingestion_time UINT64 NOT NULL) TYPE Latency SET(
+    'results/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+CREATE MODEL nbeats ('model/power/pretrained/nbeats/nbeats_solar_size_600_stride_60_1.onnx')
+INPUT (value_10_min VARSIZED)
+OUTPUT (powerProdNext2Min VARSIZED);
+
+CREATE LOGICAL SOURCE solarPowerSource01(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource01 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    7400 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [24]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [1]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource01)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----
+
+CREATE LOGICAL SOURCE solarPowerSource02(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource02 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    6200 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [12]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [2]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource02)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----
+
+CREATE LOGICAL SOURCE solarPowerSource03(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource03 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    5800 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [8]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [3]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource03)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----
+
+CREATE LOGICAL SOURCE solarPowerSource04(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource04 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    5600 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [6]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource04)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----
+
+CREATE LOGICAL SOURCE solarPowerSource05(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource05 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    5400 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [4]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [6]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource05)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----
+
+CREATE LOGICAL SOURCE solarPowerSource06(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource06 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    5300 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [3]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [8]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource06)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----
+
+CREATE LOGICAL SOURCE solarPowerSource07(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource07 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    5200 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [2]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [12]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource07)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----
+
+CREATE LOGICAL SOURCE solarPowerSource08(sendTime UINT64 NOT NULL, timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR solarPowerSource08 TYPE TCP SET(
+    100000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    5100 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/solar_power/solar-power.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [1]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [24]
+SELECT powerProdNext2Min, ingestion_time FROM MODEL_INFERENCE(nbeats, (
+        SELECT ARRAY_AGG(value) AS value_10_min, MAX(ingestion_time) AS ingestion_time
+        FROM (SELECT timestamp, value, sendTime AS ingestion_time FROM solarPowerSource08)
+        WINDOW SLIDING(timestamp, SIZE 600000 ms, ADVANCE BY 60000 ms)
+    )
+)
+INTO solarPowerLatency;
+----

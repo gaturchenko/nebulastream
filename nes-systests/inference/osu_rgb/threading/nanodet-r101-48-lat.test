@@ -1,0 +1,228 @@
+# Latency counterpart of nanodet-r101-48.test: the same budget splits, but the source replays the 1507 frames at 20 frames/s,
+# below every split's capacity (29.5 frames/s at the slowest), and a Latency sink records each detection's latency, so that
+# the splits compare at equal load. Capacity (unpaced throughput) comes from nanodet-r101-48.test.
+# The TCP source needs a whole frame line (~200 KB) in one buffer, hence 1 MB buffers, and fewer of them.
+# The TCP mock source sends each tuple with its send time as an extra first field (MOCK_SEND_TIMESTAMP), and the query takes that
+# as the ingestion time, so a latency is everything a result waits for after its input was sent: parsing, the channel between
+# the two node queries, queueing for a worker and inference. A timestamp taken inside the query (CURRENT_TIME()) would miss the
+# waiting before the first pipeline runs, which grows as fewer workers serve longer inferences.
+# Each split reads its own copy of the source, so that the mock can wait before sending (MOCK_START_DELAY_MS) until the query has
+# set up: the inference pipeline compiles one OpenVINO session per worker at start (~0.8 s each on so015),
+# and data sent meanwhile would queue behind it. The delay is 5 s plus 1 s per worker. CONNECT_TIMEOUT_SECONDS is also the
+# source's socket receive timeout, so it must exceed the delay.
+# Driven by scripts/benchmarking/e2e/run_threading_lat.sh; process_threading_lat.py drops each run's first seconds as warm-up.
+GlobalConfiguration enable_event_trace: [true]
+# One OpenVINO stream per worker-thread session, so that each split's inference_num_threads applies.
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [10000]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1048576]
+GlobalConfiguration worker.default_query_execution.page_size: [16384]
+
+CREATE SINK osuRgbLatency(detectedObjects VARSIZED NOT NULL, ingestion_time UINT64 NOT NULL) TYPE Latency SET(
+    'results/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+CREATE MODEL nanodet ('model/osu/pretrained/nanodet/nanodet-plus-r101.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (detectedObjects VARSIZED);
+
+CREATE LOGICAL SOURCE osuRgbSource01(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource01 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    53000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [48]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [1]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource01
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource02(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource02 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    29000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [24]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [2]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource02
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource03(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource03 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    21000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [16]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [3]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource03
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource04(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource04 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    17000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [12]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource04
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource05(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource05 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    13000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [8]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [6]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource05
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource06(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource06 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    11000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [6]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [8]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource06
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource07(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource07 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    9000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [4]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [12]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource07
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource08(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource08 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    8000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [3]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [16]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource08
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource09(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource09 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    7000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [2]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [24]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource09
+    )
+)
+INTO osuRgbLatency;
+----
+
+CREATE LOGICAL SOURCE osuRgbSource10(sendTime UINT64 NOT NULL, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource10 TYPE TCP SET(
+    20 AS `SOURCE`.MOCK_TUPLE_RATE,
+    'true' AS `SOURCE`.MOCK_SEND_TIMESTAMP,
+    6000 AS `SOURCE`.MOCK_START_DELAY_MS,
+    120 AS `SOURCE`.CONNECT_TIMEOUT_SECONDS,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE large/osu_rgb/otcbvs_osu_rgb.csv
+
+Configuration worker.query_engine.number_of_worker_threads: [1]
+Configuration worker.default_query_execution.inference.openvino_inference_num_threads: [48]
+SELECT detectedObjects, ingestion_time FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed, sendTime AS ingestion_time
+        FROM osuRgbSource10
+    )
+)
+INTO osuRgbLatency;
+----
