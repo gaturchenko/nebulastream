@@ -1,6 +1,6 @@
 """Systems comparison across all three end-to-end workloads (Raspberry Pi).
 
-Produces two figures.
+Produces three figures.
 
 e2e-systems-workloads.pdf: P95 end-to-end latency of NAVI vs. the Flink+OpenVINO UDF
 baseline vs. TorchServe external serving, on Waymo/SqueezeDet, CWRU/SARAD and MUSAN/MHAtt-RNN.
@@ -35,6 +35,9 @@ configurations and the whisker spans min-max. Single runs are not enough on thes
 CWRU Flink cell produced 97 ms and 236 ms inference medians on consecutive runs, and a single run
 had TorchServe's CWRU P95 beating NAVI's, which repetitions reverse.
 
+e2e-systems-workloads-column.pdf: the same figure drawn one column wide, which is the paper's
+Figure 1 on its first page. Both versions share draw_e2e_workloads and differ only in their Layout.
+
 e2e-systems-workloads-split.pdf: the same comparison on MEAN latency, with TorchServe's bar split
 into the inference it performs and the cost of reaching it over the serving boundary. It exists so
 the cost breakdown the revision asks for does not need a figure of its own.
@@ -56,6 +59,8 @@ Data: data/systems/workloads_p95.csv and data/systems/torchserve_breakdown.csv
       bars data/systems/flink_startup_runs.csv (one row per traced run, full-run and post-start-up
       percentiles; raw traces on the Pi in ~/navi/results-flink-startup).
 """
+
+from typing import NamedTuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -97,20 +102,40 @@ def load_torchserve_split() -> dict:
             for w in WORKLOADS}
 
 
-def plot_e2e_workloads(data: dict, share: dict, flink_steady: dict) -> None:
+class Layout(NamedTuple):
+    """Sizes and spacing of the P95 figure; the defaults are the full-width version's."""
+    figsize: tuple
+    label_fs: float
+    tick_fs: float
+    value_fs: float
+    legend_fs: float
+    title_fs: float
+    rate_size: str = "small"  # LaTeX size of the offered-load subtitle under each panel title
+    bar_width: float = 0.62
+    headroom: float = 1.30  # y-limit factor above the tallest bar, leaving room for the value labels
+    linewidth: float = 0.8
+    hatch: str = "///"
+    error_linewidth: float = 0.9
+    capsize: float = 3
+    legend_ncol: int = 5
+    legend_anchor: float = -0.07  # y of the legend's lower edge, in figure coordinates
+    pad_inches: float = 0.1
+    # Only set for the column-width version; None keeps matplotlib's default.
+    title_pad: float | None = None
+    ylabel_pad: float | None = None
+    tick_length: float | None = None
+    tick_pad: float | None = None
+    hide_xticks: bool = False
+    w_pad: float | None = None
+    bottom: float | None = None  # bottom margin reserved for a legend of more than one row
+    value_label_pad: float = 0.6
+
+
+def draw_e2e_workloads(data: dict, share: dict, flink_steady: dict, layout: Layout) -> plt.Figure:
     """P95 per system; TorchServe's bar is split in the proportions of its mean breakdown, Flink's at its
     P95 without the first seconds of the run."""
-    FIGSIZE = (9.5, 3.0)
-    LABEL_FS = 15
-    TICK_FS = 12
-    VALUE_FS = 10
-    LEGEND_FS = 11.5
-    TITLE_FS = 13
-    BAR_WIDTH = 0.62
-    HEADROOM = 1.30  # y-limit factor above the tallest bar, leaving room for the value labels
-
     setup_style()
-    fig, axes = plt.subplots(1, len(WORKLOADS), figsize=FIGSIZE)
+    fig, axes = plt.subplots(1, len(WORKLOADS), figsize=layout.figsize)
 
     for ax, workload in zip(axes, WORKLOADS):
         x = np.arange(len(ORDER))
@@ -118,63 +143,132 @@ def plot_e2e_workloads(data: dict, share: dict, flink_steady: dict) -> None:
         lower = [data[(workload, s)][0] - data[(workload, s)][1] for s in ORDER]
         upper = [data[(workload, s)][2] - data[(workload, s)][0] for s in ORDER]
 
-        top = max(np.array(medians) + np.array(upper)) * HEADROOM
+        top = max(np.array(medians) + np.array(upper)) * layout.headroom
         for index, system in enumerate(ORDER):
             if system == FLINK:
                 # Solid = P95 once the run is past its start-up; hatched = what the start-up adds to
                 # the full-run P95 (the bar's height and its label), drawn like TorchServe's boundary.
                 steady = min(flink_steady[workload], medians[index])
-                ax.bar(index, steady, width=BAR_WIDTH, color=COLOR[system], edgecolor="black",
-                       linewidth=0.8)
-                ax.bar(index, medians[index] - steady, width=BAR_WIDTH, bottom=steady,
-                       facecolor="white", edgecolor=COLOR[system], linewidth=0.8, hatch="///")
+                ax.bar(index, steady, width=layout.bar_width, color=COLOR[system], edgecolor="black",
+                       linewidth=layout.linewidth)
+                ax.bar(index, medians[index] - steady, width=layout.bar_width, bottom=steady,
+                       facecolor="white", edgecolor=COLOR[system], linewidth=layout.linewidth,
+                       hatch=layout.hatch)
                 if medians[index] - steady > 0.12 * top:
                     ax.text(index, steady + 0.01 * top, f"{steady:.0f}", ha="center", va="bottom",
-                            fontsize=VALUE_FS, style="italic",
-                            bbox=dict(facecolor="white", edgecolor="none", pad=0.6))
+                            fontsize=layout.value_fs, style="italic",
+                            bbox=dict(facecolor="white", edgecolor="none", pad=layout.value_label_pad))
                 continue
             if system != TORCHSERVE:
-                ax.bar(index, medians[index], width=BAR_WIDTH, color=COLOR[system],
-                       edgecolor="black", linewidth=0.8)
+                ax.bar(index, medians[index], width=layout.bar_width, color=COLOR[system],
+                       edgecolor="black", linewidth=layout.linewidth)
                 continue
             inference = medians[index] * share[workload]
-            ax.bar(index, inference, width=BAR_WIDTH, color=COLOR[system],
-                   edgecolor="black", linewidth=0.8)
-            ax.bar(index, medians[index] - inference, width=BAR_WIDTH, bottom=inference,
-                   facecolor="white", edgecolor=COLOR[system], linewidth=0.8, hatch="///")
+            ax.bar(index, inference, width=layout.bar_width, color=COLOR[system],
+                   edgecolor="black", linewidth=layout.linewidth)
+            ax.bar(index, medians[index] - inference, width=layout.bar_width, bottom=inference,
+                   facecolor="white", edgecolor=COLOR[system], linewidth=layout.linewidth,
+                   hatch=layout.hatch)
 
         ax.errorbar(x, medians, yerr=[lower, upper], fmt="none", ecolor="black",
-                    elinewidth=0.9, capsize=3)
+                    elinewidth=layout.error_linewidth, capsize=layout.capsize)
         # Direct value labels: the palette's aqua sits below 3:1 against white, so identity and
         # magnitude must not rest on the fill alone.
         for index, value in enumerate(medians):
             ax.text(index, value + upper[index], f"{value:.0f}", ha="center", va="bottom",
-                    fontsize=VALUE_FS)
+                    fontsize=layout.value_fs)
 
-        ax.set_title(f"{WORKLOAD_TITLE[workload]}\n{{\\small {WORKLOAD_RATE[workload]}}}",
-                     fontsize=TITLE_FS)
+        ax.set_title(f"{WORKLOAD_TITLE[workload]}\n{{\\{layout.rate_size} {WORKLOAD_RATE[workload]}}}",
+                     fontsize=layout.title_fs, pad=layout.title_pad)
         ax.set_xticks(x)
         ax.set_xticklabels([])
+        if layout.hide_xticks:
+            ax.tick_params(axis="x", length=0)
         ax.set_ylim(0, top)
-        ax.tick_params(axis="y", labelsize=TICK_FS)
+        ax.tick_params(axis="y", labelsize=layout.tick_fs)
+        if layout.tick_length is not None:
+            ax.tick_params(axis="y", length=layout.tick_length, pad=layout.tick_pad)
         ax.spines[["top", "right"]].set_visible(False)
         ax.yaxis.grid(True, linestyle="--", alpha=0.4)
         ax.set_axisbelow(True)
 
-    axes[0].set_ylabel("Latency P95 [ms]", fontsize=LABEL_FS)
+    axes[0].set_ylabel("Latency P95 [ms]", fontsize=layout.label_fs, labelpad=layout.ylabel_pad)
 
-    handles = [plt.Rectangle((0, 0), 1, 1, facecolor=COLOR[s], edgecolor="black", linewidth=0.8)
-               for s in ORDER]
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor=COLOR[s], edgecolor="black",
+                             linewidth=layout.linewidth) for s in ORDER]
     handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=COLOR[FLINK],
-                                 linewidth=0.8, hatch="///"))
+                                 linewidth=layout.linewidth, hatch=layout.hatch))
     handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=COLOR[TORCHSERVE],
-                                 linewidth=0.8, hatch="///"))
+                                 linewidth=layout.linewidth, hatch=layout.hatch))
     labels = [LABEL[s] for s in ORDER] + ["Flink start-up (first 5 s)", "serving boundary"]
-    fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False,
-               fontsize=LEGEND_FS, bbox_to_anchor=(0.5, -0.07))
+    legend_kwargs = {}
+    if layout.legend_ncol < len(labels):
+        # matplotlib fills legend columns top to bottom; reorder so the three systems form the first
+        # row and the two hatched parts the second.
+        rows = -(-len(labels) // layout.legend_ncol)
+        order = [r * layout.legend_ncol + c for c in range(layout.legend_ncol) for r in range(rows)
+                 if r * layout.legend_ncol + c < len(labels)]
+        handles = [handles[i] for i in order]
+        labels = [labels[i] for i in order]
+        legend_kwargs = dict(handlelength=1.3, columnspacing=0.9, handletextpad=0.4)
+    fig.legend(handles, labels, loc="lower center", ncol=layout.legend_ncol, frameon=False,
+               fontsize=layout.legend_fs, bbox_to_anchor=(0.5, layout.legend_anchor), **legend_kwargs)
 
-    fig.tight_layout()
-    save(fig, "e2e-systems-workloads.pdf", pad_inches=0.1)
+    fig.tight_layout(w_pad=layout.w_pad)
+    if layout.bottom is not None:
+        fig.subplots_adjust(bottom=layout.bottom)
+    return fig
+
+
+def plot_e2e_workloads(data: dict, share: dict, flink_steady: dict) -> None:
+    """Full page width: e2e-systems-workloads.pdf."""
+    layout = Layout(
+        figsize=(9.5, 3.0),
+        label_fs=15,
+        tick_fs=12,
+        value_fs=10,
+        legend_fs=11.5,
+        title_fs=13,
+    )
+    fig = draw_e2e_workloads(data, share, flink_steady, layout)
+    save(fig, "e2e-systems-workloads.pdf", pad_inches=layout.pad_inches)
+
+
+def plot_e2e_workloads_column(data: dict, share: dict, flink_steady: dict) -> None:
+    """One column wide, for Figure 1 on the paper's first page: e2e-systems-workloads-column.pdf.
+
+    The full-width figure scaled to a 3.5 in column would set its ticks at ~4.4 pt, so this one is
+    drawn at the column's size with fonts near the 8 pt of IEEEtran captions. The five legend entries
+    do not fit one row at this width and take two: the systems, then the two hatched parts.
+    """
+    layout = Layout(
+        figsize=(3.5, 2.1),
+        label_fs=8.5,
+        tick_fs=7.5,
+        value_fs=7,
+        legend_fs=7.5,
+        title_fs=8,
+        rate_size="scriptsize",
+        bar_width=0.68,
+        headroom=1.28,
+        linewidth=0.6,
+        hatch="////",
+        error_linewidth=0.7,
+        capsize=2,
+        legend_ncol=3,
+        legend_anchor=-0.02,
+        pad_inches=0.02,
+        title_pad=3,
+        ylabel_pad=2,
+        tick_length=2,
+        tick_pad=1.5,
+        hide_xticks=True,
+        w_pad=0.6,
+        bottom=0.215,
+        value_label_pad=0.4,
+    )
+    fig = draw_e2e_workloads(data, share, flink_steady, layout)
+    save(fig, "e2e-systems-workloads-column.pdf", pad_inches=layout.pad_inches)
 
 
 def plot_e2e_split(data: dict, split: dict) -> None:
@@ -246,4 +340,5 @@ if __name__ == "__main__":
     flink_full, flink_steady = load_flink_startup()
     p95.update({(workload, FLINK): value for workload, value in flink_full.items()})
     plot_e2e_workloads(p95, inference_share(split), flink_steady)
+    plot_e2e_workloads_column(p95, inference_share(split), flink_steady)
     plot_e2e_split(load_stat("mean"), split)

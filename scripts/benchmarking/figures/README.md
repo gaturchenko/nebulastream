@@ -12,7 +12,7 @@ font- and figure-size constants at the top of its body, and a `__main__` block.
 | `plot_threading.py` | `ts-threading.pdf`, `od-threading.pdf` | `data/threading/results_1.csv`, `data/threading/results_nanodet_r101.csv`, `data/threading/threading_lat.csv` |
 | `plot_systems.py` | `e2e-systems.pdf` | `data/systems/*.csv` |
 | `plot_waymo_e2e.py` | `e2e-waymo.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv` |
-| `plot_systems_workloads.py` | `e2e-systems-workloads.pdf`, `e2e-systems-workloads-split.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv`, `data/systems/flink_startup_runs.csv` |
+| `plot_systems_workloads.py` | `e2e-systems-workloads.pdf`, `e2e-systems-workloads-column.pdf` (paper Fig. 1), `e2e-systems-workloads-split.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv`, `data/systems/flink_startup_runs.csv` |
 | `plot_systems_rate_sweep.py` | `systems-rate-sweep.pdf`, `systems-rate-sweep-throughput.pdf`, `systems-rate-sweep-latency.pdf` | `data/systems/rate_sweep.csv` |
 | `plot_torchserve_breakdown.py` | `torchserve-breakdown.pdf` | `data/systems/torchserve_breakdown.csv` |
 | `plot_flink_memory.py` | `flink-memory.pdf` | `data/systems/flink_memory.csv` |
