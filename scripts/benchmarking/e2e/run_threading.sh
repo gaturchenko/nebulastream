@@ -24,6 +24,24 @@ python3 scripts/benchmarking/e2e/run_systests.py \
     inference/osu_rgb/threading/nanodet-48.test:08 \
     inference/osu_rgb/threading/nanodet-48.test:09 \
     inference/osu_rgb/threading/nanodet-48.test:10 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:01 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:02 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:03 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:04 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:05 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:06 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:07 \
+    inference/osu_rgb/threading/nanodet-r101-24.test:08 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:01 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:02 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:03 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:04 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:05 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:06 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:07 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:08 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:09 \
+    inference/osu_rgb/threading/nanodet-r101-48.test:10 \
     inference/solar_power/threading/nbeats-1-24.test:01 \
     inference/solar_power/threading/nbeats-1-24.test:02 \
     inference/solar_power/threading/nbeats-1-24.test:03 \

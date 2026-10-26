@@ -87,7 +87,10 @@ echo "Packaging ${BRANCH}@${REVISION}${DIRTY} -> ${TARBALL}"
 echo "${BRANCH}@${REVISION}${DIRTY}" > "${REPO_ROOT}/GIT_REVISION"
 trap 'rm -f "${REPO_ROOT}/GIT_REVISION"' EXIT
 # GIT_REVISION is written into the tree first so that it is picked up as an untracked file and travels with the sources.
-(cd "${REPO_ROOT}" && git ls-files -co --exclude-standard -z | tar --null --zstd -cf "${TARBALL}" -T -)
+# ls-files also lists tracked files deleted in the working tree; they are left out, as the packaged tree is the working tree.
+(cd "${REPO_ROOT}" && git ls-files -co --exclude-standard -z \
+    | while IFS= read -r -d '' file; do [[ -e "${file}" || -L "${file}" ]] && printf '%s\0' "${file}"; done \
+    | tar --null --zstd -cf "${TARBALL}" -T -)
 echo "Packaged $(du -h "${TARBALL}" | cut -f1)"
 
 ###############################################################################

@@ -217,14 +217,24 @@ FLINK_RATE=()
 [[ -n "${RATE:-}" ]] && FLINK_RATE=(RATE="$RATE")
 
 # Flink's inference lanes are NES's worker threads: taken from the .test this run uses, so the two cannot drift apart.
+# FLINK_LANES sets them explicitly instead, for tuning Flink's lane count on its own.
 TEST_PATH="queries/${TEST_FILE}"
 FLINK_PARALLELISM=$(sed -n 's/^GlobalConfiguration worker.query_engine.number_of_worker_threads: \[\([0-9]\+\)\].*/\1/p' "$TEST_PATH" | head -1)
 [[ -n "$FLINK_PARALLELISM" ]] || { echo "No number_of_worker_threads in $TEST_PATH" >&2; exit 1; }
-echo "Flink inference lanes = NES worker threads = $FLINK_PARALLELISM"
+if [[ -n "${FLINK_LANES:-}" ]]; then
+    FLINK_PARALLELISM="$FLINK_LANES"
+    echo "Flink inference lanes = $FLINK_PARALLELISM (FLINK_LANES)"
+else
+    echo "Flink inference lanes = NES worker threads = $FLINK_PARALLELISM"
+fi
+# FLINK_CSV hands the Flink runner the input file a regenerated .test attaches instead of its default one.
+FLINK_DATA=()
+[[ -n "${FLINK_CSV:-}" ]] && FLINK_DATA=(CSV="$FLINK_CSV")
 
 if stage_enabled flink; then
     run_arm flink clean_flink env QUERY_NAME="${QUERY_NAME:-flink}" PARAM_NAME=baseline PARAM_VALUE=flink REPETITION=0 \
         MODEL="$MODEL_IR" STATS="$FLINK_STATS" PARALLELISM="$FLINK_PARALLELISM" "${FLINK_GEOMETRY[@]}" "${FLINK_RATE[@]}" \
+        "${FLINK_DATA[@]}" \
         "$FLINK_RUN"
 fi
 
