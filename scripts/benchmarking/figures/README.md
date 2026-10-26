@@ -12,7 +12,7 @@ font- and figure-size constants at the top of its body, and a `__main__` block.
 | `plot_threading.py` | `ts-threading.pdf`, `od-threading.pdf` | `data/threading/results_1.csv`, `data/threading/results_nanodet_r101.csv`, `data/threading/threading_lat.csv` |
 | `plot_systems.py` | `e2e-systems.pdf` | `data/systems/*.csv` |
 | `plot_waymo_e2e.py` | `e2e-waymo.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv` |
-| `plot_systems_workloads.py` | `e2e-systems-workloads.pdf`, `e2e-systems-workloads-split.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv` |
+| `plot_systems_workloads.py` | `e2e-systems-workloads.pdf`, `e2e-systems-workloads-split.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv`, `data/systems/flink_startup_runs.csv` |
 | `plot_systems_rate_sweep.py` | `systems-rate-sweep.pdf`, `systems-rate-sweep-throughput.pdf`, `systems-rate-sweep-latency.pdf` | `data/systems/rate_sweep.csv` |
 | `plot_torchserve_breakdown.py` | `torchserve-breakdown.pdf` | `data/systems/torchserve_breakdown.csv` |
 | `plot_flink_memory.py` | `flink-memory.pdf` | `data/systems/flink_memory.csv` |
@@ -115,6 +115,16 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   sink connections) the pilot chose (`run_pi_ts_sweep_workers3.sh`; the 1-worker curve is in
   `~/navi/results-sweep-torchserve-1worker`, and saturated slightly later, ~33 vs. ~31.5 frames/s),
   and NAVI's arm already ran at its tuned 2 workers.
+
+  Flink's P95 bars in `e2e-systems-workloads.pdf` come from `flink_startup_runs.csv` instead: 5
+  further runs of Flink's arm at the tuned lanes with a per-record trace (`WindowTrace` in the Flink
+  baseline, on only when `FLINK_WINDOW_TRACE` is set; `run_pi_flink_startup.sh`, raw traces in
+  `~/navi/results-flink-startup`), one row per run with the full-run percentiles and those over the
+  results whose input arrived after the first 5 s. The bar is solid up to the latter and hatched up
+  to the former. On CWRU Flink's two lanes spend the first ~3 s overlapping at ~200 ms per inference,
+  exactly the offered rate, so the start-up backlog cannot drain; those ~30 windows are the 5% the
+  P95 sits on (full run 225-338 ms, after start-up 90-93 ms). Waymo and MUSAN show no such phase.
+  The caption should say that only Flink's start-up is broken out; NAVI and TorchServe are full-run.
 
   In `e2e-systems-workloads.pdf`, TorchServe's P95 bar is split into inference and serving
   boundary in the proportions of its **mean** breakdown (`torchserve_breakdown.csv`), since stage

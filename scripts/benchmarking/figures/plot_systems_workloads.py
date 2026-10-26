@@ -10,6 +10,18 @@ inference and serving boundary in the proportions of its MEAN breakdown (see bel
 split is measured on means); the caption has to say so, because the shares at the tail need not
 match the shares on average.
 
+Flink's bar is split too: solid up to its P95 over the results whose input arrived after the first 5 s
+of the run, hatched (as TorchServe's boundary) up to its full-run P95 (the bar's height and label). Both come from the same 5
+traced runs at the tuned lanes (run_pi_flink_startup.sh, data/systems/flink_startup_runs.csv), which
+also replace the tuning finals as Flink's bar, so the two parts cannot come from different runs. The
+trace (WindowTrace in the Flink baseline) showed why CWRU needs this: for its first ~3 s both lanes
+infer at once at ~200 ms per window instead of ~73 ms, which is exactly the offered 10 windows/s, so
+the start-up backlog cannot drain. That is ~30 of 608 windows, right at the 5% a P95 sits on, so the
+full-run P95 swings between runs (225-338 ms here, 196-388 ms in the tuning finals) while the P95
+after start-up holds at 90-93 ms. Waymo and MUSAN have no such phase (66.3 vs 65.8, 141.3 vs 138.9 ms).
+NAVI's and TorchServe's bars stay full-run: their per-result data was not traced, so the caption should
+say that only Flink's start-up is broken out.
+
 Each workload gets its own panel and its own y-axis. A shared axis would be wrong here: the
 workloads run at different offered loads against different models, so their absolute latencies are
 not meant to be compared with one another -- only the three systems within a panel are. (A shared
@@ -40,14 +52,16 @@ bar beside it.
 
 Data: data/systems/workloads_p95.csv and data/systems/torchserve_breakdown.csv
       (aggregate_systems_data.py --tuned over navi's tuning runs: each system at the parallelism its
-      pilot chose, then 5 fresh repetitions; medians plus min-max across them).
+      pilot chose, then 5 fresh repetitions; medians plus min-max across them), and for Flink's P95
+      bars data/systems/flink_startup_runs.csv (one row per traced run, full-run and post-start-up
+      percentiles; raw traces on the Pi in ~/navi/results-flink-startup).
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 from common import save, setup_style
-from systems_common import (COLOR, LABEL, ORDER, TORCHSERVE, WORKLOAD_RATE, WORKLOAD_TITLE,
+from systems_common import (COLOR, FLINK, LABEL, ORDER, TORCHSERVE, WORKLOAD_RATE, WORKLOAD_TITLE,
                             WORKLOADS, load)
 
 # Everything in TorchServe's mean latency that is not the handler call is the price of crossing the
@@ -60,6 +74,14 @@ def load_stat(stat: str) -> dict:
     df = load("workloads_p95.csv").set_index(["workload", "system"])
     return {key: (row[f"{stat}_median_ms"], row[f"{stat}_min_ms"], row[f"{stat}_max_ms"])
             for key, row in df.iterrows()}
+
+
+def load_flink_startup() -> tuple[dict, dict]:
+    """Flink's P95 from the traced runs: (median, min, max) of the full-run P95, and the median P95 after start-up."""
+    df = load("flink_startup_runs.csv").groupby("workload")
+    full = {w: (g["p95_full_ms"].median(), g["p95_full_ms"].min(), g["p95_full_ms"].max()) for w, g in df}
+    steady = {w: g["p95_steady_ms"].median() for w, g in df}
+    return full, steady
 
 
 def inference_share(split: dict) -> dict:
@@ -75,8 +97,9 @@ def load_torchserve_split() -> dict:
             for w in WORKLOADS}
 
 
-def plot_e2e_workloads(data: dict, share: dict) -> None:
-    """P95 per system; TorchServe's bar is split in the proportions of its mean breakdown."""
+def plot_e2e_workloads(data: dict, share: dict, flink_steady: dict) -> None:
+    """P95 per system; TorchServe's bar is split in the proportions of its mean breakdown, Flink's at its
+    P95 without the first seconds of the run."""
     FIGSIZE = (9.5, 3.0)
     LABEL_FS = 15
     TICK_FS = 12
@@ -95,7 +118,21 @@ def plot_e2e_workloads(data: dict, share: dict) -> None:
         lower = [data[(workload, s)][0] - data[(workload, s)][1] for s in ORDER]
         upper = [data[(workload, s)][2] - data[(workload, s)][0] for s in ORDER]
 
+        top = max(np.array(medians) + np.array(upper)) * HEADROOM
         for index, system in enumerate(ORDER):
+            if system == FLINK:
+                # Solid = P95 once the run is past its start-up; hatched = what the start-up adds to
+                # the full-run P95 (the bar's height and its label), drawn like TorchServe's boundary.
+                steady = min(flink_steady[workload], medians[index])
+                ax.bar(index, steady, width=BAR_WIDTH, color=COLOR[system], edgecolor="black",
+                       linewidth=0.8)
+                ax.bar(index, medians[index] - steady, width=BAR_WIDTH, bottom=steady,
+                       facecolor="white", edgecolor=COLOR[system], linewidth=0.8, hatch="///")
+                if medians[index] - steady > 0.12 * top:
+                    ax.text(index, steady + 0.01 * top, f"{steady:.0f}", ha="center", va="bottom",
+                            fontsize=VALUE_FS, style="italic",
+                            bbox=dict(facecolor="white", edgecolor="none", pad=0.6))
+                continue
             if system != TORCHSERVE:
                 ax.bar(index, medians[index], width=BAR_WIDTH, color=COLOR[system],
                        edgecolor="black", linewidth=0.8)
@@ -118,7 +155,7 @@ def plot_e2e_workloads(data: dict, share: dict) -> None:
                      fontsize=TITLE_FS)
         ax.set_xticks(x)
         ax.set_xticklabels([])
-        ax.set_ylim(0, max(np.array(medians) + np.array(upper)) * HEADROOM)
+        ax.set_ylim(0, top)
         ax.tick_params(axis="y", labelsize=TICK_FS)
         ax.spines[["top", "right"]].set_visible(False)
         ax.yaxis.grid(True, linestyle="--", alpha=0.4)
@@ -128,9 +165,11 @@ def plot_e2e_workloads(data: dict, share: dict) -> None:
 
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=COLOR[s], edgecolor="black", linewidth=0.8)
                for s in ORDER]
+    handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=COLOR[FLINK],
+                                 linewidth=0.8, hatch="///"))
     handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=COLOR[TORCHSERVE],
                                  linewidth=0.8, hatch="///"))
-    labels = [LABEL[s] for s in ORDER] + ["serving boundary"]
+    labels = [LABEL[s] for s in ORDER] + ["Flink start-up (first 5 s)", "serving boundary"]
     fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False,
                fontsize=LEGEND_FS, bbox_to_anchor=(0.5, -0.07))
 
@@ -203,5 +242,8 @@ def plot_e2e_split(data: dict, split: dict) -> None:
 
 if __name__ == "__main__":
     split = load_torchserve_split()
-    plot_e2e_workloads(load_stat("p95"), inference_share(split))
+    p95 = load_stat("p95")
+    flink_full, flink_steady = load_flink_startup()
+    p95.update({(workload, FLINK): value for workload, value in flink_full.items()})
+    plot_e2e_workloads(p95, inference_share(split), flink_steady)
     plot_e2e_split(load_stat("mean"), split)
