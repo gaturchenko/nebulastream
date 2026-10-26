@@ -83,10 +83,11 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   three runs erase.
 
   All three systems run one OpenVINO stream with four threads per lane (NAVI worker thread, Flink
-  inference lane, TorchServe worker), Flink with as many inference lanes as the `.test` has
-  worker threads (`run_systems.sh` reads them from it), TorchServe with one worker.
+  inference lane, TorchServe worker), each with the number of lanes its tuning pilot chose (see
+  below). Left alone, `run_systems.sh` gives Flink as many inference lanes as the `.test` has
+  worker threads; the tuning and sweep drivers override that with `FLINK_LANES`.
 
-  The 93 per-repetition CSVs behind those aggregates are **not** kept here. They live on the Pi
+  The per-repetition CSVs behind those aggregates are **not** kept here. They live on the Pi
   under `~/navi/results-reps` and `~/navi/results-sweep` (`run_pi_systems_rerun.sh`; the
   `num_streams=0` runs are archived in `~/navi/systems-streams0`), with every arm's thermal
   state in `~/navi/results-thermal/arms.csv`; `aggregate_systems_data.py` reduces them and is
@@ -115,13 +116,19 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   `~/navi/results-sweep-torchserve-1worker`, and saturated slightly later, ~33 vs. ~31.5 frames/s),
   and NAVI's arm already ran at its tuned 2 workers.
 
+  In `e2e-systems-workloads.pdf`, TorchServe's P95 bar is split into inference and serving
+  boundary in the proportions of its **mean** breakdown (`torchserve_breakdown.csv`), since stage
+  times only add up on average and two stages exist only as means. The caption has to say so,
+  e.g. *"TorchServe's bar is divided in the proportions of its mean latency breakdown (handler
+  call vs. serialization, transport and queueing); the split is indicative, since stage shares at
+  the tail need not match those on average."*
+
   `flink_memory.csv` is the private- vs. shared-compiled-model comparison
   (`run_flink_memory.sh`): peak RSS of the Flink job JVM with each lane holding its own compiled
   model against all lanes sharing one. It was **not** rerun and still describes the
   `num_streams=0` setting. `--memory` is optional, so a run that only refreshes the latency data
-  leaves it untouched. Repetition counts differ per cell and `workloads_p95.csv` carries
-  `n_reps`: CWRU/Flink is 6 because that cell was bimodal in earlier runs (inference P50
-  114/112/238/231/244/223 ms), everything else is 3.
+  leaves it untouched. `workloads_p95.csv` carries `n_reps`, 5 in every cell of the tuned matrix;
+  `rate_sweep.csv` is 3 repetitions per rate.
 - `ablation/` — inference-configuration sweeps on the Pi for MUSAN/MHAtt-RNN (UDF, ST, Batch) and
   CWRU/SARAD (UDF, ST at batch 1/12, ST+Cache local/global, Batch+Cache, Batch+Dedup,
   Batch+Cache+Dedup), 3 repetitions per configuration (`run_pi_ablation_rerun.sh`,

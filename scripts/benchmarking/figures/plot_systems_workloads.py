@@ -5,7 +5,10 @@ Produces two figures.
 e2e-systems-workloads.pdf: P95 end-to-end latency of NAVI vs. the Flink+OpenVINO UDF
 baseline vs. TorchServe external serving, on Waymo/SqueezeDet, CWRU/SARAD and MUSAN/MHAtt-RNN.
 It supersedes the single-workload e2e-systems.pdf, which the reviewers asked us to extend to all
-three workloads; that figure and its data are left in place.
+three workloads; that figure and its data are left in place. TorchServe's P95 bar is split into
+inference and serving boundary in the proportions of its MEAN breakdown (see below for why the
+split is measured on means); the caption has to say so, because the shares at the tail need not
+match the shares on average.
 
 Each workload gets its own panel and its own y-axis. A shared axis would be wrong here: the
 workloads run at different offered loads against different models, so their absolute latencies are
@@ -31,7 +34,7 @@ mean-only at the source -- they come from cumulative Prometheus counters divided
 count, so no distribution exists to take a percentile of. Reporting the mean here changes no
 conclusion: the mean and P95 rank the three systems identically on all three workloads.
 
-Inference sits at the BOTTOM of the TorchServe bar on purpose: the solid part is then what
+Inference sits at the BOTTOM of the TorchServe bar (in both figures) on purpose: the solid part is then what
 TorchServe would cost if the boundary were free, which can be read straight across against NAVI's
 bar beside it.
 
@@ -59,6 +62,11 @@ def load_stat(stat: str) -> dict:
             for key, row in df.iterrows()}
 
 
+def inference_share(split: dict) -> dict:
+    """Per workload: the fraction of TorchServe's mean latency that is inference."""
+    return {w: inference / (inference + boundary) for w, (inference, boundary) in split.items()}
+
+
 def load_torchserve_split() -> dict:
     """Per workload: (inference, boundary) [ms], summing to TorchServe's mean end-to-end latency."""
     df = load("torchserve_breakdown.csv").set_index(["workload", "part"])
@@ -67,12 +75,13 @@ def load_torchserve_split() -> dict:
             for w in WORKLOADS}
 
 
-def plot_e2e_workloads(data: dict) -> None:
+def plot_e2e_workloads(data: dict, share: dict) -> None:
+    """P95 per system; TorchServe's bar is split in the proportions of its mean breakdown."""
     FIGSIZE = (9.5, 3.0)
     LABEL_FS = 15
     TICK_FS = 12
     VALUE_FS = 10
-    LEGEND_FS = 12
+    LEGEND_FS = 11.5
     TITLE_FS = 13
     BAR_WIDTH = 0.62
     HEADROOM = 1.30  # y-limit factor above the tallest bar, leaving room for the value labels
@@ -86,17 +95,24 @@ def plot_e2e_workloads(data: dict) -> None:
         lower = [data[(workload, s)][0] - data[(workload, s)][1] for s in ORDER]
         upper = [data[(workload, s)][2] - data[(workload, s)][0] for s in ORDER]
 
-        bars = ax.bar(
-            x, medians, width=BAR_WIDTH,
-            color=[COLOR[s] for s in ORDER],
-            edgecolor="black", linewidth=0.8,
-            yerr=[lower, upper], capsize=3,
-            error_kw={"elinewidth": 0.9, "ecolor": "black"},
-        )
+        for index, system in enumerate(ORDER):
+            if system != TORCHSERVE:
+                ax.bar(index, medians[index], width=BAR_WIDTH, color=COLOR[system],
+                       edgecolor="black", linewidth=0.8)
+                continue
+            inference = medians[index] * share[workload]
+            ax.bar(index, inference, width=BAR_WIDTH, color=COLOR[system],
+                   edgecolor="black", linewidth=0.8)
+            ax.bar(index, medians[index] - inference, width=BAR_WIDTH, bottom=inference,
+                   facecolor="white", edgecolor=COLOR[system], linewidth=0.8, hatch="///")
+
+        ax.errorbar(x, medians, yerr=[lower, upper], fmt="none", ecolor="black",
+                    elinewidth=0.9, capsize=3)
         # Direct value labels: the palette's aqua sits below 3:1 against white, so identity and
         # magnitude must not rest on the fill alone.
-        ax.bar_label(bars, labels=[f"{v:.0f}" for v in medians],
-                     padding=3, fontsize=VALUE_FS)
+        for index, value in enumerate(medians):
+            ax.text(index, value + upper[index], f"{value:.0f}", ha="center", va="bottom",
+                    fontsize=VALUE_FS)
 
         ax.set_title(f"{WORKLOAD_TITLE[workload]}\n{{\\small {WORKLOAD_RATE[workload]}}}",
                      fontsize=TITLE_FS)
@@ -112,8 +128,11 @@ def plot_e2e_workloads(data: dict) -> None:
 
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=COLOR[s], edgecolor="black", linewidth=0.8)
                for s in ORDER]
-    fig.legend(handles, [LABEL[s] for s in ORDER], loc="lower center", ncol=len(ORDER),
-               frameon=False, fontsize=LEGEND_FS, bbox_to_anchor=(0.5, -0.07))
+    handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=COLOR[TORCHSERVE],
+                                 linewidth=0.8, hatch="///"))
+    labels = [LABEL[s] for s in ORDER] + ["serving boundary"]
+    fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False,
+               fontsize=LEGEND_FS, bbox_to_anchor=(0.5, -0.07))
 
     fig.tight_layout()
     save(fig, "e2e-systems-workloads.pdf", pad_inches=0.1)
@@ -183,5 +202,6 @@ def plot_e2e_split(data: dict, split: dict) -> None:
 
 
 if __name__ == "__main__":
-    plot_e2e_workloads(load_stat("p95"))
-    plot_e2e_split(load_stat("mean"), load_torchserve_split())
+    split = load_torchserve_split()
+    plot_e2e_workloads(load_stat("p95"), inference_share(split))
+    plot_e2e_split(load_stat("mean"), split)
