@@ -1,6 +1,7 @@
 """Latency and throughput versus offered load, Waymo/SqueezeDet on the Raspberry Pi.
 
-Produces systems-rate-sweep.pdf: NAVI vs. Flink+OpenVINO UDF vs. TorchServe across a ladder of
+Produces systems-rate-sweep.pdf (and each of its two panels on its own, systems-rate-sweep-throughput.pdf and
+systems-rate-sweep-latency.pdf): NAVI vs. Flink+OpenVINO UDF vs. TorchServe across a ladder of
 ingestion rates, the curve the single 10 frames/s operating point cannot give -- it cannot separate
 "this system is faster" from "both are mostly idle and this one's fixed overhead is smaller".
 
@@ -72,37 +73,57 @@ def _dress(ax, xlabel, ylabel, label_fs, tick_fs):
     ax.set_axisbelow(True)
 
 
-def plot_rate_sweep(data: dict) -> None:
-    FIGSIZE = (9.0, 3.4)
-    LABEL_FS = 14
-    TICK_FS = 11
-    LEGEND_FS = 11
+LABEL_FS = 14
+TICK_FS = 11
+LEGEND_FS = 11
+PANEL_SIZE = (4.6, 3.4)  # one panel on its own; the two-panel figure is two of these side by side
 
-    setup_style()
-    fig, (ax_thr, ax_lat) = plt.subplots(1, 2, figsize=FIGSIZE)
 
+def draw_throughput(ax, data: dict) -> None:
     # Identity: a system still keeping up sits on this line. Drawn first so the series sit above it.
-    ax_thr.plot(RATES, RATES, linestyle="--", linewidth=1.2, color="0.45",
-                label="offered load", zorder=1)
-
+    ax.plot(RATES, RATES, linestyle="--", linewidth=1.2, color="0.45", label="offered load", zorder=1)
     for system in ORDER:
-        ax_thr.plot(RATES, data[system]["throughput"], marker="o", markersize=MARKERSIZE,
-                    linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system], zorder=3)
+        ax.plot(RATES, data[system]["throughput"], marker="o", markersize=MARKERSIZE,
+                linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system], zorder=3)
+    _dress(ax, "Offered load [frames/s]", "Achieved throughput [frames/s]", LABEL_FS, TICK_FS)
+
+
+def draw_latency(ax, data: dict) -> None:
+    for system in ORDER:
         # Whiskers: min-max of P95 over the repetitions at each measured rate. A band between the points would spread the one
         # unsettled point, at a system's knee, along the whole steep rise on the log axis.
         p95 = np.asarray(data[system]["p95"])
-        ax_lat.errorbar(RATES, p95, yerr=[p95 - np.asarray(data[system]["lo"]), np.asarray(data[system]["hi"]) - p95],
-                        marker="o", markersize=MARKERSIZE, linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system],
-                        elinewidth=1.0, capsize=3)
+        ax.errorbar(RATES, p95, yerr=[p95 - np.asarray(data[system]["lo"]), np.asarray(data[system]["hi"]) - p95],
+                    marker="o", markersize=MARKERSIZE, linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system],
+                    elinewidth=1.0, capsize=3)
+    _dress(ax, "Offered load [frames/s]", "Latency P95 [ms]", LABEL_FS, TICK_FS)
+    ax.set_yscale("log")
 
-    _dress(ax_thr, "Offered load [frames/s]", "Achieved throughput [frames/s]", LABEL_FS, TICK_FS)
-    _dress(ax_lat, "Offered load [frames/s]", "Latency P95 [ms]", LABEL_FS, TICK_FS)
-    ax_lat.set_yscale("log")
 
+def plot_rate_sweep(data: dict) -> None:
+    """Both panels side by side: systems-rate-sweep.pdf."""
+    setup_style()
+    fig, (ax_thr, ax_lat) = plt.subplots(1, 2, figsize=(2 * PANEL_SIZE[0], PANEL_SIZE[1]))
+    draw_throughput(ax_thr, data)
+    draw_latency(ax_lat, data)
     ax_thr.legend(loc="upper left", frameon=False, fontsize=LEGEND_FS)
     fig.tight_layout()
     save(fig, "systems-rate-sweep.pdf", pad_inches=0.1)
 
 
+def plot_rate_sweep_panels(data: dict) -> None:
+    """Each panel as a figure of its own, each with its own legend: systems-rate-sweep-{throughput,latency}.pdf."""
+    for name, draw, legend_loc in [("throughput", draw_throughput, "upper left"),
+                                   ("latency", draw_latency, "upper left")]:
+        setup_style()
+        fig, ax = plt.subplots(figsize=PANEL_SIZE)
+        draw(ax, data)
+        ax.legend(loc=legend_loc, frameon=False, fontsize=LEGEND_FS)
+        fig.tight_layout()
+        save(fig, f"systems-rate-sweep-{name}.pdf", pad_inches=0.1)
+
+
 if __name__ == "__main__":
-    plot_rate_sweep({system: series(system) for system in ORDER})
+    sweep = {system: series(system) for system in ORDER}
+    plot_rate_sweep(sweep)
+    plot_rate_sweep_panels(sweep)
