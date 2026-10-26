@@ -8,7 +8,7 @@ the right):
   - e2e-ts.pdf:    CWRU vibration / SARAD (linear latency axis, 200 ms window,
                    with the prediction cache split into Local/Global scope)
 
-Data: data/ablation/ablation_musan_2.csv, data/ablation/ablation_cwru_5.csv
+Data: data/ablation/ablation_musan.csv, data/ablation/ablation_cwru.csv
       (run_systests.py sweeps over inference configurations).
 """
 
@@ -135,7 +135,7 @@ def load_workload(csv_name: str, batch_from_optimizer: bool, split_cache_scope: 
 
 def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tick_fs,
                             speedup_fs, legend_fs, bar_width, window_ms, window_label,
-                            log_latency, log_bottom, legend_anchors, out_name) -> None:
+                            log_latency, log_bottom, out_name) -> None:
     """Shared two-panel drawing: P50/P95 latency bars + throughput bars with
     speedup-over-UDF labels. All knobs come from the per-chart wrappers."""
     order = [s for s in order if s in best.index]
@@ -179,25 +179,18 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
         ax_lat.yaxis.set_major_formatter(eng_formatter(decimals=1))
     else:
         ax_lat.set_ylim(bottom=0)
-        # Force 0 and the window-size line onto the y-axis alongside the auto ticks.
-        top = ax_lat.get_ylim()[1]
-        ax_lat.set_yticks(sorted({0, window_ms} | {t for t in ax_lat.get_yticks() if 0 < t <= top}))
 
     for ax in (ax_lat, ax_thr):
         ax.set_xticks(x)
         ax.set_xticklabels(order, rotation=30, ha="right", fontsize=tick_fs)
         ax.tick_params(axis="y", labelsize=tick_fs)
 
-    # Two stacked legends top-right: the wide window-size row above the
-    # narrow percentile row. Nudge the anchors if they touch.
-    leg_window = ax_lat.legend(handles=[window_line], loc="upper right",
-                               bbox_to_anchor=legend_anchors[0], frameon=False,
-                               fontsize=legend_fs)
-    ax_lat.add_artist(leg_window)
-    ax_lat.legend(handles=[bars_p50, bars_p95], loc="upper right",
-                  bbox_to_anchor=legend_anchors[1], frameon=False, fontsize=legend_fs)
+    # One legend above the latency panel, clear of the bars whatever their height; the window size is named there, so it
+    # needs no tick of its own.
+    ax_lat.legend(handles=[bars_p50, bars_p95, window_line], loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=3,
+                  frameon=False, fontsize=legend_fs, handlelength=1.5, columnspacing=1.2, borderaxespad=0.3)
 
-    fig.subplots_adjust(left=0.09, right=0.98, bottom=0.28, top=0.90, wspace=0.28)
+    fig.subplots_adjust(left=0.09, right=0.98, bottom=0.28, top=0.88, wspace=0.28)
     save(fig, out_name)
 
 
@@ -213,7 +206,6 @@ def plot_e2e_audio(best: pd.DataFrame) -> None:
     LOG_BOTTOM = 100  # keeps the window line clear of the axis bottom
     ORDER = ["UDF", "ST", "ST+Cache", "Batch", "Batch+Dedup",
              "Batch+Cache", "Batch+Cache+Dedup"]
-    LEGEND_ANCHORS = ((1.0, 1.03), (1.0, 0.95))
 
     draw_latency_throughput(
         best,
@@ -228,7 +220,6 @@ def plot_e2e_audio(best: pd.DataFrame) -> None:
         window_label="Sliding window size (1,000 ms)",
         log_latency=True,
         log_bottom=LOG_BOTTOM,
-        legend_anchors=LEGEND_ANCHORS,
         out_name="e2e-audio.pdf",
     )
 
@@ -244,7 +235,6 @@ def plot_e2e_ts(best: pd.DataFrame) -> None:
     WINDOW_MS = 200
     ORDER = ["UDF", "ST", "ST+Cache Local", "ST+Cache Global", "Batch",
              "Batch+Dedup", "Batch+Cache", "Batch+Cache+Dedup"]
-    LEGEND_ANCHORS = ((1.0, 1.0), (1.0, 0.92))
 
     draw_latency_throughput(
         best,
@@ -259,7 +249,6 @@ def plot_e2e_ts(best: pd.DataFrame) -> None:
         window_label="Sliding window size (200 ms)",
         log_latency=False,
         log_bottom=None,
-        legend_anchors=LEGEND_ANCHORS,
         out_name="e2e-ts.pdf",
     )
 
@@ -267,13 +256,13 @@ def plot_e2e_ts(best: pd.DataFrame) -> None:
 if __name__ == "__main__":
     setup_style()
     plot_e2e_audio(load_workload(
-        "ablation_musan_2.csv",
+        "ablation_musan.csv",
         batch_from_optimizer=True,
         split_cache_scope=False,
         config_cols=["batch_size", "prediction_cache_type", "use_batch_deduplication"],
     ))
     plot_e2e_ts(load_workload(
-        "ablation_cwru_5.csv",
+        "ablation_cwru.csv",
         batch_from_optimizer=False,
         split_cache_scope=True,
         config_cols=["batch_size", "prediction_cache_type",

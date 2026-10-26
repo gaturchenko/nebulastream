@@ -23,8 +23,8 @@ Inference sits at the BOTTOM of the TorchServe bar on purpose: the solid height 
 would cost if the boundary were free, which reads straight across against NAVI's bar beside it.
 
 Data: data/systems/workloads_p95.csv, data/systems/torchserve_breakdown.csv
-      (aggregate_systems_data.py over navi's run_systems_reps.sh output; medians plus min-max
-      across the 3 repetitions).
+      (aggregate_systems_data.py --tuned over navi's tuning runs: each system at the parallelism its
+      pilot chose, then 5 fresh repetitions; medians plus min-max across them).
 """
 
 import numpy as np

@@ -13,9 +13,12 @@ not meant to be compared with one another -- only the three systems within a pan
 log axis would invite exactly that cross-panel reading while also breaking the zero baseline bars
 need.)
 
-Bars are the median of 3 repetitions and the whisker spans min-max. Single runs are not enough on
-these workloads: one CWRU Flink cell produced 97 ms and 236 ms inference medians on consecutive
-runs, and a single run had TorchServe's CWRU P95 beating NAVI's, which three repetitions reverse.
+Every system runs at the parallelism a pilot chose for it on that workload (NAVI worker threads,
+Flink inference lanes, TorchServe workers; lowest median P95 among the settings that keep up), the
+same procedure for all three. Bars are the median of 5 fresh repetitions of the chosen
+configurations and the whisker spans min-max. Single runs are not enough on these workloads: one
+CWRU Flink cell produced 97 ms and 236 ms inference medians on consecutive runs, and a single run
+had TorchServe's CWRU P95 beating NAVI's, which repetitions reverse.
 
 e2e-systems-workloads-split.pdf: the same comparison on MEAN latency, with TorchServe's bar split
 into the inference it performs and the cost of reaching it over the serving boundary. It exists so
@@ -33,8 +36,8 @@ TorchServe would cost if the boundary were free, which can be read straight acro
 bar beside it.
 
 Data: data/systems/workloads_p95.csv and data/systems/torchserve_breakdown.csv
-      (aggregate_systems_data.py over navi's run_systems_reps.sh output; medians plus min-max
-      across the 3 repetitions).
+      (aggregate_systems_data.py --tuned over navi's tuning runs: each system at the parallelism its
+      pilot chose, then 5 fresh repetitions; medians plus min-max across them).
 """
 
 import numpy as np

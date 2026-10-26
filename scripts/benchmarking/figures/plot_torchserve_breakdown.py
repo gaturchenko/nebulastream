@@ -22,8 +22,8 @@ figures use: this chart has no competing systems in it, and the four parts are a
 not four identities.
 
 Data: data/systems/torchserve_breakdown.csv (aggregate_systems_data.py over navi's
-      run_systems_reps.sh output at each workload's published operating point; medians across the
-      3 repetitions, in the order a request travels).
+      --tuned over navi's tuning runs, TorchServe at the worker count its pilot chose; medians across
+      the 5 repetitions, in the order a request travels).
 """
 
 import numpy as np

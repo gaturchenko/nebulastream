@@ -1,22 +1,26 @@
 """Threading microbenchmark: SPE workers vs. OpenVINO threads trade-off.
 
-Produces two figures from one thread-budget sweep (results_1.csv):
-  - ts-threading.pdf: N-BEATS-1 / N-BEATS-32 latency-throughput scatter,
-    colored by SPE thread count, faceted by model x budget and by
-    inference-pipeline vs. end-to-end measurement level.
-  - od-threading.pdf: the same view for NanoDet object detection,
-    faceted by budget only.
+Each split of a thread budget into (SPE workers x OpenVINO threads) is one point: its capacity against its latency at a fixed
+load below every split's capacity.
+  - ts-threading.pdf: N-BEATS-1 / N-BEATS-32, one panel per model x budget.
+  - od-threading.pdf: object detection with NanoDet-Plus on a ResNet-101 backbone, heavy enough that inference bounds the
+    query (with the original ShuffleNetV2 NanoDet, reading the frames does), one panel per budget.
 
-Data: data/threading/results_1.csv (run_threading.sh sweep). Each query name
-encodes model and total thread budget ("nbeats-1-48.test_05"); the test index
+Capacity: results per second of the unpaced sweep (run_threading.sh on so015, 10 repetitions, mean), i.e. the inference
+pipeline's output tuples over the query's duration. Data: data/threading/results_1.csv (N-BEATS),
+data/threading/results_nanodet_r101.csv (NanoDet-R101).
+Latency: the paced sweep (run_threading_lat.sh on so015, 5 repetitions, median of the per-run percentiles), from the moment the
+input was sent to the result reaching the sink, at N-BEATS-1 6667, N-BEATS-32 333 forecasts/s and NanoDet-R101 20 frames/s.
+The marker is the P95, the line runs back to the P50. Data: data/threading/threading_lat.csv (process_threading_lat.py).
+
+Each query name encodes model and total thread budget ("nbeats-1-48.test_05", "nbeats-1-48-lat.test_05"); the test index
 selects one (SPE workers x OpenVINO threads) split of that budget.
 """
 
-import numpy as np
-import pandas as pd
-import seaborn as sns
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import pandas as pd
+from matplotlib.lines import Line2D
 
 from common import eng_formatter, load_csv, save, setup_style
 
@@ -31,72 +35,56 @@ BUDGET_SPLITS = {
 MODEL_LABELS = {
     "mlp": "MLP",
     "nanodet": "NanoDet",
+    "nanodet-r101": "NanoDet-R101",
     "dlinear": "DLinear",
     "nbeats": "N-BEATS",
     "nbeats-1": "N-BEATS-1",
     "nbeats-32": "N-BEATS-32",
 }
 
+# The paced sweep's offered load, in results per second.
+PACED_LOAD = {"N-BEATS-1": 100_000 / 15, "N-BEATS-32": 5_000 / 15, "NanoDet-R101": 20}
+
 THREAD_CMAP = "viridis_r"
 
 
 def parse_query_name(query_name: str):
-    """'nbeats-1-48.test_05' -> ('N-BEATS-1', 48, workers=8, ov_threads=6)."""
+    """'nbeats-1-48.test_05' or 'nbeats-1-48-lat.test_05' -> ('N-BEATS-1', 48, workers=8, ov_threads=6)."""
     stem, _, test = query_name.partition(".test_")
-    prefix, _, budget = stem.rpartition("-")
+    prefix, _, budget = stem.removesuffix("-lat").rpartition("-")
     budget = int(budget)
     workers, ov_threads = BUDGET_SPLITS[budget][int(test) - 1]
     return MODEL_LABELS[prefix], budget, workers, ov_threads
 
 
-def load_data() -> pd.DataFrame:
-    df = load_csv("threading", "results_1.csv")
+def with_split(df: pd.DataFrame) -> pd.DataFrame:
     parsed = df["query_name"].map(parse_query_name)
-    df[["Model", "budget", "nes_workers", "openvino_threads"]] = pd.DataFrame(
-        parsed.tolist(), index=df.index
-    )
-    df["latency_ms"] = df["latency_us"] / 1_000
-    df["end_to_end_latency_ms"] = df["end_to_end_latency_us"] / 1_000
-    df["Config"] = (
-        df["nes_workers"].astype(str) + " SPE × " + df["openvino_threads"].astype(str) + " OV"
-    )
+    df[["Model", "budget", "nes_workers", "openvino_threads"]] = pd.DataFrame(parsed.tolist(), index=df.index)
     return df
 
 
-def stack_measurement_levels(df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate over repetitions and stack the inference-pipeline and
-    end-to-end views into one long frame with latency_value/throughput_value."""
-    agg = (
-        df.groupby(
-            ["pipeline_id", "Model", "nes_workers", "openvino_threads", "Config", "budget"],
-            as_index=False,
-        )
-        .agg(
-            throughput_mean=("throughput", "mean"),
-            latency_mean=("latency_ms", "mean"),
-            throughput_e2e_mean=("end_to_end_throughput", "mean"),
-            latency_e2e_mean=("end_to_end_latency_ms", "mean"),
-        )
-    )
-    pipeline = agg.assign(
-        metric_label="Inference pipeline",
-        latency_value=agg["latency_mean"],
-        throughput_value=agg["throughput_mean"],
-    )
-    e2e = agg.assign(
-        metric_label="End-to-end",
-        latency_value=agg["latency_e2e_mean"],
-        throughput_value=agg["throughput_e2e_mean"],
-    )
-    return pd.concat([pipeline, e2e], ignore_index=True)
+def load_points(capacity_csv: str, pipeline_id: int) -> pd.DataFrame:
+    """One row per (model, budget, split): mean capacity and median latency percentiles."""
+    capacity = load_csv("threading", capacity_csv)
+    capacity = capacity[capacity["pipeline_id"] == pipeline_id].copy()
+    capacity["capacity"] = capacity["pipeline_tuples"] * 1_000_000 / capacity["end_to_end_duration_us"]
+    capacity = with_split(capacity).groupby(["Model", "budget", "nes_workers", "openvino_threads"], as_index=False)[
+        "capacity"].mean()
+
+    latency = with_split(load_csv("threading", "threading_lat.csv"))
+    latency = latency.groupby(["Model", "budget", "nes_workers", "openvino_threads"], as_index=False)[
+        ["p50_ms", "p95_ms"]].median()
+    return capacity.merge(latency, on=["Model", "budget", "nes_workers", "openvino_threads"], validate="one_to_one")
 
 
-def thread_colorbar(fig, axes, values, fraction, pad, label_fs, tick_fs):
-    """Shared log-scaled SPE-thread-count colorbar on the figure's right edge."""
+def thread_colorbar(fig, axes, values, label_fs, tick_fs):
+    """Shared log-scaled SPE-thread-count colorbar right of the panels (call after the layout is final)."""
     norm = mpl.colors.LogNorm(vmin=min(values), vmax=max(values))
     sm = mpl.cm.ScalarMappable(norm=norm, cmap=THREAD_CMAP)
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=axes, fraction=fraction, pad=pad)
+    last = axes[-1].get_position()
+    cax = fig.add_axes((last.x1 + 0.015, last.y0, 0.011, last.height))
+    cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label("SPE threads", fontsize=label_fs)
     cbar.set_ticks(values)
     cbar.set_ticklabels([str(v) for v in values])
@@ -105,154 +93,104 @@ def thread_colorbar(fig, axes, values, fraction, pad, label_fs, tick_fs):
     return norm
 
 
-def plot_ts_threading(df: pd.DataFrame) -> None:
-    """Time series (N-BEATS-1/-32): latency vs. throughput per thread split."""
+def draw_panel(ax, points: pd.DataFrame, load: float, norm, marker_size: float) -> None:
+    """Capacity vs. latency at the paced load; the marker is the P95, the line runs back to the P50."""
+    cmap = mpl.colormaps[THREAD_CMAP]
+    for row in points.sort_values("nes_workers").itertuples():
+        color = cmap(norm(row.nes_workers))
+        ax.plot([row.p50_ms, row.p95_ms], [row.capacity, row.capacity], color=color, linewidth=1.6,
+                solid_capstyle="round", zorder=2)
+        ax.scatter(row.p95_ms, row.capacity, s=marker_size, color=color, edgecolor="0.25", linewidth=0.4, zorder=3)
+    ax.axhline(load, color="0.35", linestyle="--", linewidth=1.0, zorder=1)
+    ax.set_ylim(bottom=0)
+    ax.set_xlim(0, points["p95_ms"].max() * 1.08)
+    ax.grid(color="0.9", linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+def legend_handles(marker_size: float) -> list:
+    return [
+        Line2D([], [], color="0.4", marker="o", linestyle="none", markersize=marker_size ** 0.5, markeredgecolor="0.25",
+               label="P95 latency"),
+        Line2D([], [], color="0.4", linewidth=1.6, label="P50 to P95"),
+        Line2D([], [], color="0.35", linestyle="--", linewidth=1.0, label="offered load"),
+    ]
+
+
+def plot_ts_threading(points: pd.DataFrame) -> None:
+    """Time series (N-BEATS-1/-32): capacity vs. latency per thread split."""
     TITLE_FS = 14
     LABEL_FS = 17
     TICK_FS = 13
+    LEGEND_FS = 13
     CBAR_LABEL_FS = 14
     CBAR_TICK_FS = 12
-    ROW_HEADER_FS = 16
-    FACET_HEIGHT = 3.2
-    FACET_ASPECT = 1.12
+    FIG_SIZE = (16.0, 4.3)
     MARKER_SIZE = 115
-    SUBPLOTS_ADJUST = dict(left=0.07, right=0.90, bottom=0.11, top=0.85, hspace=0.42, wspace=0.30)
+    SUBPLOTS_ADJUST = dict(left=0.06, right=0.90, bottom=0.17, top=0.80, wspace=0.30)
     MODEL_ORDER = ["N-BEATS-1", "N-BEATS-32"]
     BUDGET_ORDER = [24, 48]
-    PIPELINE_ID = 4
 
     setup_style()
-
-    sub = df[(df["Model"].isin(MODEL_ORDER)) & (df["pipeline_id"] == PIPELINE_ID)].copy()
-    # Inference throughput normalized to CPU time: tuples per summed task busy time.
-    sub["throughput"] = sub["end_to_end_tuples"] * 1_000_000 / sub["pipeline_task_duration_us"]
-    plot_df = stack_measurement_levels(sub)
-
-    plot_df["ModelBudgetLabel"] = (
-        plot_df["Model"] + ", " + plot_df["budget"].astype(str) + " threads"
-    )
-    col_order = [f"{m}, {b} threads" for m in MODEL_ORDER for b in BUDGET_ORDER]
-    thread_values = sorted(plot_df["nes_workers"].unique())
+    thread_values = sorted(points.loc[points["Model"].isin(MODEL_ORDER), "nes_workers"].unique())
     norm = mpl.colors.LogNorm(vmin=min(thread_values), vmax=max(thread_values))
 
-    # Same whitegrid look as od-threading, matching the figures in the paper.
-    with sns.axes_style("whitegrid"):
-        g = sns.relplot(
-            data=plot_df,
-            x="latency_value",
-            y="throughput_value",
-            hue="nes_workers",
-            palette=THREAD_CMAP,
-            hue_norm=norm,
-            marker="o",
-            col="ModelBudgetLabel",
-            col_order=col_order,
-            row="metric_label",
-            row_order=["Inference pipeline", "End-to-end"],
-            kind="scatter",
-            s=MARKER_SIZE,
-            edgecolor="0.25",
-            linewidth=0.4,
-            facet_kws={"sharex": False, "sharey": False},
-            height=FACET_HEIGHT,
-            aspect=FACET_ASPECT,
-            legend=False,
-        )
-
-    g.set_axis_labels("Latency [ms]", "Throughput [tuples/s]")
-    for ax in g.axes.flat:
-        ax.set_title("")
-        ax.xaxis.label.set_fontsize(LABEL_FS)
-        ax.yaxis.label.set_fontsize(LABEL_FS)
+    fig, axes = plt.subplots(1, len(MODEL_ORDER) * len(BUDGET_ORDER), figsize=FIG_SIZE)
+    panels = [(model, budget) for model in MODEL_ORDER for budget in BUDGET_ORDER]
+    for ax, (model, budget) in zip(axes, panels):
+        draw_panel(ax, points[(points["Model"] == model) & (points["budget"] == budget)], PACED_LOAD[model], norm,
+                   MARKER_SIZE)
+        ax.set_title(f"{model}, {budget} threads", fontsize=TITLE_FS, pad=8)
+        ax.set_xlabel("Latency [ms]", fontsize=LABEL_FS)
         ax.tick_params(axis="both", labelsize=TICK_FS)
         ax.yaxis.set_major_formatter(eng_formatter(decimals=0))
-    for j, col_name in enumerate(col_order):
-        g.axes[0, j].set_title(col_name, fontsize=TITLE_FS, pad=8)
+    axes[0].set_ylabel("Capacity [forecasts/s]", fontsize=LABEL_FS)
 
-    fig = g.figure
-    thread_colorbar(fig, g.axes, thread_values, fraction=0.028, pad=0.015,
-                    label_fs=CBAR_LABEL_FS, tick_fs=CBAR_TICK_FS)
     fig.subplots_adjust(**SUBPLOTS_ADJUST)
-
-    # Bold measurement-level headers centered above each facet row.
-    x_center = (g.axes[0, 0].get_position().x0 + g.axes[0, -1].get_position().x1) / 2
-    for axes_row, label, offset in (
-        (g.axes[0, :], "Inference pipeline", 0.055),
-        (g.axes[1, :], "End-to-end", 0.035),
-    ):
-        y = max(ax.get_position().y1 for ax in axes_row) + offset
-        fig.text(x_center, y, label, ha="center", va="bottom",
-                 fontsize=ROW_HEADER_FS, fontweight="bold")
+    thread_colorbar(fig, axes, thread_values, label_fs=CBAR_LABEL_FS, tick_fs=CBAR_TICK_FS)
+    x_center = (axes[0].get_position().x0 + axes[-1].get_position().x1) / 2
+    fig.legend(handles=legend_handles(MARKER_SIZE), loc="upper center", bbox_to_anchor=(x_center, 1.0), ncol=3,
+               frameon=False, fontsize=LEGEND_FS)
 
     save(fig, "ts-threading.pdf")
 
 
-def plot_od_threading(df: pd.DataFrame) -> None:
-    """Object detection (NanoDet): latency vs. throughput per thread split."""
+def plot_od_threading(points: pd.DataFrame) -> None:
+    """Object detection (NanoDet-Plus, ResNet-101 backbone): capacity vs. latency per thread split."""
     TITLE_FS = 16
     LABEL_FS = 18
     TICK_FS = 16
+    LEGEND_FS = 15
     CBAR_LABEL_FS = 14
     CBAR_TICK_FS = 12
-    FACET_HEIGHT = 3.4
-    FACET_ASPECT = 1.65
+    FIG_SIZE = (12.0, 4.6)
     MARKER_SIZE = 115
-    SUBPLOTS_ADJUST = dict(left=0.08, right=0.90, bottom=0.10, top=0.94, hspace=0.35, wspace=0.25)
+    SUBPLOTS_ADJUST = dict(left=0.08, right=0.90, bottom=0.16, top=0.80, wspace=0.12)
     BUDGET_ORDER = [24, 48]
-    PIPELINE_ID = 5
 
     setup_style()
-
-    sub = df[
-        (df["Model"] == "NanoDet")
-        & (df["pipeline_id"] == PIPELINE_ID)
-        & (df["budget"].isin(BUDGET_ORDER))
-    ]
-    plot_df = stack_measurement_levels(sub)
-    thread_values = sorted(plot_df["nes_workers"].unique())
+    sub = points[points["Model"] == "NanoDet-R101"]
+    thread_values = sorted(sub["nes_workers"].unique())
     norm = mpl.colors.LogNorm(vmin=min(thread_values), vmax=max(thread_values))
 
-    # The published figure uses seaborn's whitegrid look (unlike ts-threading).
-    with sns.axes_style("whitegrid"):
-        g = sns.relplot(
-            data=plot_df,
-            x="latency_value",
-            y="throughput_value",
-            hue="nes_workers",
-            palette=THREAD_CMAP,
-            hue_norm=norm,
-            marker="o",
-            col="budget",
-            col_order=BUDGET_ORDER,
-            row="metric_label",
-            row_order=["Inference pipeline", "End-to-end"],
-            kind="scatter",
-            s=MARKER_SIZE,
-            edgecolor="0.25",
-            linewidth=0.4,
-            facet_kws={"sharex": False, "sharey": True},
-            height=FACET_HEIGHT,
-            aspect=FACET_ASPECT,
-            legend=False,
-        )
-
-    g.set_titles(row_template="{row_name}", col_template="{col_name} threads")
-    g.set_axis_labels("Latency [ms]", "Throughput [tuples/s]")
-    for ax in g.axes.flat:
-        ax.title.set_fontsize(TITLE_FS)
-        ax.xaxis.label.set_fontsize(LABEL_FS)
-        ax.yaxis.label.set_fontsize(LABEL_FS)
+    fig, axes = plt.subplots(1, len(BUDGET_ORDER), figsize=FIG_SIZE, sharex=True, sharey=True)
+    for ax, budget in zip(axes, BUDGET_ORDER):
+        draw_panel(ax, sub[sub["budget"] == budget], PACED_LOAD["NanoDet-R101"], norm, MARKER_SIZE)
+        ax.set_title(f"{budget} threads", fontsize=TITLE_FS, pad=8)
+        ax.set_xlabel("Latency [ms]", fontsize=LABEL_FS)
         ax.tick_params(axis="both", labelsize=TICK_FS)
+    axes[0].set_ylabel("Capacity [frames/s]", fontsize=LABEL_FS)
 
-    fig = g.figure
-    thread_colorbar(fig, g.axes, thread_values, fraction=0.035, pad=0.01,
-                    label_fs=CBAR_LABEL_FS, tick_fs=CBAR_TICK_FS)
     fig.subplots_adjust(**SUBPLOTS_ADJUST)
+    thread_colorbar(fig, axes, thread_values, label_fs=CBAR_LABEL_FS, tick_fs=CBAR_TICK_FS)
+    x_center = (axes[0].get_position().x0 + axes[-1].get_position().x1) / 2
+    fig.legend(handles=legend_handles(MARKER_SIZE), loc="upper center", bbox_to_anchor=(x_center, 1.0), ncol=3,
+               frameon=False, fontsize=LEGEND_FS)
 
     save(fig, "od-threading.pdf")
 
 
 if __name__ == "__main__":
-    df = load_data()
-    plot_ts_threading(df)
-    plot_od_threading(df)
+    plot_ts_threading(load_points("results_1.csv", pipeline_id=4))
+    plot_od_threading(load_points("results_nanodet_r101.csv", pipeline_id=5))

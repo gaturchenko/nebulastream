@@ -13,6 +13,20 @@ Run it against the directories navi writes on the Pi:
 Raw runs live on the Pi under those two directories (also mirrored into the session scratchpad when
 they were pulled). Re-run this after any new repetition, then re-render the figures.
 
+With --tuned, the workload matrix and the TorchServe breakdown come from the tuning runs instead, in
+which every system's parallelism knob was chosen the same way (lowest median P95 in a pilot) and the
+chosen configurations were measured afresh (run_pi_cwru_tuning.sh, run_pi_systems_tuning.sh):
+
+    python aggregate_systems_data.py \
+        --reps  ~/navi/results-reps \
+        --sweep ~/navi/results-sweep \
+        --tuned cwru=~/navi/results-cwru-tuning waymo=~/navi/results-tuning-waymo \
+                musan=~/navi/results-tuning-musan
+
+Each tuning directory's final/ holds <system>_<knob><n>_rep<N>.csv for the chosen configuration only;
+<knob><n> goes into the matrix's config column. The rate sweep is not part of the tuning and still
+comes from --sweep.
+
 Every number is a median across repetitions; latency also carries the min and max, because the
 spread is the point on these workloads -- single runs reversed the CWRU ranking and invented a
 Flink speed-up that three runs erase.
@@ -69,17 +83,30 @@ def summarise(points: list[dict], key: str) -> tuple[float, float, float]:
     return statistics.median(values), min(values), max(values)
 
 
-def workloads_table(reps_dir: Path) -> pd.DataFrame:
+def run_source(system: str, workload: str, reps_dir: Path, tuned: dict[str, Path]) -> tuple[str, Path, str]:
+    """(file pattern, directory, configuration) of a cell's runs: the tuned final runs if there are any."""
+    if workload not in tuned:
+        return f"{system}_{workload}_rep[0-9].csv", reps_dir, "published"
+    final = tuned[workload] / "final"
+    configs = {Path(p).stem.split("_")[1] for p in glob.glob(str(final / f"{system}_*_rep[0-9].csv"))}
+    if len(configs) != 1:
+        raise SystemExit(f"expected the runs of one configuration for {system} in {final}, found {sorted(configs)}")
+    config = configs.pop()
+    return f"{system}_{config}_rep[0-9].csv", final, config
+
+
+def workloads_table(reps_dir: Path, tuned: dict[str, Path]) -> pd.DataFrame:
     rows = []
     for workload in WORKLOADS:
         for system in ORDER:
-            points = reps(system, f"{system}_{workload}_rep[0-9].csv", reps_dir)
+            pattern, directory, config = run_source(system, workload, reps_dir, tuned)
+            points = reps(system, pattern, directory)
             median, low, high = summarise(points, "p95")
             mean_median, mean_low, mean_high = summarise(points, "mean")
             # The mean is carried too: it is the only statistic whose parts add up, so it is what
             # the TorchServe-decomposition variant of the workloads figure plots. P95 and the mean
             # rank the three systems identically, so the variant changes no conclusion.
-            rows.append({"workload": workload, "system": system, "n_reps": len(points),
+            rows.append({"workload": workload, "system": system, "config": config, "n_reps": len(points),
                          "p95_median_ms": median, "p95_min_ms": low, "p95_max_ms": high,
                          "mean_median_ms": mean_median, "mean_min_ms": mean_low,
                          "mean_max_ms": mean_high})
@@ -105,7 +132,7 @@ def sweep_table(sweep_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def breakdown_table(reps_dir: Path) -> pd.DataFrame:
+def breakdown_table(reps_dir: Path, tuned: dict[str, Path]) -> pd.DataFrame:
     """TorchServe's mean end-to-end latency split into the four stages its counters expose.
 
     Means, not percentiles: only means make the four parts sum to the end-to-end figure. HTTP/IPC
@@ -115,7 +142,8 @@ def breakdown_table(reps_dir: Path) -> pd.DataFrame:
     rows = []
     for workload in WORKLOADS:
         runs = []
-        for path in sorted(glob.glob(str(reps_dir / f"torchserve_{workload}_rep[0-9].csv"))):
+        pattern, directory, _ = run_source(TORCHSERVE, workload, reps_dir, tuned)
+        for path in sorted(glob.glob(str(directory / pattern))):
             row = pd.read_csv(path).iloc[0]
             serialize = row["serialization_ms_mean"]
             queue = row["queue_latency_us_per_req"] / 1000.0
@@ -166,12 +194,22 @@ def main() -> None:
     parser.add_argument("--memory", type=Path,
                         help="directory holding flink_memory.csv (run_flink_memory.sh). Optional: "
                              "omit it to leave the existing flink_memory.csv aggregate alone.")
+    parser.add_argument("--tuned", nargs="+", default=[], metavar="WORKLOAD=DIR",
+                        help="tuning output per workload (run_pi_cwru_tuning.sh, run_pi_systems_tuning.sh); "
+                             "its final/ runs replace the published operating point in the workload "
+                             "matrix and the TorchServe breakdown")
     args = parser.parse_args()
+    tuned = {}
+    for spec in args.tuned:
+        workload, _, directory = spec.partition("=")
+        if workload not in WORKLOADS or not directory:
+            raise SystemExit(f"--tuned expects WORKLOAD=DIR with WORKLOAD one of {WORKLOADS}, got {spec}")
+        tuned[workload] = Path(directory).expanduser()
 
     out = Path(__file__).resolve().parent / "data" / "systems"
-    for name, frame in (("workloads_p95.csv", workloads_table(args.reps.expanduser())),
+    for name, frame in (("workloads_p95.csv", workloads_table(args.reps.expanduser(), tuned)),
                         ("rate_sweep.csv", sweep_table(args.sweep.expanduser())),
-                        ("torchserve_breakdown.csv", breakdown_table(args.reps.expanduser()))):
+                        ("torchserve_breakdown.csv", breakdown_table(args.reps.expanduser(), tuned))):
         frame.to_csv(out / name, index=False, float_format="%.4f")
         print(f"wrote {out / name}  ({len(frame)} rows)")
 

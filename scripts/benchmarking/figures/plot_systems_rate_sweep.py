@@ -30,6 +30,7 @@ Data: data/systems/rate_sweep.csv (aggregate_systems_data.py over navi's
 """
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 from common import save, setup_style
 from systems_common import COLOR, LABEL, ORDER, load
@@ -78,10 +79,12 @@ def plot_rate_sweep(data: dict) -> None:
     for system in ORDER:
         ax_thr.plot(RATES, data[system]["throughput"], marker="o", markersize=MARKERSIZE,
                     linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system], zorder=3)
-        ax_lat.plot(RATES, data[system]["p95"], marker="o", markersize=MARKERSIZE,
-                    linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system])
-        ax_lat.fill_between(RATES, data[system]["lo"], data[system]["hi"],
-                            color=COLOR[system], alpha=0.18, linewidth=0)
+        # Whiskers: min-max of P95 over the repetitions at each measured rate. A band between the points would spread the one
+        # unsettled point, at a system's knee, along the whole steep rise on the log axis.
+        p95 = np.asarray(data[system]["p95"])
+        ax_lat.errorbar(RATES, p95, yerr=[p95 - np.asarray(data[system]["lo"]), np.asarray(data[system]["hi"]) - p95],
+                        marker="o", markersize=MARKERSIZE, linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system],
+                        elinewidth=1.0, capsize=3)
 
     _dress(ax_thr, "Offered load [frames/s]", "Achieved throughput [frames/s]", LABEL_FS, TICK_FS)
     _dress(ax_lat, "Offered load [frames/s]", "Latency P95 [ms]", LABEL_FS, TICK_FS)
