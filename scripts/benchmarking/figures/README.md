@@ -22,6 +22,7 @@ font- and figure-size constants at the top of its body, and a `__main__` block.
 | `plot_batch_throughput.py` | `batch-throughput.pdf` | `data/batch_rate/batch_throughput_runs.csv`, `data/batch_rate/batch_rate_profile.csv` |
 | `plot_batch_rate_throughput.py` | `batch-rate-throughput.pdf` (full width, both panels) | as the two above |
 | `plot_post_join.py` | `post-join-choice.pdf`, `post-join-speedup.pdf` | `data/post_join/post_join_{runs,decisions,pilot_summary}_{x86,pi}.csv` |
+| `plot_model_memory.py` | `model-memory.pdf`, `model-memory-two-models.pdf`, `model-memory-panels.pdf` (SqueezeDet, Segmenter and SARAD left, two-model query right), `model-memory-table.tex` | `data/model_memory/model_memory.csv` |
 
 ## Running
 
@@ -188,3 +189,20 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   peaked at 38.4 °C (40.4 °C during the pilot) and no run was throttled. k = 4 SEQUENTIAL falls
   behind from 500 ms on. Raw results: `~/navi/results/post_join`; the uncooled runs of 2026-10-23,
   20 of which throttled, are archived in `~/navi/results/uncooled_1x4`.
+- `model_memory/` — the memory of an inference operator's runtime sessions on the Pi (revision §8;
+  `e2e/model_memory/`): 4 worker threads, one session each, OpenVINO 1 stream x 4 threads,
+  single-tuple inference, every session with a private compiled model or all sharing one.
+  `model_memory.csv` is `process_model_memory.py`'s aggregate, medians of 3 repetitions: the model
+  file, the optimizer's own assessment (`inference_memory_strategy=OPTIMIZER_CHOOSES`, per session)
+  and the measured memory, i.e. the query's steady resident set minus that of the same query without
+  a model. The measurement exceeds the assessment because it also holds the OpenVINO runtime the
+  first session loads and what sessions allocate once they run; the two-model query (SqueezeDet and
+  the Segmenter on one Waymo frame) costs ~65 MB less than the two single-model queries, the part
+  paid once per process. On the Pi, sharing one compiled model costs MHAtt-RNN *more* than private
+  ones (1425 vs. 924 MB; the assessment predicts it, 1407 vs. 897, and OPTIMIZER_CHOOSES deploys
+  private copies), which `model-memory.pdf` draws cross-hatched; NanoDet-R101's private deployment
+  takes 83% of the Pi's memory. The queries use small buffer pools (32 frame buffers, 256 x 128 KB
+  otherwise), since a buffer's pages enter the resident set the first time the pool hands it out and
+  a large pool's growth would swamp the difference; Waymo runs at 5 frames/s, the rate at which the
+  Pi keeps up with both models in one query. Raw results: `~/navi/results/model_memory` (the failed
+  10 frames/s Waymo runs in `waymo-10fps/`).
