@@ -11,7 +11,7 @@
 #
 # Run from ~/navi. Layout it expects (deploy from scripts/benchmarking/e2e/batch_rate/ in the repo):
 #   queries/batch-rate/{nbeats_batch_rate.test,batch_rate_*.yaml,gen_batch_rate_data.py}
-#   scripts/{run_batch_rate.sh,process_batch_rate.py,run_systests_lat.py}
+#   scripts/{run_batch_rate.sh,process_batch_rate.py,run_systests_lat.py,reset_swap.sh}
 #
 # Repetitions are interleaved: rep r of every cell runs before rep r+1 of any, so slow drift (thermal state, page cache)
 # spreads over all cells instead of biasing whichever ran last. run_systests_lat.py fills only the repetitions a cell is
@@ -51,7 +51,7 @@ if [[ ! -f "$DATA" || "$(wc -l < "$DATA")" -ne "$ROWS" ]]; then
 fi
 
 # Swap left behind by an earlier memory-heavy run inflates the next measurements (see run_systems.sh).
-sudo -n swapoff -a 2>/dev/null && sudo -n swapon -a 2>/dev/null \
+scripts/reset_swap.sh \
     || echo "WARNING: could not reset swap; results may carry over pressure from the previous run" >&2
 
 thermal_sampler() {

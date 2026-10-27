@@ -82,7 +82,7 @@ echo "=== Framework comparison: $WORKLOAD (profile $PROFILE)"
 # always done this (run_audio*.sh); the systems runs did not, which is why their results depended
 # on what had run before them.
 if command -v sudo >/dev/null 2>&1; then
-    sudo swapoff -a 2>/dev/null && sudo swapon -a 2>/dev/null \
+    "$HOME/navi/scripts/reset_swap.sh" \
         || echo "WARNING: could not reset swap; results may carry over pressure from the previous run" >&2
 fi
 

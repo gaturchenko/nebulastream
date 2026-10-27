@@ -13,7 +13,7 @@
 #
 # Run from ~/navi. Layout it expects (deploy from scripts/benchmarking/e2e/post_join/ in the repo):
 #   queries/post-join/{gen_post_join_tests.py,gen_post_join_data.py}       the .test files are generated into queries/post-join/
-#   scripts/{run_post_join.sh,process_post_join.py,process_batch_rate.py,run_systests_lat.py (with --retries)}
+#   scripts/{run_post_join.sh,process_post_join.py,process_batch_rate.py,run_systests_lat.py (with --retries),reset_swap.sh}
 #
 # Repetitions are interleaved and run_systests_lat.py fills only missing repetitions, as in run_batch_rate.sh.
 set -uo pipefail
@@ -126,7 +126,7 @@ for k in $CONTROL_KS; do
     done
 done
 
-sudo -n swapoff -a 2>/dev/null && sudo -n swapon -a 2>/dev/null \
+scripts/reset_swap.sh \
     || echo "WARNING: could not reset swap; results may carry over pressure from the previous run" >&2
 
 thermal_sampler() {

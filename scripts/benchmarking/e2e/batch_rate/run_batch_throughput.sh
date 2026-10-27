@@ -12,7 +12,7 @@
 #
 # Run from ~/navi. Layout it expects (deploy from scripts/benchmarking/e2e/batch_rate/ in the repo):
 #   queries/batch-rate/{nbeats_batch_throughput.test.tmpl,batch_rate_fixed.yaml,gen_batch_rate_data.py}
-#   scripts/{run_batch_throughput.sh,process_batch_throughput.py,process_batch_rate.py,run_systests_lat.py (with --retries)}
+#   scripts/{run_batch_throughput.sh,process_batch_throughput.py,process_batch_rate.py,run_systests_lat.py (with --retries),reset_swap.sh}
 #
 # Repetitions are interleaved and run_systests_lat.py fills only missing repetitions, as in run_batch_rate.sh.
 set -uo pipefail
@@ -77,7 +77,7 @@ prepare_rate() {
         > "${TEST_DIR}/nbeats_throughput_r${rate}.test"
 }
 
-sudo -n swapoff -a 2>/dev/null && sudo -n swapon -a 2>/dev/null \
+scripts/reset_swap.sh \
     || echo "WARNING: could not reset swap; results may carry over pressure from the previous run" >&2
 
 thermal_sampler() {
