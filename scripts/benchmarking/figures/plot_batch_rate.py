@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.lines import Line2D
 
-from common import load_csv, save, setup_style
+from common import eng_formatter, load_csv, save, setup_style
 
 OPTIMIZER_COLOR = "#e8730c"
 
@@ -65,6 +65,8 @@ def draw_batch_rate(ax, fixed: pd.DataFrame, chosen: pd.DataFrame, slo_ms: float
 
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
+    # Plain 10, 100, 1k: the default 10^x labels print their exponents below the tick size.
+    ax.yaxis.set_major_formatter(eng_formatter(decimals=0))
     ax.set_xticks(batch_sizes)
     ax.set_xticklabels([f"{b:.0f}" for b in batch_sizes])
     ax.set_xlim(batch_sizes[0] / 1.3, batch_sizes[-1] * 2.1)

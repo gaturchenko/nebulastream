@@ -8,10 +8,11 @@ Data: data/batching/BatchInferenceMicrobenchmark2.csv
       (BatchInferenceMicrobenchmark, x86 dev machine).
 """
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
-from common import load_csv, save, setup_style
+from common import eng_formatter, load_csv, save, setup_style
 
 MODEL_LABELS = {
     "nbeats-small.onnx": "Small (3.6MB/0.9M)",
@@ -66,77 +67,53 @@ def peak_records_per_second(df: pd.DataFrame) -> dict[str, float]:
 
 
 def plot_batch_microbench(long_df: pd.DataFrame, peaks: dict[str, float]) -> None:
-    FACET_HEIGHT = 3.4
-    FACET_ASPECT = 1.65
-    SEABORN_CONTEXT = "talk"  # seaborn font-scale preset for all text
-    LEGEND_ANCHOR = (0.425, -0.02)
-    SUBPLOTS_ADJUST = dict(bottom=0.2, hspace=0.45, wspace=0.25)
-    PEAK_HEADROOM = 1.12  # y-limit factor so the roofline labels stay inside
+    # Drawn at the size it is printed at, one column of the paper (3.5 in), so every font size is the size on the page. The
+    # paper's captions are 8 pt; nothing here goes below 7 pt.
+    FIG_SIZE = (3.5, 3.1)
+    TITLE_FS = 8
+    LABEL_FS = 8.5
+    TICK_FS = 7.4
+    LEGEND_FS = 7.5
+    LINE_WIDTH = 1.0
+    MARKER_SIZE = 2.5
+    SUBPLOTS_ADJUST = dict(left=0.11, right=0.98, bottom=0.21, top=0.93, hspace=0.42, wspace=0.28)
+    TICKS = [1, 4, 16, 64, 256, 1024, 4096]  # every other power of two: all of them do not fit a quarter column
+    PEAK_HEADROOM = 1.12  # y-limit factor so the rooflines stay inside
 
-    sns.set_theme(style="whitegrid", context=SEABORN_CONTEXT)
     setup_style()
+    palette = dict(zip(MODEL_ORDER, sns.color_palette("deep", n_colors=len(MODEL_ORDER))))
+    fig, grid = plt.subplots(2, 2, figsize=FIG_SIZE, sharex=True)
+    max_throughput = long_df.loc[long_df["metric"] == "throughput_records_per_second", "value"].max()
 
-    g = sns.relplot(
-        data=long_df,
-        x="batch_size",
-        y="value",
-        hue="model_size",
-        hue_order=MODEL_ORDER,
-        col="metric_label",
-        col_wrap=2,
-        kind="line",
-        marker="o",
-        legend="auto",
-        facet_kws={"sharex": True, "sharey": False},
-        height=FACET_HEIGHT,
-        aspect=FACET_ASPECT,
-    )
-
-    g.set(xscale="log")
-    g.set_axis_labels("Batch size", "Value")
-    g.set_titles("{col_name}")
-
-    palette = dict(zip(MODEL_ORDER, sns.color_palette(n_colors=len(MODEL_ORDER))))
-    max_throughput = long_df.loc[
-        long_df["metric_label"].str.contains("Throughput"), "value"
-    ].max()
-
-    for ax in g.axes.flat:
-        ax.set_xticks(BATCH_TICKS)
-        ax.set_xticklabels([str(t) for t in BATCH_TICKS], rotation=45)
-        # Show x tick labels on every facet despite the shared x-axis.
-        ax.tick_params(axis="x", which="major", labelbottom=True, bottom=True)
+    for ax, (metric, title) in zip(grid.ravel(), METRICS.items()):
+        data = long_df[long_df["metric"] == metric]
+        for model in MODEL_ORDER:
+            series = data[data["model_size"] == model].groupby("batch_size")["value"].mean()
+            ax.plot(series.index, series.to_numpy(), color=palette[model], linewidth=LINE_WIDTH, marker="o",
+                    markersize=MARKER_SIZE, label=model)
+        ax.set_title(title, fontsize=TITLE_FS, pad=3)
+        ax.set_xscale("log")
+        ax.set_xticks(TICKS)
+        ax.set_xticklabels([str(t) for t in TICKS])
         ax.minorticks_off()
-        ax.grid(False)
-        ax.grid(True, which="major", axis="x", alpha=0.25)
-        ax.grid(True, which="major", axis="y", alpha=0.20)
+        ax.tick_params(axis="both", labelsize=TICK_FS, pad=2, length=2.5)
+        ax.yaxis.set_major_formatter(eng_formatter(decimals=1))  # 0 would print a 1.5k tick as 2k
+        ax.grid(True, which="major", alpha=0.25, linewidth=0.4)
+        ax.spines[["top", "right"]].set_visible(False)
         ax.set_ylim(0)
-        ax.margins(x=0.08)
-
-        if "Throughput" in ax.get_title():
+        ax.margins(x=0.05)
+        if metric == "throughput_records_per_second":
             ax.set_ylim(0, PEAK_HEADROOM * max(max(peaks.values()), max_throughput))
             for model, peak in peaks.items():
-                ax.axhline(
-                    y=peak,
-                    linestyle="--",
-                    linewidth=1.4,
-                    color=palette[model],
-                    alpha=0.8,
-                    zorder=1,
-                )
+                ax.axhline(y=peak, linestyle="--", linewidth=0.8, color=palette[model], alpha=0.8, zorder=1)
+    for ax in grid[-1]:
+        ax.set_xlabel("Batch size", fontsize=LABEL_FS, labelpad=2)
 
-    sns.move_legend(
-        g,
-        "lower center",
-        bbox_to_anchor=LEGEND_ANCHOR,
-        ncol=3,
-        frameon=False,
-        title=None,
-    )
-    g.figure.subplots_adjust(**SUBPLOTS_ADJUST)
-
-    # No bbox_inches="tight": preserves the aspect ratio reserved for the legend.
-    save(g.figure, "batch-microbench.pdf", tight=False, pad_inches=0.02)
+    handles, labels = grid[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=3, frameon=False, fontsize=LEGEND_FS,
+               handlelength=1.4, columnspacing=0.9, handletextpad=0.4)
+    fig.subplots_adjust(**SUBPLOTS_ADJUST)
+    save(fig, "batch-microbench.pdf")
 
 
 if __name__ == "__main__":

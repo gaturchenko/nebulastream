@@ -28,6 +28,10 @@ METRICS = [
 P50_COLOR = "#1F77B4"
 P95_COLOR = "#FF7F0E"
 
+# Both figures are drawn at the size they are printed at, one column of the paper (3.5 in), so every font size is the size on the
+# page. The paper's captions are 8 pt; nothing here goes below 7 pt.
+COLUMN_WIDTH = 3.5
+
 
 def classify_settings(df: pd.DataFrame, batch_from_optimizer: bool,
                       split_cache_scope: bool) -> pd.DataFrame:
@@ -135,7 +139,7 @@ def load_workload(csv_name: str, batch_from_optimizer: bool, split_cache_scope: 
 
 def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tick_fs,
                             speedup_fs, legend_fs, bar_width, window_ms, window_label,
-                            log_latency, log_bottom, out_name) -> None:
+                            log_latency, log_bottom, adjust, out_name) -> None:
     """Shared two-panel drawing: P50/P95 latency bars + throughput bars with
     speedup-over-UDF labels. All knobs come from the per-chart wrappers."""
     order = [s for s in order if s in best.index]
@@ -147,8 +151,8 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
     fig, (ax_lat, ax_thr) = plt.subplots(1, 2, figsize=figsize)
 
     # Right panel: inference throughput with speedup over the UDF baseline.
-    bars_thr = ax_thr.bar(x, thr_vals, color=P50_COLOR, edgecolor="0.25", linewidth=0.4)
-    ax_thr.set_ylabel("Throughput [windows/s]", fontsize=label_fs)
+    bars_thr = ax_thr.bar(x, thr_vals, color=P50_COLOR, edgecolor="0.25", linewidth=0.3)
+    ax_thr.set_ylabel("Throughput [windows/s]", fontsize=label_fs, labelpad=2)
     ax_thr.yaxis.set_major_formatter(eng_formatter(decimals=1))
 
     udf_thr = best["throughput"].get("UDF", np.nan)
@@ -159,17 +163,17 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
             labels.append(f"x{r:.0f}" if r >= 10 else "x" + f"{r:.1f}".rstrip("0").rstrip("."))
         else:
             labels.append("")
-    ax_thr.bar_label(bars_thr, labels=labels, padding=2, fontsize=speedup_fs)
-    ax_thr.set_ylim(top=np.nanmax(thr_vals) * 1.12)  # headroom for the labels
+    ax_thr.bar_label(bars_thr, labels=labels, padding=1, fontsize=speedup_fs)
+    ax_thr.set_ylim(top=np.nanmax(thr_vals) * 1.14)  # headroom for the labels
 
     # Left panel: P50 vs. P95 prediction latency with the window-size budget line.
     bars_p50 = ax_lat.bar(x - bar_width / 2, p50_vals, bar_width, label="P50",
-                          color=P50_COLOR, edgecolor="0.25", linewidth=0.4)
+                          color=P50_COLOR, edgecolor="0.25", linewidth=0.3)
     bars_p95 = ax_lat.bar(x + bar_width / 2, p95_vals, bar_width, label="P95",
-                          color=P95_COLOR, edgecolor="0.25", linewidth=0.4)
-    window_line = ax_lat.axhline(window_ms, linestyle="--", linewidth=1,
+                          color=P95_COLOR, edgecolor="0.25", linewidth=0.3)
+    window_line = ax_lat.axhline(window_ms, linestyle="--", linewidth=0.8,
                                  color="black", label=window_label)
-    ax_lat.set_ylabel("Latency [ms]", fontsize=label_fs)
+    ax_lat.set_ylabel("Latency [ms]", fontsize=label_fs, labelpad=2)
 
     if log_latency:
         # A log axis cannot contain 0: keep the bottom above the smallest bar but
@@ -182,26 +186,31 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
 
     for ax in (ax_lat, ax_thr):
         ax.set_xticks(x)
-        ax.set_xticklabels(order, rotation=30, ha="right", fontsize=tick_fs)
-        ax.tick_params(axis="y", labelsize=tick_fs)
+        if max(len(setting) for setting in order) > 6:
+            ax.set_xticklabels(order, rotation=45, ha="right", rotation_mode="anchor", fontsize=tick_fs)
+        else:  # short names fit level
+            ax.set_xticklabels(order, fontsize=tick_fs)
+        ax.tick_params(axis="both", labelsize=tick_fs, pad=2, length=2.5)
 
     # One legend above the latency panel, clear of the bars whatever their height; the window size is named there, so it
     # needs no tick of its own.
-    ax_lat.legend(handles=[bars_p50, bars_p95, window_line], loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=3,
-                  frameon=False, fontsize=legend_fs, handlelength=1.5, columnspacing=1.2, borderaxespad=0.3)
+    fig.legend(handles=[bars_p50, bars_p95, window_line], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3,
+               frameon=False, fontsize=legend_fs, handlelength=1.5, columnspacing=1.0, handletextpad=0.4,
+               borderaxespad=0.1)
 
-    fig.subplots_adjust(left=0.09, right=0.98, bottom=0.28, top=0.88, wspace=0.28)
+    fig.subplots_adjust(**adjust)
     save(fig, out_name)
 
 
 def plot_e2e_audio(best: pd.DataFrame) -> None:
     """MUSAN / MHAtt-RNN ablation (log latency axis, 1 s sliding window)."""
-    FIGSIZE = (11, 4.2)
-    LABEL_FS = 17
-    TICK_FS = 13
-    SPEEDUP_FS = 11
-    LEGEND_FS = 11
+    FIGSIZE = (COLUMN_WIDTH, 1.9)
+    LABEL_FS = 8.5
+    TICK_FS = 7
+    SPEEDUP_FS = 7
+    LEGEND_FS = 7.5
     BAR_WIDTH = 0.4
+    ADJUST = dict(left=0.12, right=0.99, bottom=0.12, top=0.88, wspace=0.42)
     WINDOW_MS = 1_000
     LOG_BOTTOM = 100  # keeps the window line clear of the axis bottom
     ORDER = ["UDF", "ST", "ST+Cache", "Batch", "Batch+Dedup",
@@ -220,18 +229,20 @@ def plot_e2e_audio(best: pd.DataFrame) -> None:
         window_label="Sliding window size (1,000 ms)",
         log_latency=True,
         log_bottom=LOG_BOTTOM,
+        adjust=ADJUST,
         out_name="e2e-audio.pdf",
     )
 
 
 def plot_e2e_ts(best: pd.DataFrame) -> None:
     """CWRU / SARAD ablation (linear latency axis, 200 ms sliding window)."""
-    FIGSIZE = (11, 4.2)
-    LABEL_FS = 17
-    TICK_FS = 13
-    SPEEDUP_FS = 11
-    LEGEND_FS = 11
+    FIGSIZE = (COLUMN_WIDTH, 2.3)
+    LABEL_FS = 8.5
+    TICK_FS = 7
+    SPEEDUP_FS = 7
+    LEGEND_FS = 7.5
     BAR_WIDTH = 0.4
+    ADJUST = dict(left=0.13, right=0.99, bottom=0.36, top=0.9, wspace=0.42)
     WINDOW_MS = 200
     ORDER = ["UDF", "ST", "ST+Cache Local", "ST+Cache Global", "Batch",
              "Batch+Dedup", "Batch+Cache", "Batch+Cache+Dedup"]
@@ -249,6 +260,7 @@ def plot_e2e_ts(best: pd.DataFrame) -> None:
         window_label="Sliding window size (200 ms)",
         log_latency=False,
         log_bottom=None,
+        adjust=ADJUST,
         out_name="e2e-ts.pdf",
     )
 

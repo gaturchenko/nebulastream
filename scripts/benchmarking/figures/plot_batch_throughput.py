@@ -63,6 +63,8 @@ def draw_batch_throughput(
     batch_sizes = throughput["batch_size"].tolist()
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
+    # Plain 1k, 10k: the default 10^x labels print their exponents below the tick size.
+    ax.yaxis.set_major_formatter(eng_formatter(decimals=0))
     ax.set_xticks(batch_sizes)
     ax.set_xticklabels([str(b) for b in batch_sizes])
     ax.set_ylim(300, 20000)

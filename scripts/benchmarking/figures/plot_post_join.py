@@ -108,7 +108,7 @@ def draw_choice(ax, table: pd.DataFrame, hardware: str) -> None:
                            edgecolors="white", linewidths=0.4, zorder=4)
             if plan == "SEQUENTIAL" and not np.isnan(row["sequential_sustained_rate"]):
                 ax.text(center, row[f"{plan}_max"] + top * 0.04, f"falls behind\nabove {row['sequential_sustained_rate']:g} rec./s",
-                        ha="center", va="bottom", fontsize=TICK_SIZE - 1, color="0.25", linespacing=1.0)
+                        ha="center", va="bottom", fontsize=TICK_SIZE, color="0.25", linespacing=1.0)
 
     ax.set_xticks(x)
     ax.set_xticklabels(table.index)

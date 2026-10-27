@@ -5,6 +5,12 @@ script reads its CSVs from `data/`, renders into `output/`, and follows the
 same shape: a load/prepare step, one function per chart with the tweakable
 font- and figure-size constants at the top of its body, and a `__main__` block.
 
+The paper's evaluation figures are drawn at the size they are printed at (IEEEtran: a column is
+3.5 in, the text width 7 in; `caching-microbench.pdf` is three quarters of a column), so their
+font sizes are the sizes on the page, and no text goes below 7 pt (captions are 8 pt). Include
+them at that width without `trim`; a figure drawn larger and scaled down shrinks its text with it,
+which is how the earlier versions ended up at 3-5 pt.
+
 | Script | Figure(s) | Data |
 |---|---|---|
 | `plot_batch_microbench.py` | `batch-microbench.pdf` | `data/batching/BatchInferenceMicrobenchmark2.csv` |
