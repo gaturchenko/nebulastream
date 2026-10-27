@@ -1,0 +1,84 @@
+#  Model memory on the Pi (revision §8): Waymo camera frames with SqueezeDet, the Segmenter, and both models in one query.
+#
+#    :01 baseline     -- the same source and both preprocessings, no model; what the sessions are measured against
+#    :02 SqueezeDet   -- the detector of the systems comparison
+#    :03 Segmenter    -- a second perception model on the same frame
+#    :04 both         -- SqueezeDet and the Segmenter nested in one query, two inference operators in one pipeline
+#
+#  Each inference operator sets up one runtime session per worker thread when its pipeline starts, so the sessions' memory is in
+#  the process from the first tuple on and the data volume does not matter: 80 frames at 5 frames/s, the rate at which the Pi
+#  keeps up with both models in one query (at the systems test's 10 frames/s that query falls behind and exhausts the pool). The
+#  buffer size is that of the Waymo systems test, but the pool holds only 32 buffers: the first time the pool hands a buffer
+#  out, its pages enter the resident set, so with the systems test's 512 the baseline grew by ~30 MB/s for as long as frames
+#  arrived and the sessions' difference drowned in it. 32 buffers are all in use within the first second of frames, after which
+#  the resident set is flat.
+#
+#  Rendered by run_model_memory.py, which replaces @ROOT@ with the deployment root (~/navi) and passes the compiled-model sharing
+#  and the optimizer's memory strategy on the command line, so that one file serves every mode.
+
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.prediction_cache_type: [NONE]
+GlobalConfiguration worker.default_query_execution.inference.use_batch_deduplication: [false]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [32]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1437696]
+
+CREATE LOGICAL SOURCE waymoSource(timestamp UINT64, frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR waymoSource TYPE TCP SET(
+    5 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE @ROOT@/datasets/model_memory/waymo.csv
+
+CREATE SINK waymoFramesVoid(framePreprocessed VARSIZED NOT NULL, segmenterInput VARSIZED NOT NULL) TYPE Void;
+CREATE SINK waymoDetectionsVoid(detectedObjects VARSIZED NOT NULL) TYPE Void;
+CREATE SINK waymoSegmentationVoid(segmentationOutput VARSIZED NOT NULL) TYPE Void;
+CREATE SINK waymoPerceptionVoid(detectedObjects VARSIZED NOT NULL, segmentationOutput VARSIZED NOT NULL) TYPE Void;
+
+CREATE MODEL squeezedet ('@ROOT@/models-benchmarking/models/squeezedet/squeezedet.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (detectedObjects VARSIZED);
+
+CREATE MODEL segmenter ('@ROOT@/models-benchmarking/models/segmenter/segmenter.onnx')
+INPUT (segmenterInput VARSIZED)
+OUTPUT (segmentationOutput VARSIZED);
+
+# baseline
+SELECT
+    RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(120), UINT32(80)) AS framePreprocessed,
+    RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS segmenterInput
+FROM waymoSource
+INTO waymoFramesVoid;
+----
+
+# SqueezeDet
+SELECT detectedObjects
+FROM MODEL_INFERENCE(squeezedet, (
+        SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(120), UINT32(80)) AS framePreprocessed
+        FROM waymoSource
+    )
+)
+INTO waymoDetectionsVoid;
+----
+
+# Segmenter
+SELECT segmentationOutput
+FROM MODEL_INFERENCE(segmenter, (
+        SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS segmenterInput
+        FROM waymoSource
+    )
+)
+INTO waymoSegmentationVoid;
+----
+
+# SqueezeDet and Segmenter
+SELECT detectedObjects, segmentationOutput
+FROM MODEL_INFERENCE(segmenter, MODEL_INFERENCE(squeezedet, (
+        SELECT
+            RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(120), UINT32(80)) AS framePreprocessed,
+            RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(256), UINT32(256)) AS segmenterInput
+        FROM waymoSource
+    )
+))
+INTO waymoPerceptionVoid;
+----

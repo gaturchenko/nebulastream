@@ -1,0 +1,50 @@
+#  Model memory on the Pi (revision §8): CWRU bearing vibration with SARAD, as in the systems comparison.
+#
+#    :01 baseline -- the same source and sliding window, no model
+#    :02 SARAD
+#
+#  10 s of the 48 kHz recording; the buffer settings are those of the CWRU systems test, with a pool of
+#  256 buffers, small enough to be in use within the first second (see waymo.test.tmpl).
+
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.prediction_cache_type: [NONE]
+GlobalConfiguration worker.default_query_execution.inference.use_batch_deduplication: [false]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [4096]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [256]
+
+CREATE LOGICAL SOURCE cwruSource(timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR cwruSource TYPE TCP SET(
+    48000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE @ROOT@/datasets/model_memory/cwru.csv
+
+CREATE SINK cwruWindowsVoid(payload VARSIZED NOT NULL) TYPE Void;
+CREATE SINK cwruScoresVoid(anomaly_score VARSIZED NOT NULL) TYPE Void;
+
+CREATE MODEL sarad ('@ROOT@/models-benchmarking/models/sarad/sarad_medium.onnx')
+INPUT (value_200_ms VARSIZED)
+OUTPUT (anomaly_score VARSIZED);
+
+# baseline
+SELECT value_200_ms AS payload
+FROM (
+    SELECT ARRAY_AGG(value) AS value_200_ms
+    FROM cwruSource
+    WINDOW SLIDING(timestamp, SIZE 200 ms, ADVANCE BY 100 ms)
+)
+INTO cwruWindowsVoid;
+----
+
+# SARAD
+SELECT anomaly_score
+FROM MODEL_INFERENCE(sarad, (
+        SELECT ARRAY_AGG(value) AS value_200_ms
+        FROM cwruSource
+        WINDOW SLIDING(timestamp, SIZE 200 ms, ADVANCE BY 100 ms)
+    )
+)
+INTO cwruScoresVoid;
+----
