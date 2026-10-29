@@ -16,7 +16,7 @@ from common import save, setup_style
 
 
 def plot_batch_rate_throughput() -> None:
-    FIG_SIZE = (7.0, 2.5)
+    FIG_SIZE = (7.0, 2.05)
     FONT_SIZE = 8
     TICK_SIZE = 7
 

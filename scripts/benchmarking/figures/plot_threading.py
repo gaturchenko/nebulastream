@@ -133,9 +133,9 @@ def plot_ts_threading(points: pd.DataFrame) -> None:
     LEGEND_FS = 7.5
     CBAR_LABEL_FS = 8
     CBAR_TICK_FS = 7
-    FIG_SIZE = (COLUMN_WIDTH, 3.4)
-    MARKER_SIZE = 22
-    SUBPLOTS_ADJUST = dict(left=0.15, right=0.86, bottom=0.11, top=0.86, wspace=0.28, hspace=0.42)
+    FIG_SIZE = (COLUMN_WIDTH, 2.6)
+    MARKER_SIZE = 18
+    SUBPLOTS_ADJUST = dict(left=0.165, right=0.86, bottom=0.14, top=0.83, wspace=0.3, hspace=0.62)
     MODEL_ORDER = ["N-BEATS-1", "N-BEATS-32"]
     BUDGET_ORDER = [24, 48]
 
@@ -153,13 +153,15 @@ def plot_ts_threading(points: pd.DataFrame) -> None:
             ax.set_title(f"{model}, {budget} threads", fontsize=TITLE_FS, pad=3)
             ax.tick_params(axis="both", labelsize=TICK_FS, pad=2)
             ax.yaxis.set_major_formatter(eng_formatter(decimals=0))
+            ax.yaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4))
         grid[row, 0].set_xlim(0, points.loc[points["Model"] == model, "p95_ms"].max() * 1.08)
-        grid[row, 0].set_ylabel("Capacity [forecasts/s]", fontsize=LABEL_FS)
     for ax in grid[-1]:
         ax.set_xlabel("Latency [ms]", fontsize=LABEL_FS, labelpad=2)
 
     axes = grid.ravel()
     fig.subplots_adjust(**SUBPLOTS_ADJUST)
+    # One label for both rows: a row is too short for its own.
+    fig.supylabel("Capacity [forecasts/s]", fontsize=LABEL_FS, x=0.03, y=(axes[-1].get_position().y0 + axes[0].get_position().y1) / 2)
     thread_colorbar(fig, axes, thread_values, label_fs=CBAR_LABEL_FS, tick_fs=CBAR_TICK_FS, pad=0.025, width=0.025)
     x_center = (axes[0].get_position().x0 + axes[-1].get_position().x1) / 2
     fig.legend(handles=legend_handles(MARKER_SIZE), loc="upper center", bbox_to_anchor=(x_center, 1.0), ncol=3,
@@ -176,9 +178,9 @@ def plot_od_threading(points: pd.DataFrame) -> None:
     LEGEND_FS = 7.5
     CBAR_LABEL_FS = 8
     CBAR_TICK_FS = 7
-    FIG_SIZE = (COLUMN_WIDTH, 2.0)
-    MARKER_SIZE = 22
-    SUBPLOTS_ADJUST = dict(left=0.13, right=0.86, bottom=0.2, top=0.78, wspace=0.12)
+    FIG_SIZE = (COLUMN_WIDTH, 1.7)
+    MARKER_SIZE = 18
+    SUBPLOTS_ADJUST = dict(left=0.13, right=0.86, bottom=0.235, top=0.74, wspace=0.12)
     BUDGET_ORDER = [24, 48]
 
     setup_style()

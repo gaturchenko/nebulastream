@@ -169,7 +169,7 @@ def style() -> None:
 
 
 def plot_choice(tables: dict[str, pd.DataFrame]) -> None:
-    FIG_SIZE = (3.33, 2.1)
+    FIG_SIZE = (3.33, 1.8)
 
     style()
     fig, axes = plt.subplots(1, len(tables), figsize=FIG_SIZE,
@@ -183,7 +183,7 @@ def plot_choice(tables: dict[str, pd.DataFrame]) -> None:
                linestyle="none", label="optimizer's choice")]
     fig.legend(handles=handles, loc="upper center", ncol=3, frameon=False, handlelength=1.2, handletextpad=0.4,
                columnspacing=1.0, borderaxespad=0.1)
-    fig.tight_layout(pad=0.2, w_pad=0.8, rect=(0, 0.04, 1, 0.9))
+    fig.tight_layout(pad=0.2, w_pad=0.8, rect=(0, 0.05, 1, 0.885))
     save(fig, "post-join-choice.pdf")
 
 

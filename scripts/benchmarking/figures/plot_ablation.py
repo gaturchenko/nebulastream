@@ -152,7 +152,7 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
 
     # Right panel: inference throughput with speedup over the UDF baseline.
     bars_thr = ax_thr.bar(x, thr_vals, color=P50_COLOR, edgecolor="0.25", linewidth=0.3)
-    ax_thr.set_ylabel("Throughput [windows/s]", fontsize=label_fs, labelpad=2)
+    ax_thr.set_ylabel("Throughput\n[windows/s]", fontsize=label_fs, labelpad=2)  # one line is taller than the panel
     ax_thr.yaxis.set_major_formatter(eng_formatter(decimals=1))
 
     udf_thr = best["throughput"].get("UDF", np.nan)
@@ -164,7 +164,7 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
         else:
             labels.append("")
     ax_thr.bar_label(bars_thr, labels=labels, padding=1, fontsize=speedup_fs)
-    ax_thr.set_ylim(top=np.nanmax(thr_vals) * 1.14)  # headroom for the labels
+    ax_thr.set_ylim(top=np.nanmax(thr_vals) * 1.2)  # headroom for the labels
 
     # Left panel: P50 vs. P95 prediction latency with the window-size budget line.
     bars_p50 = ax_lat.bar(x - bar_width / 2, p50_vals, bar_width, label="P50",
@@ -204,13 +204,13 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
 
 def plot_e2e_audio(best: pd.DataFrame) -> None:
     """MUSAN / MHAtt-RNN ablation (log latency axis, 1 s sliding window)."""
-    FIGSIZE = (COLUMN_WIDTH, 1.9)
+    FIGSIZE = (COLUMN_WIDTH, 1.7)
     LABEL_FS = 8.5
     TICK_FS = 7
     SPEEDUP_FS = 7
     LEGEND_FS = 7.5
     BAR_WIDTH = 0.4
-    ADJUST = dict(left=0.12, right=0.99, bottom=0.12, top=0.88, wspace=0.42)
+    ADJUST = dict(left=0.12, right=0.99, bottom=0.12, top=0.865, wspace=0.5)
     WINDOW_MS = 1_000
     LOG_BOTTOM = 100  # keeps the window line clear of the axis bottom
     ORDER = ["UDF", "ST", "ST+Cache", "Batch", "Batch+Dedup",
@@ -236,13 +236,13 @@ def plot_e2e_audio(best: pd.DataFrame) -> None:
 
 def plot_e2e_ts(best: pd.DataFrame) -> None:
     """CWRU / SARAD ablation (linear latency axis, 200 ms sliding window)."""
-    FIGSIZE = (COLUMN_WIDTH, 2.3)
+    FIGSIZE = (COLUMN_WIDTH, 1.95)
     LABEL_FS = 8.5
     TICK_FS = 7
     SPEEDUP_FS = 7
     LEGEND_FS = 7.5
     BAR_WIDTH = 0.4
-    ADJUST = dict(left=0.13, right=0.99, bottom=0.36, top=0.9, wspace=0.42)
+    ADJUST = dict(left=0.13, right=0.99, bottom=0.425, top=0.88, wspace=0.5)
     WINDOW_MS = 200
     ORDER = ["UDF", "ST", "ST+Cache Local", "ST+Cache Global", "Batch",
              "Batch+Dedup", "Batch+Cache", "Batch+Cache+Dedup"]

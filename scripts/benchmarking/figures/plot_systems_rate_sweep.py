@@ -62,41 +62,46 @@ def series(name: str) -> dict[str, list]:
     }
 
 
-def _dress(ax, xlabel, ylabel, label_fs, tick_fs):
-    ax.set_xlabel(xlabel, fontsize=label_fs)
-    ax.set_ylabel(ylabel, fontsize=label_fs)
+def _dress(ax, xlabel, ylabel, style):
+    ax.set_xlabel(xlabel, fontsize=style["label_fs"], labelpad=style["labelpad"])
+    ax.set_ylabel(ylabel, fontsize=style["label_fs"], labelpad=style["labelpad"])
     ax.set_xticks(RATES)
     ax.set_xticklabels([str(r) for r in RATES])
-    ax.tick_params(axis="both", labelsize=tick_fs)
+    ax.tick_params(axis="both", labelsize=style["tick_fs"], pad=style["tickpad"])
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(True, linestyle="--", alpha=0.4)
     ax.set_axisbelow(True)
 
 
-LABEL_FS = 14
-TICK_FS = 11
-LEGEND_FS = 11
-PANEL_SIZE = (4.6, 3.4)  # one panel on its own; the two-panel figure is two of these side by side
+# The two-panel figure, two panels of PANEL_SIZE side by side, is scaled down for slides.
+STYLE = dict(label_fs=14, tick_fs=11, legend_fs=11, labelpad=4, tickpad=3.5, linewidth=LINEWIDTH, markersize=MARKERSIZE,
+             identity_width=1.2, errorbar_width=1.0, capsize=3, throughput_label="Achieved throughput [frames/s]")
+PANEL_SIZE = (4.6, 3.4)
+# Each panel on its own is drawn at the size the paper prints it, one column (3.5 in), so every font size is the size on
+# the page. The paper's captions are 8 pt; nothing here goes below 7 pt.
+PANEL_STYLE = dict(label_fs=8, tick_fs=7.5, legend_fs=7.5, labelpad=2, tickpad=2, linewidth=1.2, markersize=3.5,
+                   identity_width=0.8, errorbar_width=0.6, capsize=1.8, throughput_label="Throughput [frames/s]")
+PRINTED_PANEL_SIZE = (3.5, 1.75)
 
 
-def draw_throughput(ax, data: dict) -> None:
+def draw_throughput(ax, data: dict, style: dict = STYLE) -> None:
     # Identity: a system still keeping up sits on this line. Drawn first so the series sit above it.
-    ax.plot(RATES, RATES, linestyle="--", linewidth=1.2, color="0.45", label="offered load", zorder=1)
+    ax.plot(RATES, RATES, linestyle="--", linewidth=style["identity_width"], color="0.45", label="offered load", zorder=1)
     for system in ORDER:
-        ax.plot(RATES, data[system]["throughput"], marker="o", markersize=MARKERSIZE,
-                linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system], zorder=3)
-    _dress(ax, "Offered load [frames/s]", "Achieved throughput [frames/s]", LABEL_FS, TICK_FS)
+        ax.plot(RATES, data[system]["throughput"], marker="o", markersize=style["markersize"],
+                linewidth=style["linewidth"], color=COLOR[system], label=LABEL[system], zorder=3)
+    _dress(ax, "Offered load [frames/s]", style["throughput_label"], style)
 
 
-def draw_latency(ax, data: dict) -> None:
+def draw_latency(ax, data: dict, style: dict = STYLE) -> None:
     for system in ORDER:
         # Whiskers: min-max of P95 over the repetitions at each measured rate. A band between the points would spread the one
         # unsettled point, at a system's knee, along the whole steep rise on the log axis.
         p95 = np.asarray(data[system]["p95"])
         ax.errorbar(RATES, p95, yerr=[p95 - np.asarray(data[system]["lo"]), np.asarray(data[system]["hi"]) - p95],
-                    marker="o", markersize=MARKERSIZE, linewidth=LINEWIDTH, color=COLOR[system], label=LABEL[system],
-                    elinewidth=1.0, capsize=3)
-    _dress(ax, "Offered load [frames/s]", "Latency P95 [ms]", LABEL_FS, TICK_FS)
+                    marker="o", markersize=style["markersize"], linewidth=style["linewidth"], color=COLOR[system],
+                    label=LABEL[system], elinewidth=style["errorbar_width"], capsize=style["capsize"])
+    _dress(ax, "Offered load [frames/s]", "Latency P95 [ms]", style)
     ax.set_yscale("log")
 
 
@@ -106,7 +111,7 @@ def plot_rate_sweep(data: dict) -> None:
     fig, (ax_thr, ax_lat) = plt.subplots(1, 2, figsize=(2 * PANEL_SIZE[0], PANEL_SIZE[1]))
     draw_throughput(ax_thr, data)
     draw_latency(ax_lat, data)
-    ax_thr.legend(loc="upper left", frameon=False, fontsize=LEGEND_FS)
+    ax_thr.legend(loc="upper left", frameon=False, fontsize=STYLE["legend_fs"])
     fig.tight_layout()
     save(fig, "systems-rate-sweep.pdf", pad_inches=0.1)
 
@@ -116,11 +121,12 @@ def plot_rate_sweep_panels(data: dict) -> None:
     for name, draw, legend_loc in [("throughput", draw_throughput, "upper left"),
                                    ("latency", draw_latency, "upper left")]:
         setup_style()
-        fig, ax = plt.subplots(figsize=PANEL_SIZE)
-        draw(ax, data)
-        ax.legend(loc=legend_loc, frameon=False, fontsize=LEGEND_FS)
-        fig.tight_layout()
-        save(fig, f"systems-rate-sweep-{name}.pdf", pad_inches=0.1)
+        fig, ax = plt.subplots(figsize=PRINTED_PANEL_SIZE)
+        draw(ax, data, PANEL_STYLE)
+        ax.legend(loc=legend_loc, frameon=False, fontsize=PANEL_STYLE["legend_fs"], handlelength=1.6, labelspacing=0.3,
+                  borderaxespad=0.2)
+        fig.tight_layout(pad=0.2)
+        save(fig, f"systems-rate-sweep-{name}.pdf")
 
 
 if __name__ == "__main__":

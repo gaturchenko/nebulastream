@@ -59,9 +59,9 @@ def fmt_bytes(b: int) -> str:
 
 
 def plot_cache_scaling(agg: pd.DataFrame) -> None:
-    # Drawn at the size it is printed at, three quarters of a column of the paper (2.6 in), so every font size is the size on
-    # the page. The paper's captions are 8 pt; nothing here goes below 7 pt.
-    FIGSIZE = (2.62, 2.1)
+    # Drawn at the size it is printed at, one column of the paper (3.5 in), so every font size is the size on the page. The
+    # paper's captions are 8 pt; nothing here goes below 7 pt.
+    FIGSIZE = (3.5, 1.6)
     LABEL_FS = 8.5
     TICK_FS = 7.5
     LEGEND_FS = 7
@@ -109,20 +109,20 @@ def plot_cache_scaling(agg: pd.DataFrame) -> None:
         Line2D([], [], color=c, linewidth=1.8, label=fmt_bytes(int(k)))
         for k, c in zip(key_levels, ramp)
     ]
-    # The key sizes go above the plot in one row: inside, at this size, they would cover the Local lines. The scopes fit the
-    # empty corner above the lines' start at one thread.
+    # The key sizes go right of the plot in one column: inside, at this size, they would cover the Local lines. The scopes
+    # fit the empty corner above the lines' start at one thread.
     legend_scopes = ax.legend(
         handles=scope_handles, loc="upper left", fontsize=LEGEND_FS, frameon=False, borderaxespad=0.2,
         handlelength=1.8, handletextpad=0.4, labelspacing=0.25,
     )
     ax.add_artist(legend_scopes)
     fig.legend(
-        handles=key_handles, loc="upper center", bbox_to_anchor=(0.55, 1.0), fontsize=LEGEND_FS, frameon=False,
-        ncol=len(key_handles), handlelength=1.0, handletextpad=0.3, columnspacing=0.7, borderaxespad=0.1,
+        handles=key_handles, loc="center left", bbox_to_anchor=(0.79, 0.55), fontsize=LEGEND_FS, frameon=False,
+        handlelength=1.2, handletextpad=0.4, labelspacing=0.3, borderaxespad=0.1,
         title="Key size", title_fontsize=LEGEND_FS,
     )
 
-    fig.subplots_adjust(left=0.17, right=0.98, bottom=0.17, top=0.82)
+    fig.subplots_adjust(left=0.13, right=0.78, bottom=0.21, top=0.97)
     save(fig, "caching-microbench.pdf", pad_inches=0.03)
 
 
