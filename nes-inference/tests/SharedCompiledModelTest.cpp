@@ -19,6 +19,7 @@
 #include <Inference.hpp>
 #include <InferenceRuntime.hpp>
 #include <Model.hpp>
+#include <ModelProfiler.hpp>
 #include <OpenVinoRuntimeBackend.hpp>
 
 namespace NES
@@ -83,6 +84,22 @@ TEST(SharedCompiledModelTest, PrivateSessionsDoNotShare)
     InferenceRuntime second;
     second.setup(model, 1, InferenceRuntimeOptions{});
 
+    EXPECT_EQ(liveSharedCompiledModelCount(), before);
+}
+
+/// The memory assessment invokes each session it measures once, since a backend allocates part of a session's memory only then.
+/// Invoking must work for both deployments, and the assessment must still release the shared model it compiled to measure.
+TEST(SharedCompiledModelTest, MemoryAssessmentInvokesAndReleasesItsSessions)
+{
+    const auto model = loadModel();
+    const auto before = liveSharedCompiledModelCount();
+
+    const auto memory = measureSessionMemory(model, 1, InferenceRuntimeOptions{}, sharedOptions());
+
+    EXPECT_TRUE(memory.measured);
+    EXPECT_EQ(memory.measuredBatchSize, 1);
+    EXPECT_GT(memory.inputBufferBytes, 0);
+    EXPECT_GT(memory.outputBufferBytes, 0);
     EXPECT_EQ(liveSharedCompiledModelCount(), before);
 }
 

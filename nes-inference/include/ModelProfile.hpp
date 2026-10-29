@@ -52,9 +52,9 @@ struct BatchProfile
     bool operator==(const BatchProfile&) const = default;
 };
 
-/// Memory one inference runtime session needs, measured as the resident-set growth around setting the session up. The growth
-/// covers everything the backend allocates for it: the compiled model, its activations and the session's input and output
-/// buffers. Sharing the compiled model replaces the per-thread weight copies of the private sessions with one copy, which is why
+/// Memory one inference runtime session needs, measured as the resident-set growth around setting the session up and invoking it
+/// once. The growth covers everything the backend allocates for it: the compiled model, its activations (some backends allocate
+/// them only at the first invocation) and the session's input and output buffers. Sharing the compiled model replaces the per-thread weight copies of the private sessions with one copy, which is why
 /// the marginal cost of an additional session is reported for both deployments.
 struct SessionMemoryProfile
 {

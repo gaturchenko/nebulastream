@@ -57,8 +57,8 @@ void fillSyntheticInput(std::byte* input, const size_t inputSize)
     std::memset(input + (numberOfFloats * sizeof(float)), 0, inputSize - (numberOfFloats * sizeof(float)));
 }
 
-/// Resident set size of this process. Reading it from /proc is cheap enough: it is only sampled around session setup, never on
-/// the inference path.
+/// Resident set size of this process. Reading it from /proc is cheap enough: it is only sampled around the memory assessment's
+/// sessions, never on the inference path.
 size_t residentSetBytes()
 {
     std::ifstream statm{"/proc/self/statm"};
@@ -84,6 +84,17 @@ size_t residentSetGrowth(const size_t before)
 {
     const auto after = residentSetBytes();
     return after > before ? after - before : 0;
+}
+
+/// Sets the session up and invokes it once. A backend allocates part of a session's memory only at its first invocation, e.g.,
+/// OpenVINO's intermediate tensors: for NanoDet-R101 on the Raspberry Pi, the first invocation more than doubles a session's
+/// resident memory (~270 MiB at setup, ~310 MiB more after), and later invocations add nothing. A session that was only set up
+/// therefore understates what the deployed operator, which invokes every session, occupies.
+void setUpAndInvoke(InferenceRuntime& runtime, const CompiledModel& model, const size_t batchSize, const InferenceRuntimeOptions& options)
+{
+    runtime.setup(model, batchSize, options);
+    fillSyntheticInput(runtime.getInputData(), runtime.getInputSize());
+    runtime.infer();
 }
 
 BatchProfile profileBatchSize(
@@ -133,11 +144,12 @@ SessionMemoryProfile measureSessionMemory(
     SessionMemoryProfile memory{
         .measuredBatchSize = batchSize, .modelPayloadBytes = model.getData().size() + model.getAuxiliaryData().size(), .measured = true};
 
-    /// The very first session of a process also loads the backend's plugins and warms its allocators, which would otherwise be
-    /// attributed to the model. A throwaway session absorbs that one-time cost so the measurements below are per session.
+    /// The very first session of a process also loads the backend's plugins and warms its allocators, and its first invocation
+    /// starts the backend's thread pool, all of which would otherwise be attributed to the model. A throwaway session absorbs these
+    /// one-time costs so the measurements below are per session.
     {
         InferenceRuntime warmup;
-        warmup.setup(model, batchSize, privateOptions);
+        setUpAndInvoke(warmup, model, batchSize, privateOptions);
     }
 
     const auto measureDeployment
@@ -146,12 +158,12 @@ SessionMemoryProfile measureSessionMemory(
         releaseFreedMemory();
         auto beforeFirst = residentSetBytes();
         InferenceRuntime first;
-        first.setup(model, batchSize, deploymentOptions);
+        setUpAndInvoke(first, model, batchSize, deploymentOptions);
         firstSession = residentSetGrowth(beforeFirst);
 
         auto beforeSecond = residentSetBytes();
         InferenceRuntime second;
-        second.setup(model, batchSize, deploymentOptions);
+        setUpAndInvoke(second, model, batchSize, deploymentOptions);
         additionalSession = residentSetGrowth(beforeSecond);
 
         return std::pair{first.getInputSize(), first.getOutputSize()};

@@ -37,8 +37,9 @@ struct ProfiledInvocationOptions
 /// Measures how much memory the runtime sessions of a model need, once with every session compiling its own copy of the model
 /// (`privateOptions`) and once with the sessions sharing one compiled model (`sharedOptions`). Both option sets must be the ones
 /// the deployed sessions would be set up with, because the backend compiles a shared model differently: one stream per worker
-/// thread in a throughput deployment rather than a single-stream latency one. Each step sets up a session and records the growth of the process's resident
-/// set, so the numbers include everything the backend allocates behind its own API.
+/// thread in a throughput deployment rather than a single-stream latency one. Each step sets up a session, invokes it once on a
+/// synthetic input, and records the growth of the process's resident set, so the numbers include everything the backend allocates
+/// behind its own API, also what it allocates only at a session's first invocation.
 ///
 /// The backend's cache of shared compiled models references them weakly, so neither does a model compiled by an earlier session
 /// distort this measurement, nor does the one compiled here outlive the sessions that measured it.
