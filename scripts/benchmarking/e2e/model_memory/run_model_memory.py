@@ -171,11 +171,19 @@ def mem_available_mb() -> int:
     return -1
 
 
+def other_experiment_running() -> bool:
+    """A systest process by name: matching "bin/systest" in command lines would also match any shell whose command mentions that
+    path, including the one that started this script. The JVM and TorchServe only show in their command lines."""
+    by_name = subprocess.run(["pgrep", "-x", "systest"], capture_output=True).returncode == 0
+    by_command = subprocess.run(["pgrep", "-f", r"java .*flink-openvino-baseline.*\.jar|java .*org\.pytorch\.serve"],
+                                capture_output=True).returncode == 0
+    return by_name or by_command
+
+
 def wait_for_idle_host() -> None:
     """Another experiment's systest, JVM or TorchServe would share the memory being measured."""
     waited = 0
-    while subprocess.run(["pgrep", "-f", r"bin/systest|flink-openvino-baseline.*\.jar|org\.pytorch\.serve"],
-                         capture_output=True).returncode == 0:
+    while other_experiment_running():
         if waited % 300 == 0:
             print(f"  waiting for another experiment to finish ({waited} s)", flush=True)
         time.sleep(10)

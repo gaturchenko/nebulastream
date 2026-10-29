@@ -14,9 +14,10 @@ model (same source, buffer pool and preprocessing). The worker runs 4 threads, o
 threads; every model is invoked with single tuples. Medians across repetitions, whiskers min-max.
 
 Two things the caption or text should carry. The measured memory includes what the optimizer's assessment does not see -- the
-OpenVINO runtime the first session loads into the process and what sessions allocate once they run -- so it exceeds the
-assessed totals in the table. And the footprint does not track the model file: what each session holds is the compiled model
-(optimised graph, weight layouts, scratch memory), not the serialised weights.
+OpenVINO runtime the first session loads into the process and what the query allocates while it runs -- so it exceeds the
+assessed totals in the table, by 16-279 MiB (the assessment invokes each session once, so it does include what a backend
+allocates only at a session's first invocation). And the footprint does not track the model file: what each session holds is
+the compiled model (optimised graph, weight layouts, scratch memory), not the serialised weights.
 
 Data: data/model_memory/model_memory.csv (process_model_memory.py over the Pi's run_model_memory.py output; raw runs stay on
       the Pi in ~/navi/results/model_memory).

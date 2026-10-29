@@ -202,11 +202,15 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   `model_memory.csv` is `process_model_memory.py`'s aggregate, medians of 3 repetitions: the model
   file, the optimizer's own assessment (`inference_memory_strategy=OPTIMIZER_CHOOSES`, per session)
   and the measured memory, i.e. the query's steady resident set minus that of the same query without
-  a model. The measurement exceeds the assessment because it also holds the OpenVINO runtime the
-  first session loads and what sessions allocate once they run; the two-model query (SqueezeDet and
-  the Segmenter on one Waymo frame) costs ~65 MB less than the two single-model queries, the part
+  a model. The assessment sets each measured session up and invokes it once (since 2026-10-27; OpenVINO on
+  the Pi allocates up to ~310 MiB per NanoDet-R101 session only at the first invocation, and the
+  setup-only assessment had missed 1.4 GiB there); what the measurement holds beyond it, 16-279
+  MiB, is the OpenVINO runtime the first session loads and what the query allocates while it runs.
+  NanoDet-R101's private copies are assessed at 2,984 MiB, inside the 3,011 MiB budget, and measure
+  3,157 MiB; the setup-only results are on the Pi in `~/navi/results/model_memory/assess-setup-only`.
+  The two-model query (SqueezeDet and the Segmenter on one Waymo frame) costs ~65 MB less than the two single-model queries, the part
   paid once per process. On the Pi, sharing one compiled model costs MHAtt-RNN *more* than private
-  ones (1425 vs. 924 MB; the assessment predicts it, 1407 vs. 897, and OPTIMIZER_CHOOSES deploys
+  ones (1425 vs. 924 MB; the assessment predicts it, 1410 vs. 890, and OPTIMIZER_CHOOSES deploys
   private copies), which `model-memory.pdf` draws cross-hatched; NanoDet-R101's private deployment
   takes 83% of the Pi's memory. The queries use small buffer pools (32 frame buffers, 256 x 128 KB
   otherwise), since a buffer's pages enter the resident set the first time the pool hands it out and
