@@ -117,8 +117,9 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   the recording (the published point used 60 s), Waymo its 991 frames as before. Without `--tuned`
   the script reproduces the published-operating-point matrix from `results-reps`. `rate_sweep.csv`
   follows the tuning too: its Flink arm was rerun at the 1 lane the Waymo pilot chose
-  (`run_pi_flink_sweep_lanes1.sh`; the earlier curve with the lanes the `.test` implies is in
-  `~/navi/results-sweep-flink-lanes-from-test`), its TorchServe arm at the 3 workers (and 3 HTTP
+  (`run_pi_flink_sweep_lanes1.sh`; the earlier curve with the two lanes the `.test` implies is in
+  `~/navi/results-sweep-flink-lanes-from-test`, aggregated in `rate_sweep_flink_lanes2.csv`, which no
+  figure plots but the paper quotes: 19.4 frames/s), its TorchServe arm at the 3 workers (and 3 HTTP
   sink connections) the pilot chose (`run_pi_ts_sweep_workers3.sh`; the 1-worker curve is in
   `~/navi/results-sweep-torchserve-1worker`, and saturated slightly later, ~33 vs. ~31.5 frames/s),
   and NAVI's arm already ran at its tuned 2 workers.
