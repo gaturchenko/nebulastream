@@ -22,8 +22,8 @@ window covers -- sweeping those means moving ADVANCE, a different experiment.
 The Flink arm runs one inference lane, the setting its tuning pilot chose at 10 frames/s (as in the
 workload matrix, e2e-systems-workloads.pdf), so the two figures agree at that point. One lane saturates
 at ~17.5 frames/s; with the two lanes the .test implies, Flink reached ~19.4 frames/s but had a P95 of
-~92 ms at 10 frames/s and ~197 ms past its knee (that curve is archived on the Pi in
-~/navi/results-sweep-flink-lanes-from-test). TorchServe runs the 3 workers its pilot chose, with 3 HTTP
+~92 ms at 10 frames/s and ~197 ms past its knee (data/systems/rate_sweep_flink_lanes2.csv, the same
+aggregate over the runs archived on the Pi in ~/navi/results-sweep-flink-lanes-from-test; not plotted). TorchServe runs the 3 workers its pilot chose, with 3 HTTP
 sink connections on NES's side; more workers do not move its knee (the earlier 1-worker, 2-connection
 curve saturated at ~33 instead of ~31.5 frames/s, archived in ~/navi/results-sweep-torchserve-1worker).
 NAVI's arm already ran at its tuned 2 worker threads.
