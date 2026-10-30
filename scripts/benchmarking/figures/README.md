@@ -15,7 +15,7 @@ which is how the earlier versions ended up at 3-5 pt.
 |---|---|---|
 | `plot_batch_microbench.py` | `batch-microbench.pdf` | `data/batching/BatchInferenceMicrobenchmark2.csv` |
 | `plot_cache_microbench.py` | `caching-microbench.pdf` | `data/cache/cache_scope_keysize.csv` |
-| `plot_threading.py` | `ts-threading.pdf`, `od-threading.pdf` | `data/threading/results_1.csv`, `data/threading/results_nanodet_r101.csv`, `data/threading/threading_lat.csv` |
+| `plot_threading.py` | `threading.pdf` (24-thread budget; one panel each for N-BEATS-1, N-BEATS-32, NanoDet-R101) | `data/threading/results_1.csv`, `data/threading/results_nanodet_r101.csv`, `data/threading/threading_lat.csv` |
 | `plot_systems.py` | `e2e-systems.pdf` | `data/systems/*.csv` |
 | `plot_waymo_e2e.py` | `e2e-waymo.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv` |
 | `plot_systems_workloads.py` | `e2e-systems-workloads.pdf`, `e2e-systems-workloads-column.pdf` (paper Fig. 1), `e2e-systems-workloads-split.pdf` | `data/systems/workloads_p95.csv`, `data/systems/torchserve_breakdown.csv`, `data/systems/flink_startup_runs.csv` |
@@ -26,7 +26,7 @@ which is how the earlier versions ended up at 3-5 pt.
 | `plot_musan_audio.py` | `musan-audio.pdf` | `data/musan/*_envelope.csv` |
 | `plot_batch_rate.py` | `batch-rate.pdf` | `data/batch_rate/batch_rate_runs.csv` |
 | `plot_batch_throughput.py` | `batch-throughput.pdf` | `data/batch_rate/batch_throughput_runs.csv`, `data/batch_rate/batch_rate_profile.csv` |
-| `plot_batch_rate_throughput.py` | `batch-rate-throughput.pdf` (full width, both panels) | as the two above |
+| `plot_batch_rate_throughput.py` | `batch-rate-throughput.pdf` (full width, both panels), `batch-rate-throughput-column.pdf` (both panels stacked, one column) | as the two above |
 | `plot_post_join.py` | `post-join-choice.pdf`, `post-join-speedup.pdf` | `data/post_join/post_join_{runs,decisions,pilot_summary}_{x86,pi}.csv` |
 | `plot_model_memory.py` | `model-memory.pdf`, `model-memory-two-models.pdf`, `model-memory-panels.pdf` (SqueezeDet, Segmenter and SARAD left, two-model query right), `model-memory-table.tex` | `data/model_memory/model_memory.csv` |
 
@@ -65,7 +65,7 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   earlier sweep in `sigmod/threading/` passed `num_streams=0`, under which OpenVINO ignores the
   thread count, so its OpenVINO-thread axis had no effect (equal worker counts gave equal
   throughput at any thread count). Raw results: so015 `~/navi-x86/results/threading`.
-  `od-threading.pdf` reads `results_nanodet_r101.csv`: the same sweep with NanoDet-Plus on a
+  The NanoDet-R101 panel of `threading.pdf` reads `results_nanodet_r101.csv`: the same sweep with NanoDet-Plus on a
   ResNet-101 backbone (`nanodet-r101-{24,48}.test`, 16.2 instead of 0.45 GMACs at 320x320, random
   weights), heavy enough that inference bounds the query. With the original NanoDet (its rows in
   `results_1.csv`), reading and parsing the frames bounds it at ~120 frames/s in every split.

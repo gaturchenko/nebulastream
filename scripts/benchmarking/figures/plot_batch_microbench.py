@@ -69,14 +69,14 @@ def peak_records_per_second(df: pd.DataFrame) -> dict[str, float]:
 def plot_batch_microbench(long_df: pd.DataFrame, peaks: dict[str, float]) -> None:
     # Drawn at the size it is printed at, one column of the paper (3.5 in), so every font size is the size on the page. The
     # paper's captions are 8 pt; nothing here goes below 7 pt.
-    FIG_SIZE = (3.5, 2.35)
+    FIG_SIZE = (3.5, 2.0)
     TITLE_FS = 8
     LABEL_FS = 8.5
     TICK_FS = 7.4
     LEGEND_FS = 7.5
     LINE_WIDTH = 1.0
     MARKER_SIZE = 2.5
-    SUBPLOTS_ADJUST = dict(left=0.11, right=0.98, bottom=0.255, top=0.91, hspace=0.36, wspace=0.28)
+    SUBPLOTS_ADJUST = dict(left=0.11, right=0.98, bottom=0.3, top=0.895, hspace=0.5, wspace=0.28)
     TICKS = [1, 4, 16, 64, 256, 1024, 4096]  # every other power of two: all of them do not fit half a column
     PEAK_HEADROOM = 1.12  # y-limit factor so the rooflines stay inside
 
@@ -94,7 +94,7 @@ def plot_batch_microbench(long_df: pd.DataFrame, peaks: dict[str, float]) -> Non
         ax.set_title(title, fontsize=TITLE_FS, pad=3)
         ax.set_xscale("log")
         ax.set_xticks(TICKS)
-        ax.set_xticklabels([str(t) for t in TICKS])
+        ax.set_xticklabels([f"{t // 1024}k" if t >= 1024 else str(t) for t in TICKS])  # 1024 and 4096 would touch
         ax.minorticks_off()
         ax.tick_params(axis="both", labelsize=TICK_FS, pad=2, length=2.5)
         ax.yaxis.set_major_formatter(eng_formatter(decimals=1))  # 0 would print a 1.5k tick as 2k

@@ -139,7 +139,8 @@ def load_workload(csv_name: str, batch_from_optimizer: bool, split_cache_scope: 
 
 def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tick_fs,
                             speedup_fs, legend_fs, bar_width, window_ms, window_label,
-                            log_latency, log_bottom, adjust, out_name) -> None:
+                            log_latency, log_bottom, adjust, out_name, tick_labels=None,
+                            rotate_ticks=None) -> None:
     """Shared two-panel drawing: P50/P95 latency bars + throughput bars with
     speedup-over-UDF labels. All knobs come from the per-chart wrappers."""
     order = [s for s in order if s in best.index]
@@ -184,12 +185,15 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
     else:
         ax_lat.set_ylim(bottom=0)
 
+    # tick_labels optionally abbreviates the setting names (spelled out in the caption).
+    names = [tick_labels.get(setting, setting) for setting in order] if tick_labels else order
     for ax in (ax_lat, ax_thr):
         ax.set_xticks(x)
-        if max(len(setting) for setting in order) > 6:
-            ax.set_xticklabels(order, rotation=45, ha="right", rotation_mode="anchor", fontsize=tick_fs)
+        rotate = rotate_ticks if rotate_ticks is not None else max(len(name) for name in names) > 6
+        if rotate:
+            ax.set_xticklabels(names, rotation=45, ha="right", rotation_mode="anchor", fontsize=tick_fs)
         else:  # short names fit level
-            ax.set_xticklabels(order, fontsize=tick_fs)
+            ax.set_xticklabels(names, fontsize=tick_fs)
         ax.tick_params(axis="both", labelsize=tick_fs, pad=2, length=2.5)
 
     # One legend above the latency panel, clear of the bars whatever their height; the window size is named there, so it
@@ -204,13 +208,13 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
 
 def plot_e2e_audio(best: pd.DataFrame) -> None:
     """MUSAN / MHAtt-RNN ablation (log latency axis, 1 s sliding window)."""
-    FIGSIZE = (COLUMN_WIDTH, 1.7)
+    FIGSIZE = (COLUMN_WIDTH, 1.35)
     LABEL_FS = 8.5
     TICK_FS = 7
     SPEEDUP_FS = 7
     LEGEND_FS = 7.5
     BAR_WIDTH = 0.4
-    ADJUST = dict(left=0.12, right=0.99, bottom=0.12, top=0.865, wspace=0.5)
+    ADJUST = dict(left=0.12, right=0.99, bottom=0.15, top=0.83, wspace=0.5)
     WINDOW_MS = 1_000
     LOG_BOTTOM = 100  # keeps the window line clear of the axis bottom
     ORDER = ["UDF", "ST", "ST+Cache", "Batch", "Batch+Dedup",
@@ -236,16 +240,20 @@ def plot_e2e_audio(best: pd.DataFrame) -> None:
 
 def plot_e2e_ts(best: pd.DataFrame) -> None:
     """CWRU / SARAD ablation (linear latency axis, 200 ms sliding window)."""
-    FIGSIZE = (COLUMN_WIDTH, 1.95)
+    FIGSIZE = (COLUMN_WIDTH, 1.6)
     LABEL_FS = 8.5
     TICK_FS = 7
     SPEEDUP_FS = 7
     LEGEND_FS = 7.5
     BAR_WIDTH = 0.4
-    ADJUST = dict(left=0.13, right=0.99, bottom=0.425, top=0.88, wspace=0.5)
+    ADJUST = dict(left=0.13, right=0.99, bottom=0.3, top=0.855, wspace=0.5)
     WINDOW_MS = 200
     ORDER = ["UDF", "ST", "ST+Cache Local", "ST+Cache Global", "Batch",
              "Batch+Dedup", "Batch+Cache", "Batch+Cache+Dedup"]
+    # Abbreviated so that the labels need little height: ST = single-tuple, B = batch, C = cache (L = thread-local,
+    # G = global), D = deduplication. The paper's caption spells them out.
+    TICK_LABELS = {"ST+Cache Local": "STC$_L$", "ST+Cache Global": "STC$_G$", "Batch": "B",
+                   "Batch+Dedup": "BD", "Batch+Cache": "BC", "Batch+Cache+Dedup": "BCD"}
 
     draw_latency_throughput(
         best,
@@ -262,6 +270,8 @@ def plot_e2e_ts(best: pd.DataFrame) -> None:
         log_bottom=None,
         adjust=ADJUST,
         out_name="e2e-ts.pdf",
+        tick_labels=TICK_LABELS,
+        rotate_ticks=True,  # eight bars per panel: even the abbreviations do not fit level
     )
 
 

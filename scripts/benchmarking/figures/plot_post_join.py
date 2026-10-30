@@ -113,7 +113,7 @@ def draw_choice(ax, table: pd.DataFrame, hardware: str) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels(table.index)
     ax.set_xlim(-0.6, len(table) - 0.4)
-    ax.set_ylim(0, top * 1.28)
+    ax.set_ylim(0, top * 1.42)  # headroom for the two-line falls-behind note below the panel title
     ax.set_title(HARDWARE_TITLE[hardware], fontsize=FONT_SIZE, pad=2)
     ax.grid(axis="y", color="0.9", linewidth=0.6)
     ax.spines[["top", "right"]].set_visible(False)
@@ -169,7 +169,7 @@ def style() -> None:
 
 
 def plot_choice(tables: dict[str, pd.DataFrame]) -> None:
-    FIG_SIZE = (3.33, 1.8)
+    FIG_SIZE = (3.33, 1.45)
 
     style()
     fig, axes = plt.subplots(1, len(tables), figsize=FIG_SIZE,
@@ -183,7 +183,7 @@ def plot_choice(tables: dict[str, pd.DataFrame]) -> None:
                linestyle="none", label="optimizer's choice")]
     fig.legend(handles=handles, loc="upper center", ncol=3, frameon=False, handlelength=1.2, handletextpad=0.4,
                columnspacing=1.0, borderaxespad=0.1)
-    fig.tight_layout(pad=0.2, w_pad=0.8, rect=(0, 0.05, 1, 0.885))
+    fig.tight_layout(pad=0.2, w_pad=0.8, rect=(0, 0.062, 1, 0.857))
     save(fig, "post-join-choice.pdf")
 
 

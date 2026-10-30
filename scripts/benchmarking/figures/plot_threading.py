@@ -2,9 +2,9 @@
 
 Each split of a thread budget into (SPE workers x OpenVINO threads) is one point: its capacity against its latency at a fixed
 load below every split's capacity.
-  - ts-threading.pdf: N-BEATS-1 / N-BEATS-32, one panel per model x budget.
-  - od-threading.pdf: object detection with NanoDet-Plus on a ResNet-101 backbone, heavy enough that inference bounds the
-    query (with the original ShuffleNetV2 NanoDet, reading the frames does), one panel per budget.
+  - threading.pdf: the 24-thread budget (one thread per physical core), one panel per model: N-BEATS-1, N-BEATS-32, and
+    object detection with NanoDet-Plus on a ResNet-101 backbone, heavy enough that inference bounds the query (with the
+    original ShuffleNetV2 NanoDet, reading the frames does). The 48-thread budget is only reported in the paper's text.
 
 Capacity: results per second of the unpaced sweep (run_threading.sh on so015, 10 repetitions, mean), i.e. the inference
 pipeline's output tuples over the query's duration. Data: data/threading/results_1.csv (N-BEATS),
@@ -125,53 +125,9 @@ def legend_handles(marker_size: float) -> list:
     ]
 
 
-def plot_ts_threading(points: pd.DataFrame) -> None:
-    """Time series (N-BEATS-1/-32): capacity vs. latency per thread split, one row per model, one column per budget."""
-    TITLE_FS = 8
-    LABEL_FS = 8.5
-    TICK_FS = 7.5
-    LEGEND_FS = 7.5
-    CBAR_LABEL_FS = 8
-    CBAR_TICK_FS = 7
-    FIG_SIZE = (COLUMN_WIDTH, 2.6)
-    MARKER_SIZE = 18
-    SUBPLOTS_ADJUST = dict(left=0.165, right=0.86, bottom=0.14, top=0.83, wspace=0.3, hspace=0.62)
-    MODEL_ORDER = ["N-BEATS-1", "N-BEATS-32"]
-    BUDGET_ORDER = [24, 48]
-
-    setup_style()
-    thread_values = sorted(points.loc[points["Model"].isin(MODEL_ORDER), "nes_workers"].unique())
-    norm = mpl.colors.LogNorm(vmin=min(thread_values), vmax=max(thread_values))
-
-    # A row is one model, so its two budgets share the latency axis.
-    fig, grid = plt.subplots(len(MODEL_ORDER), len(BUDGET_ORDER), figsize=FIG_SIZE, sharex="row")
-    for row, model in enumerate(MODEL_ORDER):
-        for column, budget in enumerate(BUDGET_ORDER):
-            ax = grid[row, column]
-            draw_panel(ax, points[(points["Model"] == model) & (points["budget"] == budget)], PACED_LOAD[model], norm,
-                       MARKER_SIZE)
-            ax.set_title(f"{model}, {budget} threads", fontsize=TITLE_FS, pad=3)
-            ax.tick_params(axis="both", labelsize=TICK_FS, pad=2)
-            ax.yaxis.set_major_formatter(eng_formatter(decimals=0))
-            ax.yaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4))
-        grid[row, 0].set_xlim(0, points.loc[points["Model"] == model, "p95_ms"].max() * 1.08)
-    for ax in grid[-1]:
-        ax.set_xlabel("Latency [ms]", fontsize=LABEL_FS, labelpad=2)
-
-    axes = grid.ravel()
-    fig.subplots_adjust(**SUBPLOTS_ADJUST)
-    # One label for both rows: a row is too short for its own.
-    fig.supylabel("Capacity [forecasts/s]", fontsize=LABEL_FS, x=0.03, y=(axes[-1].get_position().y0 + axes[0].get_position().y1) / 2)
-    thread_colorbar(fig, axes, thread_values, label_fs=CBAR_LABEL_FS, tick_fs=CBAR_TICK_FS, pad=0.025, width=0.025)
-    x_center = (axes[0].get_position().x0 + axes[-1].get_position().x1) / 2
-    fig.legend(handles=legend_handles(MARKER_SIZE), loc="upper center", bbox_to_anchor=(x_center, 1.0), ncol=3,
-               frameon=False, fontsize=LEGEND_FS, handlelength=1.6, columnspacing=1.2, handletextpad=0.5)
-
-    save(fig, "ts-threading.pdf")
-
-
-def plot_od_threading(points: pd.DataFrame) -> None:
-    """Object detection (NanoDet-Plus, ResNet-101 backbone): capacity vs. latency per thread split."""
+def plot_threading(points: pd.DataFrame) -> None:
+    """Capacity vs. latency per split of the 24-thread budget, i.e. one thread per physical core: one panel per model
+    (N-BEATS-1, N-BEATS-32, NanoDet-R101). The 48-thread budget (SMT siblings) is described in the text only."""
     TITLE_FS = 8
     LABEL_FS = 8.5
     TICK_FS = 7.5
@@ -180,21 +136,26 @@ def plot_od_threading(points: pd.DataFrame) -> None:
     CBAR_TICK_FS = 7
     FIG_SIZE = (COLUMN_WIDTH, 1.7)
     MARKER_SIZE = 18
-    SUBPLOTS_ADJUST = dict(left=0.13, right=0.86, bottom=0.235, top=0.74, wspace=0.12)
-    BUDGET_ORDER = [24, 48]
+    SUBPLOTS_ADJUST = dict(left=0.13, right=0.86, bottom=0.235, top=0.74, wspace=0.42)
+    MODEL_ORDER = ["N-BEATS-1", "N-BEATS-32", "NanoDet-R101"]
+    BUDGET = 24
 
     setup_style()
-    sub = points[points["Model"] == "NanoDet-R101"]
+    sub = points[points["budget"] == BUDGET]
     thread_values = sorted(sub["nes_workers"].unique())
     norm = mpl.colors.LogNorm(vmin=min(thread_values), vmax=max(thread_values))
 
-    fig, axes = plt.subplots(1, len(BUDGET_ORDER), figsize=FIG_SIZE, sharex=True, sharey=True)
-    for ax, budget in zip(axes, BUDGET_ORDER):
-        draw_panel(ax, sub[sub["budget"] == budget], PACED_LOAD["NanoDet-R101"], norm, MARKER_SIZE)
-        ax.set_title(f"{budget} threads", fontsize=TITLE_FS, pad=3)
+    # The models' latencies and capacities differ by orders of magnitude, so no axis is shared.
+    fig, axes = plt.subplots(1, len(MODEL_ORDER), figsize=FIG_SIZE)
+    for ax, model in zip(axes, MODEL_ORDER):
+        draw_panel(ax, sub[sub["Model"] == model], PACED_LOAD[model], norm, MARKER_SIZE)
+        ax.set_title(model, fontsize=TITLE_FS, pad=3)
         ax.set_xlabel("Latency [ms]", fontsize=LABEL_FS, labelpad=2)
         ax.tick_params(axis="both", labelsize=TICK_FS, pad=2)
-    axes[0].set_ylabel("Capacity [frames/s]", fontsize=LABEL_FS)
+        ax.yaxis.set_major_formatter(eng_formatter(decimals=0))
+        ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=3))
+        ax.yaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4))
+    axes[0].set_ylabel("Capacity [results/s]", fontsize=LABEL_FS)
 
     fig.subplots_adjust(**SUBPLOTS_ADJUST)
     thread_colorbar(fig, axes, thread_values, label_fs=CBAR_LABEL_FS, tick_fs=CBAR_TICK_FS, pad=0.025, width=0.025)
@@ -202,9 +163,9 @@ def plot_od_threading(points: pd.DataFrame) -> None:
     fig.legend(handles=legend_handles(MARKER_SIZE), loc="upper center", bbox_to_anchor=(x_center, 1.0), ncol=3,
                frameon=False, fontsize=LEGEND_FS, handlelength=1.6, columnspacing=1.2, handletextpad=0.5)
 
-    save(fig, "od-threading.pdf")
+    save(fig, "threading.pdf")
 
 
 if __name__ == "__main__":
-    plot_ts_threading(load_points("results_1.csv", pipeline_id=4))
-    plot_od_threading(load_points("results_nanodet_r101.csv", pipeline_id=5))
+    plot_threading(pd.concat([load_points("results_1.csv", pipeline_id=4),
+                              load_points("results_nanodet_r101.csv", pipeline_id=5)], ignore_index=True))
