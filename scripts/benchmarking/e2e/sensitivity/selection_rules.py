@@ -34,7 +34,7 @@ def candidate_batch_sizes(size: float, stride: float, max_batch_size: int = 256)
 
 
 def select_batch_size(
-    invocation: Mapping[int, float], size: float, stride: float, max_utilization: float = 0.8, slo_fraction: float = 0.9
+    invocation: Mapping[int, float], size: float, stride: float, max_utilization: float = 0.85, slo_fraction: float = 0.9
 ) -> BatchChoice:
     """invocation maps every candidate batch size to its profiled t(B). Ties go to the smaller batch, as in the C++."""
     batch_sizes = sorted(invocation)

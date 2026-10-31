@@ -14,7 +14,7 @@ Writes to --output-dir:
   post_join_sweep.csv       per minimum speedup: wrong decisions and cost regret, per platform.
   post_join_overhead.csv    per configuration: measured minus profiled cost of both plans.
   memory_sweep.csv          per model: the budget fractions at which the deployment changes, assessed and measured.
-  sensitivity_summary.csv   the ranges for the paper's table.
+  replay_summary.csv   the ranges for the paper's table.
 
     ./replay_selection.py --data-dir scripts/benchmarking/figures/data
 """
@@ -30,7 +30,7 @@ import pandas as pd
 from selection_rules import select_batch_size, select_deployment, select_post_join
 
 WINDOW_MS = 75.0
-DEFAULTS = {"slo_fraction": 0.9, "max_utilization": 0.8, "error": 1.0}
+DEFAULTS = {"slo_fraction": 0.9, "max_utilization": 0.85, "error": 1.0}
 # A plan difference below this share of the cost is a tie: neither plan is wrong, whichever is selected.
 TIE = 0.02
 # The memory budget of the Pi's query in the assessment logs (0.8 of the memory left after the buffer pool).
@@ -260,7 +260,7 @@ def main() -> None:
          "feasible_from": correct.index.min() if len(correct) else None, "feasible_to": correct.index.max() if len(correct) else None}
     )
     summary_frame = pd.DataFrame(summary)
-    summary_frame.to_csv(output / "sensitivity_summary.csv", index=False)
+    summary_frame.to_csv(output / "replay_summary.csv", index=False)
 
     pd.set_option("display.width", 200)
     print("\n", summary_frame.to_string(index=False))
