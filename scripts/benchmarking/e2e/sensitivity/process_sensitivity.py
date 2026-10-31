@@ -33,17 +33,17 @@ from selection_rules import candidate_batch_sizes, select_batch_size  # noqa: E4
 
 SUSTAINED = 0.95
 WARMUP_S = 5.0
-NAMES = ["sarad", "nbeats_w37", "nbeats_w150", "nbeats_w300"]
+NAMES = ["sarad", "sarad_knee", "nbeats_w37", "nbeats_w150", "nbeats_w300"]
 
 
 def replay_speedup(name: str, test: str) -> float:
-    return 1.0 if name == "sarad" else int(re.search(r"(\d+) AS `SOURCE`\.MOCK_TUPLE_RATE", test).group(1)) / 1000.0
+    return 1.0 if name.startswith("sarad") else int(re.search(r"(\d+) AS `SOURCE`\.MOCK_TUPLE_RATE", test).group(1)) / 1000.0
 
 
 def event_time_ms(name: str, test: str) -> float:
     with open(re.search(r"ATTACH FILE (\S+)", test).group(1), encoding="utf-8") as handle:
         rows = sum(1 for _ in handle)
-    return rows / 48.0 if name == "sarad" else float(rows)
+    return rows / 48.0 if name.startswith("sarad") else float(rows)
 
 
 def collect(results_root: Path, queries: Path, name: str) -> tuple[list[dict], list[dict]]:
@@ -157,7 +157,9 @@ def sweep_sarad(profiles: pd.DataFrame, summary: pd.DataFrame) -> pd.DataFrame:
 def window_residuals(profiles: pd.DataFrame, summary: pd.DataFrame) -> pd.DataFrame:
     invocation = profiles.groupby(["name", "batch_size"])["invocation_us"].median() / 1000.0
     fixed = summary[summary["strategy"] == "FIXED"].copy()
-    fixed["invocation_ms"] = [invocation.get((name, batch), np.nan) for name, batch in zip(fixed["name"], fixed["batch_size"])]
+    # The knee cells run fixed batch sizes only, so they have no profile of their own.
+    fixed["invocation_ms"] = [invocation.get((name.removesuffix("_knee"), batch), np.nan)
+                              for name, batch in zip(fixed["name"], fixed["batch_size"])]
     fixed["predicted_ms"] = (fixed["batch_size"] - 1) * fixed["slide_ms"] + fixed["invocation_ms"]
     fixed["utilization"] = fixed["invocation_ms"] / (fixed["batch_size"] * fixed["slide_ms"])
     fixed["residual_p99_ms"] = fixed["latency_ms_p99"] - fixed["predicted_ms"]

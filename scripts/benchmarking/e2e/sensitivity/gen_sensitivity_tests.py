@@ -68,6 +68,9 @@ INTO latencySink;
 SARAD_CELLS = {20: [2, 4, 8], 25: [2, 4, 8], 40: [1, 2, 4], 50: [1, 2, 4]}
 # The optimizer itself at the default and at the u_max for which the replay predicts other batch sizes.
 SARAD_UTILIZATIONS = [0.8, 0.9]
+# Where the utilization of batch size 4 crosses 1: the sweep above leaves 0.83 to 1.28 unmeasured, and capacity is about 0.95 B/t(B),
+# so these slides bound u_max from above. Batch size 8 is what the optimizer falls back to when it rejects 4.
+SARAD_KNEE_CELLS = {19: [4, 8], 18: [4, 8], 17: [4, 8], 16: [4, 8]}
 
 # Part C: wall-clock window [ms] -> (speedup, event-time advance [ms] -> the batch sizes either side of f * W).
 WINDOWS = {
@@ -106,20 +109,25 @@ def chooses_config(output: Path, max_utilization: float, speedup: float) -> str:
 
 
 def write_sarad(output: Path, root: str) -> None:
+    write_sarad_cells(output, root, "sarad", SARAD_CELLS, SARAD_UTILIZATIONS)
+    write_sarad_cells(output, root, "sarad_knee", SARAD_KNEE_CELLS, [])
+
+
+def write_sarad_cells(output: Path, root: str, name: str, slides: dict, utilizations: list) -> None:
     model = {
         "model": "sarad",
         "model_path": f"{root}/models-benchmarking/models/sarad/sarad_medium.onnx",
         "input": "value_200_ms",
         "output": "anomaly_score",
     }
-    text = HEADER.format(rate=48000, data=f"{root}/datasets/synthetic/sensitivity_sarad.csv", results="results/sensitivity/sarad", **model)
+    text = HEADER.format(rate=48000, data=f"{root}/datasets/synthetic/sensitivity_sarad.csv", results=f"results/sensitivity/{name}", **model)
     cells = []
-    for section, (advance, batch_sizes) in enumerate(SARAD_CELLS.items(), start=1):
+    for section, (advance, batch_sizes) in enumerate(slides.items(), start=1):
         text += QUERY.format(advance=advance, size=200, **model)
         cells += [f"{section:02d} {fixed_config(output, batch_size)} 3" for batch_size in batch_sizes]
-        cells += [f"{section:02d} {chooses_config(output, utilization, 1.0)} 3" for utilization in SARAD_UTILIZATIONS]
-    (output / "sarad.test").write_text(text, encoding="utf-8")
-    (output / "cells_sarad.txt").write_text("\n".join(cells) + "\n", encoding="utf-8")
+        cells += [f"{section:02d} {chooses_config(output, utilization, 1.0)} 3" for utilization in utilizations]
+    (output / f"{name}.test").write_text(text, encoding="utf-8")
+    (output / f"cells_{name}.txt").write_text("\n".join(cells) + "\n", encoding="utf-8")
 
 
 def write_windows(output: Path, root: str) -> None:
