@@ -6,7 +6,8 @@ pipeline throughput of the best configuration with speedup-over-UDF labels on
 the right):
   - e2e-audio.pdf: MUSAN audio / MHAtt-RNN (log latency axis, 1 s window)
   - e2e-ts.pdf:    CWRU vibration / SARAD (linear latency axis, 200 ms window,
-                   with the prediction cache split into Local/Global scope)
+                   with the prediction cache split into Local/Global scope, and hatching on the
+                   configurations whose reuse needs quantized inputs)
 
 Data: data/ablation/ablation_musan.csv, data/ablation/ablation_cwru.csv
       (run_systests.py sweeps over inference configurations).
@@ -15,6 +16,7 @@ Data: data/ablation/ablation_musan.csv, data/ablation/ablation_cwru.csv
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 
 from common import eng_formatter, load_csv, save, setup_style
 
@@ -27,6 +29,11 @@ METRICS = [
 
 P50_COLOR = "#1F77B4"
 P95_COLOR = "#FF7F0E"
+# As in the other figures: a hatched bar is white, with its hatching and outline in the bar's color. The bars are narrower here,
+# and the shortest are a few points tall, so the hatching is denser and thinner to show on them.
+HATCH = "//////"
+HATCH_LINEWIDTH = 0.6
+HATCH_STROKE = 0.4
 
 # Both figures are drawn at the size they are printed at, one column of the paper (3.5 in), so every font size is the size on the
 # page. The paper's captions are 8 pt; nothing here goes below 7 pt.
@@ -137,12 +144,16 @@ def load_workload(csv_name: str, batch_from_optimizer: bool, split_cache_scope: 
     })
 
 
+def hatch_bar(bar, color: str) -> None:
+    bar.set(facecolor="white", edgecolor=color, linewidth=HATCH_LINEWIDTH, hatch=HATCH)
+
+
 def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tick_fs,
                             speedup_fs, legend_fs, bar_width, window_ms, window_label,
                             log_latency, log_bottom, adjust, out_name, tick_labels=None,
-                            rotate_ticks=None) -> None:
+                            rotate_ticks=None, quantized=frozenset()) -> None:
     """Shared two-panel drawing: P50/P95 latency bars + throughput bars with
-    speedup-over-UDF labels. All knobs come from the per-chart wrappers."""
+    speedup-over-UDF labels. All knobs come from the per-chart wrappers; the settings in quantized are drawn hatched."""
     order = [s for s in order if s in best.index]
     x = np.arange(len(order))
     thr_vals = best["throughput"].reindex(order).to_numpy()
@@ -165,6 +176,9 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
         else:
             labels.append("")
     ax_thr.bar_label(bars_thr, labels=labels, padding=1, fontsize=speedup_fs)
+    for setting, bar in zip(order, bars_thr):
+        if setting in quantized:
+            hatch_bar(bar, P50_COLOR)
     ax_thr.set_ylim(top=np.nanmax(thr_vals) * 1.2)  # headroom for the labels
 
     # Left panel: P50 vs. P95 prediction latency with the window-size budget line.
@@ -172,6 +186,10 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
                           color=P50_COLOR, edgecolor="0.25", linewidth=0.3)
     bars_p95 = ax_lat.bar(x + bar_width / 2, p95_vals, bar_width, label="P95",
                           color=P95_COLOR, edgecolor="0.25", linewidth=0.3)
+    for setting, bar_p50, bar_p95 in zip(order, bars_p50, bars_p95):
+        if setting in quantized:
+            hatch_bar(bar_p50, P50_COLOR)
+            hatch_bar(bar_p95, P95_COLOR)
     window_line = ax_lat.axhline(window_ms, linestyle="--", linewidth=0.8,
                                  color="black", label=window_label)
     ax_lat.set_ylabel("Latency [ms]", fontsize=label_fs, labelpad=2)
@@ -198,7 +216,10 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
 
     # One legend above the latency panel, clear of the bars whatever their height; the window size is named there, so it
     # needs no tick of its own.
-    fig.legend(handles=[bars_p50, bars_p95, window_line], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3,
+    handles = [bars_p50, bars_p95, window_line]
+    if quantized:
+        handles.append(Patch(facecolor="white", edgecolor="0.25", linewidth=HATCH_LINEWIDTH, hatch=HATCH, label="Quantized"))
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=len(handles),
                frameon=False, fontsize=legend_fs, handlelength=1.5, columnspacing=1.0, handletextpad=0.4,
                borderaxespad=0.1)
 
@@ -254,6 +275,8 @@ def plot_e2e_ts(best: pd.DataFrame) -> None:
     # G = global), D = deduplication. The paper's caption spells them out.
     TICK_LABELS = {"ST+Cache Local": "STC$_L$", "ST+Cache Global": "STC$_G$", "Batch": "B",
                    "Batch+Dedup": "BD", "Batch+Cache": "BC", "Batch+Cache+Dedup": "BCD"}
+    # Caching and deduplication only find repeated inputs after quantization.
+    QUANTIZED = {"ST+Cache Local", "ST+Cache Global", "Batch+Dedup", "Batch+Cache", "Batch+Cache+Dedup"}
 
     draw_latency_throughput(
         best,
@@ -272,11 +295,13 @@ def plot_e2e_ts(best: pd.DataFrame) -> None:
         out_name="e2e-ts.pdf",
         tick_labels=TICK_LABELS,
         rotate_ticks=True,  # eight bars per panel: even the abbreviations do not fit level
+        quantized=QUANTIZED,
     )
 
 
 if __name__ == "__main__":
     setup_style()
+    plt.rcParams["hatch.linewidth"] = HATCH_STROKE
     plot_e2e_audio(load_workload(
         "ablation_musan.csv",
         batch_from_optimizer=True,
