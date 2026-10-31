@@ -1,0 +1,137 @@
+decision,iterations,load,reps,differ_share,choices,reference
+mhatt_rnn post-join k=2,5,0,10,0.0,{'SEQUENTIAL': np.int64(10)},SEQUENTIAL
+mhatt_rnn post-join k=2,10,0,10,0.0,{'SEQUENTIAL': np.int64(10)},SEQUENTIAL
+mhatt_rnn post-join k=2,25,0,10,0.0,{'SEQUENTIAL': np.int64(10)},SEQUENTIAL
+mhatt_rnn post-join k=2,50,0,10,0.0,{'SEQUENTIAL': np.int64(10)},SEQUENTIAL
+mhatt_rnn post-join k=2,50,1,10,0.0,{'SEQUENTIAL': np.int64(10)},SEQUENTIAL
+mhatt_rnn post-join k=2,50,2,10,0.1,"{'SEQUENTIAL': np.int64(9), 'BATCHED': np.int64(1)}",SEQUENTIAL
+mhatt_rnn post-join k=2,50,3,10,0.2,"{'SEQUENTIAL': np.int64(8), 'BATCHED': np.int64(2)}",SEQUENTIAL
+mhatt_rnn post-join k=2,100,0,10,0.1,"{'SEQUENTIAL': np.int64(9), 'BATCHED': np.int64(1)}",SEQUENTIAL
+mhatt_rnn post-join k=4,5,0,10,0.4,"{'BATCHED': np.int64(6), 'SEQUENTIAL': np.int64(4)}",BATCHED
+mhatt_rnn post-join k=4,10,0,10,0.3,"{'BATCHED': np.int64(7), 'SEQUENTIAL': np.int64(3)}",BATCHED
+mhatt_rnn post-join k=4,25,0,10,0.0,{'BATCHED': np.int64(10)},BATCHED
+mhatt_rnn post-join k=4,50,0,10,0.0,{'BATCHED': np.int64(10)},BATCHED
+mhatt_rnn post-join k=4,50,1,10,0.2,"{'BATCHED': np.int64(8), 'SEQUENTIAL': np.int64(2)}",BATCHED
+mhatt_rnn post-join k=4,50,2,10,0.6,"{'SEQUENTIAL': np.int64(6), 'BATCHED': np.int64(4)}",BATCHED
+mhatt_rnn post-join k=4,50,3,10,0.3,"{'BATCHED': np.int64(7), 'SEQUENTIAL': np.int64(3)}",BATCHED
+mhatt_rnn post-join k=4,100,0,10,0.0,{'BATCHED': np.int64(10)},BATCHED
+mhatt_rnn_static post-join k=2,5,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+mhatt_rnn_static post-join k=2,10,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+mhatt_rnn_static post-join k=2,25,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+mhatt_rnn_static post-join k=2,50,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+mhatt_rnn_static post-join k=2,50,1,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+mhatt_rnn_static post-join k=2,50,2,20,0.2,"{'BATCHED': np.int64(16), 'SEQUENTIAL': np.int64(4)}",BATCHED
+mhatt_rnn_static post-join k=2,50,3,20,0.2,"{'BATCHED': np.int64(16), 'SEQUENTIAL': np.int64(4)}",BATCHED
+mhatt_rnn_static post-join k=2,100,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+nbeats W=75 S=1,5,0,10,0.0,{'64': np.int64(10)},64
+nbeats W=75 S=1,10,0,10,0.0,{'64': np.int64(10)},64
+nbeats W=75 S=1,25,0,10,0.2,"{'64': np.int64(8), '32': np.int64(2)}",64
+nbeats W=75 S=1,50,0,10,0.2,"{'64': np.int64(8), '32': np.int64(2)}",64
+nbeats W=75 S=1,50,1,10,0.3,"{'64': np.int64(7), '32': np.int64(3)}",64
+nbeats W=75 S=1,50,2,10,0.2,"{'64': np.int64(8), '16': np.int64(1), '32': np.int64(1)}",64
+nbeats W=75 S=1,50,3,10,0.4,"{'64': np.int64(6), '16': np.int64(3), '32': np.int64(1)}",64
+nbeats W=75 S=1,100,0,10,0.0,{'64': np.int64(10)},64
+nbeats W=75 S=10,5,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=10,10,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=10,25,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=10,50,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=10,50,1,10,0.2,"{'4': np.int64(8), '2': np.int64(2)}",4
+nbeats W=75 S=10,50,2,10,0.3,"{'4': np.int64(7), '2': np.int64(3)}",4
+nbeats W=75 S=10,50,3,10,0.6,"{'2': np.int64(6), '4': np.int64(4)}",4
+nbeats W=75 S=10,100,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=2,5,0,10,0.0,{'32': np.int64(10)},32
+nbeats W=75 S=2,10,0,10,0.0,{'32': np.int64(10)},32
+nbeats W=75 S=2,25,0,10,0.0,{'32': np.int64(10)},32
+nbeats W=75 S=2,50,0,10,0.0,{'32': np.int64(10)},32
+nbeats W=75 S=2,50,1,10,0.1,"{'32': np.int64(9), '16': np.int64(1)}",32
+nbeats W=75 S=2,50,2,10,0.5,"{'32': np.int64(5), '16': np.int64(5)}",32
+nbeats W=75 S=2,50,3,10,0.4,"{'32': np.int64(6), '16': np.int64(4)}",32
+nbeats W=75 S=2,100,0,10,0.0,{'32': np.int64(10)},32
+nbeats W=75 S=20,5,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=20,10,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=20,25,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=20,50,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=20,50,1,10,0.2,"{'4': np.int64(8), '2': np.int64(2)}",4
+nbeats W=75 S=20,50,2,10,0.3,"{'4': np.int64(7), '2': np.int64(3)}",4
+nbeats W=75 S=20,50,3,10,0.6,"{'2': np.int64(6), '4': np.int64(4)}",4
+nbeats W=75 S=20,100,0,10,0.0,{'4': np.int64(10)},4
+nbeats W=75 S=3,5,0,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=3,10,0,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=3,25,0,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=3,50,0,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=3,50,1,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=3,50,2,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=3,50,3,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=3,100,0,10,0.0,{'16': np.int64(10)},16
+nbeats W=75 S=40,5,0,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=40,10,0,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=40,25,0,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=40,50,0,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=40,50,1,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=40,50,2,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=40,50,3,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=40,100,0,10,0.0,{'2': np.int64(10)},2
+nbeats W=75 S=5,5,0,10,0.0,{'8': np.int64(10)},8
+nbeats W=75 S=5,10,0,10,0.0,{'8': np.int64(10)},8
+nbeats W=75 S=5,25,0,10,0.0,{'8': np.int64(10)},8
+nbeats W=75 S=5,50,0,10,0.0,{'8': np.int64(10)},8
+nbeats W=75 S=5,50,1,10,0.0,{'8': np.int64(10)},8
+nbeats W=75 S=5,50,2,10,0.0,{'8': np.int64(10)},8
+nbeats W=75 S=5,50,3,10,0.1,"{'8': np.int64(9), '4': np.int64(1)}",8
+nbeats W=75 S=5,100,0,10,0.0,{'8': np.int64(10)},8
+sarad W=200 S=20,5,0,10,0.0,{'8': np.int64(10)},8
+sarad W=200 S=20,10,0,10,0.0,{'8': np.int64(10)},8
+sarad W=200 S=20,25,0,10,0.0,{'8': np.int64(10)},8
+sarad W=200 S=20,50,0,10,0.0,{'8': np.int64(10)},8
+sarad W=200 S=20,50,1,10,0.1,"{'8': np.int64(9), '4': np.int64(1)}",8
+sarad W=200 S=20,50,2,10,0.3,"{'8': np.int64(7), '4': np.int64(3)}",8
+sarad W=200 S=20,50,3,10,0.1,"{'8': np.int64(9), '4': np.int64(1)}",8
+sarad W=200 S=20,100,0,10,0.0,{'8': np.int64(10)},8
+sarad W=200 S=25,5,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=25,10,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=25,25,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=25,50,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=25,50,1,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=25,50,2,10,0.2,"{'4': np.int64(8), '2': np.int64(2)}",4
+sarad W=200 S=25,50,3,10,0.2,"{'4': np.int64(8), '2': np.int64(1), '1': np.int64(1)}",4
+sarad W=200 S=25,100,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=40,5,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=40,10,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=40,25,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=40,50,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=40,50,1,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=40,50,2,10,0.2,"{'4': np.int64(8), '2': np.int64(2)}",4
+sarad W=200 S=40,50,3,10,0.2,"{'4': np.int64(8), '2': np.int64(1), '1': np.int64(1)}",4
+sarad W=200 S=40,100,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=50,5,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=50,10,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=50,25,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=50,50,0,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=50,50,1,10,0.0,{'4': np.int64(10)},4
+sarad W=200 S=50,50,2,10,0.2,"{'4': np.int64(8), '2': np.int64(2)}",4
+sarad W=200 S=50,50,3,10,0.2,"{'4': np.int64(8), '2': np.int64(1), '1': np.int64(1)}",4
+sarad W=200 S=50,100,0,10,0.0,{'4': np.int64(10)},4
+squeezedet post-join k=2,5,0,20,0.4,"{'BATCHED': np.int64(12), 'SEQUENTIAL': np.int64(8)}",BATCHED
+squeezedet post-join k=2,10,0,20,0.25,"{'BATCHED': np.int64(15), 'SEQUENTIAL': np.int64(5)}",BATCHED
+squeezedet post-join k=2,25,0,20,0.25,"{'BATCHED': np.int64(15), 'SEQUENTIAL': np.int64(5)}",BATCHED
+squeezedet post-join k=2,50,0,20,0.3,"{'BATCHED': np.int64(14), 'SEQUENTIAL': np.int64(6)}",BATCHED
+squeezedet post-join k=2,50,1,20,0.3,"{'BATCHED': np.int64(14), 'SEQUENTIAL': np.int64(6)}",BATCHED
+squeezedet post-join k=2,50,2,20,0.3,"{'BATCHED': np.int64(14), 'SEQUENTIAL': np.int64(6)}",BATCHED
+squeezedet post-join k=2,50,3,20,0.75,"{'SEQUENTIAL': np.int64(15), 'BATCHED': np.int64(5)}",BATCHED
+squeezedet post-join k=2,100,0,20,0.25,"{'BATCHED': np.int64(15), 'SEQUENTIAL': np.int64(5)}",BATCHED
+squeezedet post-join k=4,5,0,20,0.1,"{'BATCHED': np.int64(18), 'SEQUENTIAL': np.int64(2)}",BATCHED
+squeezedet post-join k=4,10,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+squeezedet post-join k=4,25,0,20,0.05,"{'BATCHED': np.int64(19), 'SEQUENTIAL': np.int64(1)}",BATCHED
+squeezedet post-join k=4,50,0,20,0.3,"{'BATCHED': np.int64(14), 'SEQUENTIAL': np.int64(6)}",BATCHED
+squeezedet post-join k=4,50,1,20,0.2,"{'BATCHED': np.int64(16), 'SEQUENTIAL': np.int64(4)}",BATCHED
+squeezedet post-join k=4,50,2,20,0.2,"{'BATCHED': np.int64(16), 'SEQUENTIAL': np.int64(4)}",BATCHED
+squeezedet post-join k=4,50,3,20,0.6,"{'SEQUENTIAL': np.int64(12), 'BATCHED': np.int64(8)}",BATCHED
+squeezedet post-join k=4,100,0,20,0.35,"{'BATCHED': np.int64(13), 'SEQUENTIAL': np.int64(7)}",BATCHED
+squeezedet post-join k=8,5,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+squeezedet post-join k=8,10,0,20,0.0,{'BATCHED': np.int64(20)},BATCHED
+squeezedet post-join k=8,25,0,20,0.05,"{'BATCHED': np.int64(19), 'SEQUENTIAL': np.int64(1)}",BATCHED
+squeezedet post-join k=8,50,0,20,0.3,"{'BATCHED': np.int64(14), 'SEQUENTIAL': np.int64(6)}",BATCHED
+squeezedet post-join k=8,50,1,20,0.25,"{'BATCHED': np.int64(15), 'SEQUENTIAL': np.int64(5)}",BATCHED
+squeezedet post-join k=8,50,2,20,0.2,"{'BATCHED': np.int64(16), 'SEQUENTIAL': np.int64(4)}",BATCHED
+squeezedet post-join k=8,50,3,20,0.6,"{'SEQUENTIAL': np.int64(12), 'BATCHED': np.int64(8)}",BATCHED
+squeezedet post-join k=8,100,0,20,0.4,"{'BATCHED': np.int64(12), 'SEQUENTIAL': np.int64(8)}",BATCHED
