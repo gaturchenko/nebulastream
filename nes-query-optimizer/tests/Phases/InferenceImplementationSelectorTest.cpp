@@ -410,10 +410,10 @@ TEST_F(InferenceImplementationSelectorTest, LatencySloFractionLeavesRoomForUnpro
     EXPECT_EQ(getSelectedBatchSize(strictSelector.apply(createWindowedInferencePlan(createSlidingWindow(200, 10)))), 8);
 }
 
-/// Window of 35 ms, stride 10 ms: candidates up to 4. Batch 1 (9.5 ms, utilization 0.95) and batch 2 (17 ms, 0.85) exceed the
-/// default maximum utilization of 0.8; only batch 4 (20 ms, 0.5) keeps up, although its first result takes 50 ms and misses the 31.5 ms SLO.
+/// Window of 35 ms, stride 10 ms: candidates up to 4. Batch 1 (9.5 ms, utilization 0.95) and batch 2 (17.5 ms, 0.875) exceed the
+/// default maximum utilization of 0.85; only batch 4 (20 ms, 0.5) keeps up, although its first result takes 50 ms and misses the 31.5 ms SLO.
 /// Falling behind would let the latency grow without bound, so batch 4 is selected. Allowing a utilization of 0.9 admits batch 2,
-/// which keeps up and meets the SLO (27 ms).
+/// which keeps up and meets the SLO (27.5 ms).
 TEST_F(InferenceImplementationSelectorTest, PrefersKeepingUpOverTheLatencySlo)
 {
     const auto latency = [](const size_t batchSize) -> std::chrono::nanoseconds
@@ -423,7 +423,7 @@ TEST_F(InferenceImplementationSelectorTest, PrefersKeepingUpOverTheLatencySlo)
             case 1:
                 return std::chrono::microseconds{9500};
             case 2:
-                return std::chrono::microseconds{17000};
+                return std::chrono::microseconds{17500};
             default:
                 return std::chrono::microseconds{20000};
         }

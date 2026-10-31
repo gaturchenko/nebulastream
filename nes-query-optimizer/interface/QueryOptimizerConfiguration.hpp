@@ -107,7 +107,7 @@ public:
 
     FloatOption inferenceMaxUtilization
         = {"inference_max_utilization",
-           "0.8",
+           "0.85",
            "Largest fraction of the time between two batches that OPTIMIZER_CHOOSES lets a batched invocation occupy. A batch size "
            "above it does not keep up with the window results: the headroom absorbs the queueing that makes latency diverge as the "
            "utilization approaches 1."};
@@ -142,7 +142,7 @@ public:
         = {"post_join_inference_minimum_speedup",
            "1.1",
            "Minimum speedup of one batch-k invocation over k single-tuple invocations for which OPTIMIZER_CHOOSES selects "
-           "post-join batching. The margin covers the batching overhead that is not part of the profiled model invocation."};
+           "post-join batching. The margin guards against noise in the profile: a smaller predicted gain may not materialize."};
 
     UIntOption inferenceProfilingWarmupIterations
         = {"inference_profiling_warmup_iterations", "10", "Unmeasured model invocations per batch size before profiling."};
