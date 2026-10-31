@@ -4,3 +4,4 @@
 [submodule "scripts/benchmarking/e2e/navi"]
 	path = scripts/benchmarking/e2e/navi
 	url = git@github.com:gaturchenko/navi
+	branch = master
