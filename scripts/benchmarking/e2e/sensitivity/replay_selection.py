@@ -14,7 +14,7 @@ Writes to --output-dir:
   post_join_sweep.csv       per minimum speedup: wrong decisions and cost regret, per platform.
   post_join_overhead.csv    per configuration: measured minus profiled cost of both plans.
   memory_sweep.csv          per model: the budget fractions at which the deployment changes, assessed and measured.
-  replay_summary.csv   the ranges for the paper's table.
+  replay_summary.csv        the ranges for the paper's table.
 
     ./replay_selection.py --data-dir scripts/benchmarking/figures/data
 """

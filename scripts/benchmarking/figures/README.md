@@ -217,3 +217,29 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   a large pool's growth would swamp the difference; Waymo runs at 5 frames/s, the rate at which the
   Pi keeps up with both models in one query. Raw results: `~/navi/results/model_memory` (the failed
   10 frames/s Waymo runs in `waymo-10fps/`).
+- `sensitivity/` — sensitivity of the implementation selection (Table V and the subsection on it; `e2e/sensitivity/`), no
+  figure. `selection_rules.py` restates the optimizer's rules in Python, so that a decision can be recomputed from a profile for
+  other parameter values. All Pi runs use 2 worker threads and OpenVINO 1 stream x 4 threads, 3 repetitions of 60 s, and none was
+  throttled (`run_pi_sensitivity.sh`, then `run_pi_sensitivity_knee.sh`; `process_sensitivity.py` must run on the Pi, as it needs
+  the raw runs). `u_max` defaulted to 0.8 during these runs and was raised to 0.85 because of them; the runs keep the values they
+  ran with, and the CSVs that replay a default use 0.85.
+  - Replay of the existing experiments (`replay_selection.py --data-dir scripts/benchmarking/figures/data`): 45 batch sizes and 36
+    post-join plans, replayed for `f`, `u_max`, a t(B) error and σ with each deployment's own logged profile, with the measured
+    outcome of every alternative: `batch_size_sweep.csv`, `batch_size_residuals.csv`, `post_join_sweep.csv`,
+    `post_join_overhead.csv`, `memory_sweep.csv`, and the ranges in `replay_summary.csv`. The script aborts if the replay does
+    not reproduce the logged decisions.
+  - SARAD at a 200 ms window (CWRU's geometry) and slides of 20-50 ms, fixed batch sizes and OPTIMIZER_CHOOSES at `u_max` 0.8 and
+    0.9 (`sarad`), plus fixed batch sizes 4 and 8 at slides of 16-19 ms, where batch size 4 stops keeping up (`sarad_knee`). The
+    knee slides have no profile of their own: `replay_knee.py` replays those of 20 and 25 ms, whose candidates are the same, and
+    writes `knee_sweep.csv`, the source of the `u_max` range. It reads the aggregates, so it runs here.
+  - N-BEATS at windows of 37.5, 150 and 300 ms (`nbeats_w37`, `nbeats_w150`, `nbeats_w300`), the same 75 event-time values
+    replayed at 2, 0.5 and 0.25 times the speed, with `inference_replay_speedup` matching; OPTIMIZER_CHOOSES runs once per slide,
+    as its choice is a pure function of the profile. Together with SARAD, these are
+    `sensitivity_{runs,summary,profiles}.csv`, `sarad_sweep.csv` and `window_residuals.csv`.
+  - Profile stability (`run_profile_stability.sh`, `process_profile_stability.py`): `nes-model-profiler` as a fresh process per
+    repetition, with 5-100 measured invocations on an idle worker and 50 with 1-3 busy cores (one `yes` per core), 320 profiles on
+    the Pi and 560 on so015 pinned to 4 cores: `{pi,x86}_profile_stability_{spread,decisions}.csv`. The busy-core rows of the
+    x86 files are not plain contention: one `yes` inside the pinned cores makes MHAtt-RNN ~25% *faster*, one outside changes
+    nothing, and the cause is unknown, so they should not be quoted for 1-2 busy cores; the Pi shows no such effect.
+
+  Raw results: `~/navi/results/sensitivity` on the Pi, `~/navi-x86/results/sensitivity` on so015.
