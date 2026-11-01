@@ -29,6 +29,7 @@ which is how the earlier versions ended up at 3-5 pt.
 | `plot_batch_rate_throughput.py` | `batch-rate-throughput.pdf` (full width, both panels), `batch-rate-throughput-column.pdf` (both panels stacked, one column) | as the two above |
 | `plot_post_join.py` | `post-join-choice.pdf`, `post-join-speedup.pdf` | `data/post_join/post_join_{runs,decisions,pilot_summary}_{x86,pi}.csv` |
 | `plot_model_memory.py` | `model-memory.pdf`, `model-memory-two-models.pdf`, `model-memory-panels.pdf` (SqueezeDet, Segmenter and SARAD left, two-model query right), `model-memory-table.tex` | `data/model_memory/model_memory.csv` |
+| `plot_sensitivity.py` | `sensitivity-f.pdf`, `sensitivity-umax.pdf`, `sensitivity-error.pdf` (the selected batch size at each value, N-BEATS left, SARAD right), `sensitivity-sigma.pdf` (predicted vs. measured speedup per post-join configuration); not in the paper | `data/sensitivity/{batch_size_sweep,replay_summary,knee_sweep}.csv`, `data/post_join/post_join_{runs,decisions}_{x86,pi}.csv` |
 
 ## Running
 
@@ -217,8 +218,8 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   a large pool's growth would swamp the difference; Waymo runs at 5 frames/s, the rate at which the
   Pi keeps up with both models in one query. Raw results: `~/navi/results/model_memory` (the failed
   10 frames/s Waymo runs in `waymo-10fps/`).
-- `sensitivity/` — sensitivity of the implementation selection (Table V and the subsection on it; `e2e/sensitivity/`), no
-  figure. `selection_rules.py` restates the optimizer's rules in Python, so that a decision can be recomputed from a profile for
+- `sensitivity/` — sensitivity of the implementation selection (Table V and the subsection on it; `e2e/sensitivity/`).
+  `selection_rules.py` restates the optimizer's rules in Python, so that a decision can be recomputed from a profile for
   other parameter values. All Pi runs use 2 worker threads and OpenVINO 1 stream x 4 threads, 3 repetitions of 60 s, and none was
   throttled (`run_pi_sensitivity.sh`, then `run_pi_sensitivity_knee.sh`; `process_sensitivity.py` must run on the Pi, as it needs
   the raw runs). `u_max` defaulted to 0.8 during these runs and was raised to 0.85 because of them; the runs keep the values they
@@ -231,7 +232,8 @@ reruns (OpenVINO at `num_streams=0`, no cooling), in the same layout as `data/` 
   - SARAD at a 200 ms window (CWRU's geometry) and slides of 20-50 ms, fixed batch sizes and OPTIMIZER_CHOOSES at `u_max` 0.8 and
     0.9 (`sarad`), plus fixed batch sizes 4 and 8 at slides of 16-19 ms, where batch size 4 stops keeping up (`sarad_knee`). The
     knee slides have no profile of their own: `replay_knee.py` replays those of 20 and 25 ms, whose candidates are the same, and
-    writes `knee_sweep.csv`, the source of the `u_max` range. It reads the aggregates, so it runs here.
+    writes `knee_sweep.csv`, per value of `f`, `u_max` and the t(B) error over all slides; it prints SARAD's ranges of Table V.
+    It reads the aggregates, so it runs here.
   - N-BEATS at windows of 37.5, 150 and 300 ms (`nbeats_w37`, `nbeats_w150`, `nbeats_w300`), the same 75 event-time values
     replayed at 2, 0.5 and 0.25 times the speed, with `inference_replay_speedup` matching; OPTIMIZER_CHOOSES runs once per slide,
     as its choice is a pure function of the profile. Together with SARAD, these are
