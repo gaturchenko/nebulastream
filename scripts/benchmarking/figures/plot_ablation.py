@@ -229,13 +229,13 @@ def draw_latency_throughput(best: pd.DataFrame, *, order, figsize, label_fs, tic
 
 def plot_e2e_audio(best: pd.DataFrame) -> None:
     """MUSAN / MHAtt-RNN ablation (log latency axis, 1 s sliding window)."""
-    FIGSIZE = (COLUMN_WIDTH, 1.35)
+    FIGSIZE = (COLUMN_WIDTH, 1.1)
     LABEL_FS = 8.5
     TICK_FS = 7
     SPEEDUP_FS = 7
     LEGEND_FS = 7.5
     BAR_WIDTH = 0.4
-    ADJUST = dict(left=0.12, right=0.99, bottom=0.15, top=0.83, wspace=0.5)
+    ADJUST = dict(left=0.12, right=0.99, bottom=0.19, top=0.80, wspace=0.5)
     WINDOW_MS = 1_000
     LOG_BOTTOM = 100  # keeps the window line clear of the axis bottom
     ORDER = ["UDF", "ST", "ST+Cache", "Batch", "Batch+Dedup",

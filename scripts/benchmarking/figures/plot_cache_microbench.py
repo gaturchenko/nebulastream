@@ -61,7 +61,7 @@ def fmt_bytes(b: int) -> str:
 def plot_cache_scaling(agg: pd.DataFrame) -> None:
     # Drawn at the size it is printed at, one column of the paper (3.5 in), so every font size is the size on the page. The
     # paper's captions are 8 pt; nothing here goes below 7 pt.
-    FIGSIZE = (3.5, 1.6)
+    FIGSIZE = (3.5, 1.3)
     LABEL_FS = 8.5
     TICK_FS = 7.5
     LEGEND_FS = 7
@@ -98,7 +98,7 @@ def plot_cache_scaling(agg: pd.DataFrame) -> None:
     ax.minorticks_off()
     ax.tick_params(axis="both", pad=2, length=2.5)
     ax.set_xlabel("Threads", fontsize=LABEL_FS, labelpad=2)
-    ax.set_ylabel(r"Throughput Scaling [x]", fontsize=LABEL_FS, labelpad=2)
+    ax.set_ylabel(r"Scaling [x]", fontsize=LABEL_FS, labelpad=2)
     ax.grid(alpha=0.25, linewidth=0.4, which="major")
 
     scope_handles = [
@@ -122,7 +122,7 @@ def plot_cache_scaling(agg: pd.DataFrame) -> None:
         title="Key size", title_fontsize=LEGEND_FS,
     )
 
-    fig.subplots_adjust(left=0.13, right=0.78, bottom=0.21, top=0.97)
+    fig.subplots_adjust(left=0.13, right=0.78, bottom=0.255, top=0.97)
     save(fig, "caching-microbench.pdf", pad_inches=0.03)
 
 

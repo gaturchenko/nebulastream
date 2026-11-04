@@ -80,8 +80,8 @@ PANEL_SIZE = (4.6, 3.4)
 # Each panel on its own is drawn at the size the paper prints it, one column (3.5 in), so every font size is the size on
 # the page. The paper's captions are 8 pt; nothing here goes below 7 pt.
 PANEL_STYLE = dict(label_fs=8, tick_fs=7.5, legend_fs=7.5, labelpad=2, tickpad=2, linewidth=1.2, markersize=3.5,
-                   identity_width=0.8, errorbar_width=0.6, capsize=1.8, throughput_label="Throughput [frames/s]")
-PRINTED_PANEL_SIZE = (3.5, 1.35)
+                   identity_width=0.8, errorbar_width=0.6, capsize=1.8, throughput_label="Throughput\n[frames/s]")
+PRINTED_PANEL_SIZE = (3.0, 1.1)
 
 
 def draw_throughput(ax, data: dict, style: dict = STYLE) -> None:
@@ -124,7 +124,7 @@ def plot_rate_sweep_panels(data: dict) -> None:
         fig, ax = plt.subplots(figsize=PRINTED_PANEL_SIZE)
         draw(ax, data, PANEL_STYLE)
         ax.legend(loc=legend_loc, frameon=False, fontsize=PANEL_STYLE["legend_fs"], handlelength=1.6, labelspacing=0.3,
-                  borderaxespad=0.2)
+                  borderaxespad=0.2, ncol=2, columnspacing=1.0)
         fig.tight_layout(pad=0.2)
         save(fig, f"systems-rate-sweep-{name}.pdf")
 
