@@ -13,6 +13,9 @@ Everything needed to regenerate the figures is in [`scripts/benchmarking/figures
 
 ## Experiment scripts
 
+[`scripts/README.md`](scripts/README.md) lists, for every figure and table, the script that runs the experiment, the
+hardware it ran on, and how long it takes.
+
 The drivers and query definitions behind the data are in
 [`scripts/benchmarking/e2e`](scripts/benchmarking/e2e), one subdirectory per experiment:
 
