@@ -1,0 +1,45 @@
+#  Model memory on the Pi (revision §8): OSU RGB frames with NanoDet-Plus-R101, the model of the threading experiment.
+#
+#    :01 baseline -- the same source and decoding, no model
+#    :02 NanoDet-R101
+#
+#  12 frames at 1 frame/s, slow enough that the large model keeps up on the Pi. The frames are fed as decoded, as in the
+#  threading tests, with a pool of 32 buffers, small enough to be in use within the first frames (see waymo.test.tmpl).
+
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.prediction_cache_type: [NONE]
+GlobalConfiguration worker.default_query_execution.inference.use_batch_deduplication: [false]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [32]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1048576]
+GlobalConfiguration worker.default_query_execution.page_size: [16384]
+
+CREATE LOGICAL SOURCE osuRgbSource(frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource TYPE TCP SET(
+    1 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE @ROOT@/datasets/model_memory/osu.csv
+
+CREATE SINK osuFramesVoid(framePreprocessed VARSIZED NOT NULL) TYPE Void;
+CREATE SINK osuDetectionsVoid(detectedObjects VARSIZED NOT NULL) TYPE Void;
+
+CREATE MODEL nanodet ('@ROOT@/models-benchmarking/models/nanodet/nanodet-plus-r101.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (detectedObjects VARSIZED);
+
+# baseline
+SELECT FROM_BASE64(frameBase64) AS framePreprocessed
+FROM osuRgbSource
+INTO osuFramesVoid;
+----
+
+# NanoDet-R101
+SELECT detectedObjects
+FROM MODEL_INFERENCE(nanodet, (
+        SELECT FROM_BASE64(frameBase64) AS framePreprocessed
+        FROM osuRgbSource
+    )
+)
+INTO osuDetectionsVoid;
+----

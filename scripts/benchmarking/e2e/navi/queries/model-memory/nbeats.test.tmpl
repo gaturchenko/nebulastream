@@ -1,0 +1,52 @@
+#  Model memory on the Pi (revision §8): the synthetic series of the source-rate x batch-size experiment with N-BEATS.
+#
+#    :01 baseline -- the same source and sliding window, no model
+#    :02 N-BEATS
+#
+#  10 s of the series at 1000 samples/s, one 75 ms window every 40 ms (the experiment's lowest rate), and single-tuple inference
+#  like every other model here; the buffer settings are those of nbeats_batch_rate.test, with a pool
+#  of 256 buffers, small enough to be in use within the first second (see waymo.test.tmpl).
+
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+GlobalConfiguration worker.default_query_execution.inference.prediction_cache_type: [NONE]
+GlobalConfiguration worker.default_query_execution.inference.use_batch_deduplication: [false]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [4096]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [256]
+
+CREATE LOGICAL SOURCE series(timestamp UINT64 NOT NULL, value FLOAT32 NOT NULL);
+CREATE PHYSICAL SOURCE FOR series TYPE TCP SET(
+    1000 AS `SOURCE`.MOCK_TUPLE_RATE,
+    1 AS `SOURCE`.FLUSH_INTERVAL_MS
+);
+ATTACH FILE @ROOT@/datasets/model_memory/series.csv
+
+CREATE SINK seriesWindowsVoid(payload VARSIZED NOT NULL) TYPE Void;
+CREATE SINK seriesForecastVoid(forecast VARSIZED NOT NULL) TYPE Void;
+
+CREATE MODEL nbeats300 ('@ROOT@/models-benchmarking/models/nbeats/nbeats_size_300_stride_30.onnx')
+INPUT (value_75_ms VARSIZED)
+OUTPUT (forecast VARSIZED);
+
+# baseline
+SELECT value_75_ms AS payload
+FROM (
+    SELECT ARRAY_AGG(value) AS value_75_ms
+    FROM series
+    WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 40 ms)
+)
+INTO seriesWindowsVoid;
+----
+
+# N-BEATS
+SELECT forecast
+FROM MODEL_INFERENCE(nbeats300, (
+        SELECT ARRAY_AGG(value) AS value_75_ms
+        FROM series
+        WINDOW SLIDING(timestamp, SIZE 75 ms, ADVANCE BY 40 ms)
+    )
+)
+INTO seriesForecastVoid;
+----

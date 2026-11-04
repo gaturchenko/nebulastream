@@ -1,0 +1,4 @@
+"optimizer.post_join_inference_strategy": ["BATCHED"]
+"worker.default_query_execution.inference.use_batch_deduplication": [false]
+"worker.default_query_execution.inference.prediction_cache_type": ["NONE"]
+"worker.default_query_execution.inference.openvino_share_compiled_model": [true]

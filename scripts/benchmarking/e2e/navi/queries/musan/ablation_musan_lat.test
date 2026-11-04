@@ -1,0 +1,197 @@
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
+GlobalConfiguration worker.default_query_execution.inference.openvino_num_streams: [1]
+GlobalConfiguration worker.default_query_execution.inference.openvino_inference_num_threads: [4]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [131072]
+GlobalConfiguration worker.default_query_execution.page_size: [16384]
+GlobalConfiguration worker.default_max_inflight_buffers: [16]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [12228]
+
+CREATE LOGICAL SOURCE musanSource0242(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+#CREATE PHYSICAL SOURCE FOR musanSource0242 TYPE File;
+CREATE PHYSICAL SOURCE FOR musanSource0242 TYPE TCP SET(
+  16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/musan/musan-us-gov-0242.csv
+#ATTACH FILE /home/gaturchenko/navi/datasets/musan-60s/musan-us-gov-0242-60s.csv
+
+CREATE LOGICAL SOURCE musanSource0096(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+#CREATE PHYSICAL SOURCE FOR musanSource0096 TYPE File;
+CREATE PHYSICAL SOURCE FOR musanSource0096 TYPE TCP SET(
+  16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/musan/musan-us-gov-0096.csv
+#ATTACH FILE /home/gaturchenko/navi/datasets/musan-60s/musan-us-gov-0096-60s.csv
+
+CREATE LOGICAL SOURCE musanSource0021(timestamp UINT64 NOT NULL, audioSample INT16 NOT NULL);
+#CREATE PHYSICAL SOURCE FOR musanSource0021 TYPE File;
+CREATE PHYSICAL SOURCE FOR musanSource0021 TYPE TCP SET(
+  16000 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/musan/musan-us-gov-0021.csv
+#ATTACH FILE /home/gaturchenko/navi/datasets/musan-60s/musan-us-gov-0021-60s.csv
+
+#CREATE MODEL mhatt_rnn ('/home/gaturchenko/navi/models-benchmarking/models/mhatt-rnn/u192_l2/saved_model')
+CREATE MODEL mhatt_rnn ('/home/gaturchenko/navi/models-benchmarking/models/mhatt-rnn/saved_model')
+INPUT (audio1sec VARSIZED)
+OUTPUT (keywordProb VARSIZED);
+
+#CREATE SINK musanVarsizedVoid(
+#    s0242_keywordProb VARSIZED NOT NULL,
+#    s0096_keywordProb VARSIZED NOT NULL,
+#    s0021_keywordProb VARSIZED NOT NULL
+#) TYPE Void;
+CREATE SINK musanVarsizedLatency(
+    s0242_keywordProb VARSIZED NOT NULL,
+    s0096_keywordProb VARSIZED NOT NULL,
+    s0021_keywordProb VARSIZED NOT NULL,
+    ingestion_time UINT64 NOT NULL
+) TYPE LATENCY SET (
+    'results/latency_timings.csv' AS `SINK`.log_path,
+    'ingestion_time' AS `SINK`.ingest_field
+);
+
+SELECT
+    MHATT_RNN_UDF(musanSource0242.audio1sec) AS s0242_keywordProb,
+    MHATT_RNN_UDF(musanSource0096.audio1sec) AS s0096_keywordProb,
+    MHATT_RNN_UDF(musanSource0021.audio1sec) AS s0021_keywordProb,
+    musanSource0242.ingestion_time AS ingestion_time
+FROM (
+    SELECT *
+    FROM (
+        SELECT *
+        FROM (
+            SELECT
+                start,
+                UINT8(1) AS joinKey0242,
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec,
+                MAX(ingestion_time) AS ingestion_time
+            FROM (
+                SELECT timestamp, audioSample, CURRENT_TIME() AS ingestion_time
+                FROM musanSource0242
+            )
+            WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+        )
+        JOIN (
+            SELECT
+                start,
+                UINT8(1) AS joinKey0096,
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec
+            FROM musanSource0096
+            WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+        )
+        ON joinKey0242 = joinKey0096
+        WINDOW TUMBLING(start, SIZE 333 ms)
+    )
+    JOIN (
+        SELECT
+            start,
+            UINT8(1) AS joinKey0021,
+            ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec
+        FROM musanSource0021
+        WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+    )
+    ON joinKey0242 = joinKey0021
+    WINDOW TUMBLING(start, SIZE 333 ms)
+)
+INTO musanVarsizedLatency;
+----
+
+SELECT
+    musanSource0242.keywordProb AS s0242_keywordProb,
+    musanSource0096.keywordProb AS s0096_keywordProb,
+    musanSource0021.keywordProb AS s0021_keywordProb,
+    musanSource0242.ingestion_time AS ingestion_time
+FROM MODEL_INFERENCE(mhatt_rnn, MODEL_INFERENCE(mhatt_rnn, MODEL_INFERENCE(mhatt_rnn, (
+    SELECT *
+    FROM (
+        SELECT *
+        FROM (
+            SELECT
+                start,
+                UINT8(1) AS joinKey0242,
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec,
+                MAX(ingestion_time) AS ingestion_time
+            FROM (
+                SELECT timestamp, audioSample, CURRENT_TIME() AS ingestion_time
+                FROM musanSource0242
+            )
+            WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+        )
+        JOIN (
+            SELECT
+                start,
+                UINT8(1) AS joinKey0096,
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec
+            FROM musanSource0096
+            WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+        )
+        ON joinKey0242 = joinKey0096
+        WINDOW TUMBLING(start, SIZE 333 ms)
+    )
+    JOIN (
+        SELECT
+            start,
+            UINT8(1) AS joinKey0021,
+            ARRAY_AGG(audioSample / FLOAT32(32767.0)) AS audio1sec
+        FROM musanSource0021
+        WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+    )
+    ON joinKey0242 = joinKey0021
+    WINDOW TUMBLING(start, SIZE 333 ms)
+))))
+INTO musanVarsizedLatency;
+----
+
+Configuration worker.number_of_buffers_in_global_buffer_manager: [16000]
+SELECT
+    musanSource0242.keywordProb AS s0242_keywordProb,
+    musanSource0096.keywordProb AS s0096_keywordProb,
+    musanSource0021.keywordProb AS s0021_keywordProb,
+    musanSource0242.ingestion_time AS ingestion_time
+FROM MODEL_INFERENCE(mhatt_rnn, MODEL_INFERENCE(mhatt_rnn, MODEL_INFERENCE(mhatt_rnn, (
+    SELECT *
+    FROM (
+        SELECT *
+        FROM (
+            SELECT
+                start,
+                UINT8(1) AS joinKey0242,
+                SPECTRAL_GATING(
+                    ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-48.0)
+                ) AS audio1sec,
+                MAX(ingestion_time) AS ingestion_time
+            FROM (
+                SELECT timestamp, audioSample, CURRENT_TIME() AS ingestion_time
+                FROM musanSource0242
+            )
+            WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+        )
+        JOIN (
+            SELECT
+                start,
+                UINT8(1) AS joinKey0096,
+                SPECTRAL_GATING(
+                    ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-48.0)
+                ) AS audio1sec
+            FROM musanSource0096
+            WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+        )
+        ON joinKey0242 = joinKey0096
+        WINDOW TUMBLING(start, SIZE 333 ms)
+    )
+    JOIN (
+        SELECT
+            start,
+            UINT8(1) AS joinKey0021,
+            SPECTRAL_GATING(
+                ARRAY_AGG(audioSample / FLOAT32(32767.0)), FLOAT32(-48.0)
+            ) AS audio1sec
+        FROM musanSource0021
+        WINDOW SLIDING(timestamp, SIZE 1 sec, ADVANCE BY 333 ms)
+    )
+    ON joinKey0242 = joinKey0021
+    WINDOW TUMBLING(start, SIZE 333 ms)
+))))
+INTO musanVarsizedLatency;
+----

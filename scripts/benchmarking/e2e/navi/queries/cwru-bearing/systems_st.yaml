@@ -1,0 +1,2 @@
+"worker.default_query_execution.inference.prediction_cache_type": ["NONE"]
+"worker.default_query_execution.inference.openvino_share_compiled_model": [true]

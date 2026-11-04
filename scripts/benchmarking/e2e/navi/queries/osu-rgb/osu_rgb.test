@@ -1,0 +1,45 @@
+GlobalConfiguration enable_event_trace: [true]
+GlobalConfiguration worker.query_engine.number_of_worker_threads: [2]
+GlobalConfiguration worker.number_of_buffers_in_global_buffer_manager: [512]
+GlobalConfiguration worker.default_query_execution.operator_buffer_size: [1289748]
+
+CREATE LOGICAL SOURCE osuRgbSource(frameBase64 VARSIZED NOT NULL);
+CREATE PHYSICAL SOURCE FOR osuRgbSource TYPE TCP SET(
+  10 AS `SOURCE`.MOCK_TUPLE_RATE
+);
+ATTACH FILE /home/gaturchenko/navi/datasets/osu-rgb/otcbvs_osu_rgb.csv
+
+CREATE SINK osuRgbVarsizedVoid(detectedObjects VARSIZED NOT NULL) TYPE Void;
+
+CREATE SINK osuRgbVarsizedHttp(framePreprocessed VARSIZED NOT NULL) TYPE Http SET(
+    8080 AS `SINK`.port,
+    'nanodet' AS `SINK`.`model`,
+    'results/torchserve_timings.csv' AS `SINK`.log_path
+);
+
+CREATE MODEL nanodet ('/home/gaturchenko/navi/models-benchmarking/models/nanodet/nanodet.onnx')
+INPUT (framePreprocessed VARSIZED)
+OUTPUT (detectedObjects VARSIZED);
+
+# UDF
+SELECT NANODET_UDF(
+    RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(320), UINT32(320))
+) AS detectedObjects
+FROM osuRgbSource
+INTO osuRgbVarsizedVoid;
+----
+
+# NES
+SELECT detectedObjects FROM MODEL_INFERENCE(nanodet, (
+        SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(320), UINT32(320)) AS framePreprocessed
+        FROM osuRgbSource
+    )
+)
+INTO osuRgbVarsizedVoid;
+----
+
+# TorchServe
+SELECT RESIZE_IMAGE(FROM_BASE64(frameBase64), UINT32(320), UINT32(320)) AS framePreprocessed
+FROM osuRgbSource
+INTO osuRgbVarsizedHttp;
+----

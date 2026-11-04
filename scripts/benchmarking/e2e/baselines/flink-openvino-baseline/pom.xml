@@ -1,0 +1,161 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>benchmark</groupId>
+    <artifactId>flink-openvino-baseline</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <properties>
+        <maven.compiler.release>17</maven.compiler.release>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <flink.version>2.2.0</flink.version>
+
+        <native.build.type>Release</native.build.type>
+
+        <!-- Defaults assume this repo is checked out as:
+             nebulastream/baselines/flink-openvino-baseline
+        -->
+        <vcpkg.root>${project.basedir}/../../vcpkg-repository</vcpkg.root>
+        <vcpkg.triplet>x64-linux-none-local</vcpkg.triplet>
+        <vcpkg.installed.dir>${project.basedir}/../../cmake-build-release/vcpkg_installed</vcpkg.installed.dir>
+        <vcpkg.prefix>${vcpkg.installed.dir}/${vcpkg.triplet}</vcpkg.prefix>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-streaming-java</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-clients</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-api-java-bridge</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-planner-loader</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-files</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.11.0</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>17</release>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>cmake-configure</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cmake</executable>
+                            <arguments>
+                                <argument>-S</argument>
+                                <argument>${project.basedir}/native</argument>
+                                <argument>-B</argument>
+                                <argument>${project.build.directory}/native-build</argument>
+
+                                <argument>-G</argument>
+                                <argument>Ninja</argument>
+
+                                <argument>-DCMAKE_BUILD_TYPE=${native.build.type}</argument>
+                                <argument>-DCMAKE_TOOLCHAIN_FILE=${vcpkg.root}/scripts/buildsystems/vcpkg.cmake</argument>
+                                <argument>-DVCPKG_TARGET_TRIPLET=${vcpkg.triplet}</argument>
+                                <argument>-DCMAKE_PREFIX_PATH=${vcpkg.prefix}</argument>
+                                <argument>-DOpenVINO_DIR=${vcpkg.prefix}/share/openvino</argument>
+                                <argument>-Dtbb_DIR=${vcpkg.prefix}/share/tbb</argument>
+                                <argument>-Dpugixml_DIR=${vcpkg.prefix}/share/pugixml</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+
+                    <execution>
+                        <id>cmake-build</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>cmake</executable>
+                            <arguments>
+                                <argument>--build</argument>
+                                <argument>${project.build.directory}/native-build</argument>
+                                <argument>-j</argument>
+                                <argument>26</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-native-libs</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/native-libs</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.build.directory}/native-build</directory>
+                                    <includes>
+                                        <include>libflink_openvino_bridge.so</include>
+                                        <include>libflink_openvino_bridge_jni.so</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

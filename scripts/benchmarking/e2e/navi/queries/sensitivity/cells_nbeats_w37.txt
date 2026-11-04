@@ -1,0 +1,12 @@
+01 fixed_16 3
+01 fixed_32 3
+01 chooses_u0.8_x2.0 1
+02 fixed_8 3
+02 fixed_16 3
+02 chooses_u0.8_x2.0 1
+03 fixed_4 3
+03 fixed_8 3
+03 chooses_u0.8_x2.0 1
+04 fixed_2 3
+04 fixed_4 3
+04 chooses_u0.8_x2.0 1
