@@ -43,3 +43,47 @@ The queries of the threading, ablation, and cache experiments are system tests u
 | Physical inference operator, prediction caches | [`nes-physical-operators/src/Inference`](nes-physical-operators/src/Inference) |
 | Optimizer rules and implementation selection | [`nes-query-optimizer`](nes-query-optimizer) (`InferenceImplementationSelector`, `Rules/Semantic/*Infer*`) |
 | Inference profiling and lowering | [`nes-query-compiler`](nes-query-compiler) (`InferenceProfiling`, `LowerToPhysicalInferModel`) |
+
+## Building
+
+Regenerating the figures needs no build, only Python (see
+[`scripts/benchmarking/figures/README.md`](scripts/benchmarking/figures/README.md)). Re-running the experiments needs
+NebulaStream built for each platform they ran on: x86-64 for the server and laptop, aarch64 for the Raspberry Pi. What
+follows is how we built it, the details depend on the host.
+
+**Toolchain.** clang 19 with `clang-tools-19` (for `clang-scan-deps`), CMake 3.28 or newer, Ninja, a Rust toolchain (for
+`nes-network`), a Java runtime (for the ANTLR parser generator), and NebulaStream's prebuilt LLVM/MLIR 21 for the target
+architecture (`nes-llvm-21-with-fix-173075-*` from the `vmlir-21-with-fix-173075` release of
+[nebulastream/clang-binaries](https://github.com/nebulastream/clang-binaries)). All other dependencies, OpenVINO and IREE
+included, are built by vcpkg from the manifest in `vcpkg/` during the first CMake configure step, which takes a few hours.
+
+On x86-64 or aarch64 Linux (we used Ubuntu 24.04):
+
+```sh
+export LLVM_TOOLCHAIN_VERSION=19   # vcpkg's toolchain looks for clang++-$LLVM_TOOLCHAIN_VERSION
+cmake -S . -B cmake-build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 \
+    -DUSE_LIBCXX_IF_AVAILABLE=OFF -DUSE_LOCAL_MLIR=ON -DCMAKE_PREFIX_PATH=/path/to/nes-llvm
+cmake --build cmake-build-release --target systest nes-single-node-worker nes-model-profiler \
+    BatchInferenceMicrobenchmark PredictionCacheScopeMicrobenchmark
+```
+
+On aarch64, vcpkg also needs `VCPKG_FORCE_SYSTEM_BINARIES=1` and then uses the system CMake, which must be 3.31 or newer.
+The Pi needs only `systest`, `nes-single-node-worker` and `nes-model-profiler`, placed in `bin/` of its working directory next to
+the contents of [`scripts/benchmarking/e2e/navi`](scripts/benchmarking/e2e/navi). The binaries should be built on a distribution whose glibc is
+not newer than glibc 2.41.
+
+**Datasets and models.** Building `systest` also fetches all datasets and models the experiments use, through CMake's
+`ExternalData`, from the TU Berlin cloud shares listed in
+[`nes-systests/systest/CMakeLists.txt`](nes-systests/systest/CMakeLists.txt). Each file is identified and verified by the MD5
+hash in its `.md5` file, under [`nes-systests/testdata/large/`](nes-systests/testdata/large) (datasets) and
+[`nes-systests/testdata/model/`](nes-systests/testdata/model) (models). The configure step prints where the files end up.
+
+**Model import and baselines.**
+
+- Importing models needs OpenVINO's `ovc` 2025.3 on the `PATH`.
+- On the Pi, the Python environment of the drivers, TorchServe and `ovc` is
+  [`scripts/benchmarking/e2e/navi/models-benchmarking/requirements.txt`](scripts/benchmarking/e2e/navi/models-benchmarking/requirements.txt).
+- The Flink + OpenVINO baseline is built with Maven and JDK 17, and its native OpenVINO bridge against vcpkg's OpenVINO on x86
+  or against the `openvino` Python wheel on the Pi; see its
+  [README](scripts/benchmarking/e2e/baselines/flink-openvino-baseline/README.md).

@@ -11,7 +11,7 @@
 #   MODELS="squeezedet=models-benchmarking/models/squeezedet/squeezedet.onnx" SESSIONS="1:4" ./scripts/run_post_join_pilot.sh 3
 #   ./scripts/summarize_post_join_pilot.py results/post_join_pilot      # afterwards
 #
-# Run from ~/navi with bin/nes-model-profiler deployed (scripts/arm-build/submit_arm_build.sh --targets "nes-model-profiler").
+# Run from ~/navi with bin/nes-model-profiler deployed (built for aarch64 alongside systest).
 # Every repetition of a cell is its own profiler run with its own CSV, and finished ones are skipped, so re-invoking after an
 # interruption resumes. Before each repetition the SoC cools below COOLDOWN_C: a profiling run keeps the Pi under full load
 # for minutes, and past its 80 C soft limit the firmware caps the clock mid-run, which would skew t(1) against t(k).
