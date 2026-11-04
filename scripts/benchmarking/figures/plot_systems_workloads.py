@@ -1,11 +1,8 @@
 """Systems comparison across all three end-to-end workloads (Raspberry Pi).
 
-Produces three figures.
-
-e2e-systems-workloads.pdf: P95 end-to-end latency of NAVI vs. the Flink+OpenVINO UDF
-baseline vs. TorchServe external serving, on Waymo/SqueezeDet, CWRU/SARAD and MUSAN/MHAtt-RNN.
-It supersedes the single-workload e2e-systems.pdf, which the reviewers asked us to extend to all
-three workloads; that figure and its data are left in place. TorchServe's P95 bar is split into
+Produces e2e-systems-workloads-column.pdf, the paper's Figure 1 on its first page, one column wide:
+P95 end-to-end latency of NAVI vs. the Flink+OpenVINO UDF baseline vs. TorchServe external serving,
+on Waymo/SqueezeDet, CWRU/SARAD and MUSAN/MHAtt-RNN. TorchServe's P95 bar is split into
 inference and serving boundary in the proportions of its MEAN breakdown (see below for why the
 split is measured on means); the caption has to say so, because the shares at the tail need not
 match the shares on average.
@@ -35,21 +32,14 @@ configurations and the whisker spans min-max. Single runs are not enough on thes
 CWRU Flink cell produced 97 ms and 236 ms inference medians on consecutive runs, and a single run
 had TorchServe's CWRU P95 beating NAVI's, which repetitions reverse.
 
-e2e-systems-workloads-column.pdf: the same figure drawn one column wide, which is the paper's
-Figure 1 on its first page. Both versions share draw_e2e_workloads and differ only in their Layout.
-
-e2e-systems-workloads-split.pdf: the same comparison on MEAN latency, with TorchServe's bar split
-into the inference it performs and the cost of reaching it over the serving boundary. It exists so
-the cost breakdown the revision asks for does not need a figure of its own.
-
-The split has to be drawn on means, not on P95. Stage times only add up in expectation: the P95 of
+TorchServe's split has to be measured on means, not on P95. Stage times only add up in expectation: the P95 of
 a sum is not the sum of the stage P95s, so segmenting a P95 bar by stage would assume every stage
 hits its tail on the same request and would overstate the total. Two of the four stages are also
 mean-only at the source -- they come from cumulative Prometheus counters divided by the request
 count, so no distribution exists to take a percentile of. Reporting the mean here changes no
 conclusion: the mean and P95 rank the three systems identically on all three workloads.
 
-Inference sits at the BOTTOM of the TorchServe bar (in both figures) on purpose: the solid part is then what
+Inference sits at the BOTTOM of the TorchServe bar on purpose: the solid part is then what
 TorchServe would cost if the boundary were free, which can be read straight across against NAVI's
 bar beside it.
 
@@ -103,7 +93,7 @@ def load_torchserve_split() -> dict:
 
 
 class Layout(NamedTuple):
-    """Sizes and spacing of the P95 figure; the defaults are the full-width version's."""
+    """Sizes and spacing of the P95 figure."""
     figsize: tuple
     label_fs: float
     tick_fs: float
@@ -120,7 +110,7 @@ class Layout(NamedTuple):
     legend_ncol: int = 5
     legend_anchor: float = -0.07  # y of the legend's lower edge, in figure coordinates
     pad_inches: float = 0.1
-    # Only set for the column-width version; None keeps matplotlib's default.
+    # None keeps matplotlib's default.
     title_pad: float | None = None
     ylabel_pad: float | None = None
     tick_length: float | None = None
@@ -220,25 +210,10 @@ def draw_e2e_workloads(data: dict, share: dict, flink_steady: dict, layout: Layo
     return fig
 
 
-def plot_e2e_workloads(data: dict, share: dict, flink_steady: dict) -> None:
-    """Full page width: e2e-systems-workloads.pdf."""
-    layout = Layout(
-        figsize=(9.5, 3.0),
-        label_fs=15,
-        tick_fs=12,
-        value_fs=10,
-        legend_fs=11.5,
-        title_fs=13,
-    )
-    fig = draw_e2e_workloads(data, share, flink_steady, layout)
-    save(fig, "e2e-systems-workloads.pdf", pad_inches=layout.pad_inches)
-
-
 def plot_e2e_workloads_column(data: dict, share: dict, flink_steady: dict) -> None:
     """One column wide, for Figure 1 on the paper's first page: e2e-systems-workloads-column.pdf.
 
-    The full-width figure scaled to a 3.5 in column would set its ticks at ~4.4 pt, so this one is
-    drawn at the column's size with fonts near the 8 pt of IEEEtran captions. The five legend entries
+    Drawn at the column's size with fonts near the 8 pt of IEEEtran captions. The five legend entries
     do not fit one row at this width and take two: the systems, then the two hatched parts.
     """
     layout = Layout(
@@ -271,74 +246,9 @@ def plot_e2e_workloads_column(data: dict, share: dict, flink_steady: dict) -> No
     save(fig, "e2e-systems-workloads-column.pdf", pad_inches=layout.pad_inches)
 
 
-def plot_e2e_split(data: dict, split: dict) -> None:
-    """The workloads comparison on mean latency, opening up TorchServe's bar."""
-    FIGSIZE = (9.5, 3.0)
-    LABEL_FS = 15
-    TICK_FS = 12
-    VALUE_FS = 10
-    LEGEND_FS = 11.5
-    TITLE_FS = 13
-    BAR_WIDTH = 0.62
-    HEADROOM = 1.30
-
-    setup_style()
-    fig, axes = plt.subplots(1, len(WORKLOADS), figsize=FIGSIZE)
-
-    for ax, workload in zip(axes, WORKLOADS):
-        x = np.arange(len(ORDER))
-        medians = [data[(workload, s)][0] for s in ORDER]
-        lower = [data[(workload, s)][0] - data[(workload, s)][1] for s in ORDER]
-        upper = [data[(workload, s)][2] - data[(workload, s)][0] for s in ORDER]
-        inference, boundary = split[workload]
-
-        for index, system in enumerate(ORDER):
-            if system != TORCHSERVE:
-                ax.bar(index, medians[index], width=BAR_WIDTH, color=COLOR[system],
-                       edgecolor="black", linewidth=0.8)
-                continue
-            # Solid = the inference TorchServe performs, so its height reads straight across
-            # against NAVI's bar; hatched = what reaching it over the boundary adds.
-            ax.bar(index, inference, width=BAR_WIDTH, color=COLOR[system],
-                   edgecolor="black", linewidth=0.8)
-            ax.bar(index, boundary, width=BAR_WIDTH, bottom=inference, facecolor="white",
-                   edgecolor=COLOR[system], linewidth=0.8, hatch="///")
-
-        ax.errorbar(x, medians, yerr=[lower, upper], fmt="none", ecolor="black",
-                    elinewidth=0.9, capsize=3)
-        for index, value in enumerate(medians):
-            ax.text(index, value + upper[index], f"{value:.0f}", ha="center", va="bottom",
-                    fontsize=VALUE_FS)
-
-        ax.set_title(f"{WORKLOAD_TITLE[workload]}\n{{\\small {WORKLOAD_RATE[workload]}}}",
-                     fontsize=TITLE_FS)
-        ax.set_xticks(x)
-        ax.set_xticklabels([])
-        ax.set_ylim(0, max(np.array(medians) + np.array(upper)) * HEADROOM)
-        ax.tick_params(axis="y", labelsize=TICK_FS)
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.yaxis.grid(True, linestyle="--", alpha=0.4)
-        ax.set_axisbelow(True)
-
-    axes[0].set_ylabel("Mean latency [ms]", fontsize=LABEL_FS)
-
-    handles = [plt.Rectangle((0, 0), 1, 1, facecolor=COLOR[s], edgecolor="black", linewidth=0.8)
-               for s in ORDER]
-    handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=COLOR[TORCHSERVE],
-                                 linewidth=0.8, hatch="///"))
-    labels = [LABEL[s] for s in ORDER] + ["serving boundary"]
-    fig.legend(handles, labels, loc="lower center", ncol=len(labels), frameon=False,
-               fontsize=LEGEND_FS, bbox_to_anchor=(0.5, -0.07))
-
-    fig.tight_layout()
-    save(fig, "e2e-systems-workloads-split.pdf", pad_inches=0.1)
-
-
 if __name__ == "__main__":
     split = load_torchserve_split()
     p95 = load_stat("p95")
     flink_full, flink_steady = load_flink_startup()
     p95.update({(workload, FLINK): value for workload, value in flink_full.items()})
-    plot_e2e_workloads(p95, inference_share(split), flink_steady)
     plot_e2e_workloads_column(p95, inference_share(split), flink_steady)
-    plot_e2e_split(load_stat("mean"), split)

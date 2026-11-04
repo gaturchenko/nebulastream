@@ -158,32 +158,6 @@ def breakdown_table(reps_dir: Path, tuned: dict[str, Path]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def memory_table(memory_dir: Path) -> pd.DataFrame:
-    """Peak RSS of the Flink job JVM, private vs. shared compiled model.
-
-    The lane count is read back out of the run rather than restated: the native engine logs once
-    per lane when sharing is on ("compiled, shared with later lanes" plus one "reusing" per extra
-    lane), so the hit count IS the number of lanes that shared a model.
-
-    Peak RSS is of the whole single-JVM MiniCluster, so the absolute numbers include heap and
-    framework overhead; it is the DIFFERENCE between the two modes that is attributable to the
-    compiled models.
-    """
-    df = pd.read_csv(memory_dir / "flink_memory.csv")
-    rows = []
-    for workload in WORKLOADS:
-        here = df[df["workload"] == workload]
-        private = here[here["mode"] == "private"]["peak_rss_mb"]
-        shared = here[here["mode"] == "shared"]
-        if private.empty or shared.empty:
-            raise SystemExit(f"missing private/shared runs for {workload}")
-        lanes = int(shared["share_log_hits"].median())
-        rows.append({"workload": workload, "lanes": lanes,
-                     "private_peak_rss_mb": private.median(),
-                     "shared_peak_rss_mb": shared["peak_rss_mb"].median()})
-    return pd.DataFrame(rows)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reps", type=Path, required=True,
@@ -191,9 +165,6 @@ def main() -> None:
     parser.add_argument("--sweep", type=Path, required=True,
                         help="directory of <system>_waymo_r<rate>_rep<N>.csv "
                              "(run_systems_rate_sweep.sh)")
-    parser.add_argument("--memory", type=Path,
-                        help="directory holding flink_memory.csv (run_flink_memory.sh). Optional: "
-                             "omit it to leave the existing flink_memory.csv aggregate alone.")
     parser.add_argument("--tuned", nargs="+", default=[], metavar="WORKLOAD=DIR",
                         help="tuning output per workload (run_pi_cwru_tuning.sh, run_pi_systems_tuning.sh); "
                              "its final/ runs replace the published operating point in the workload "
@@ -212,11 +183,6 @@ def main() -> None:
                         ("torchserve_breakdown.csv", breakdown_table(args.reps.expanduser(), tuned))):
         frame.to_csv(out / name, index=False, float_format="%.4f")
         print(f"wrote {out / name}  ({len(frame)} rows)")
-
-    if args.memory:
-        frame = memory_table(args.memory.expanduser())
-        frame.to_csv(out / "flink_memory.csv", index=False, float_format="%.1f")
-        print(f"wrote {out / 'flink_memory.csv'}  ({len(frame)} rows)")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ Everything needed to regenerate the figures is in [`scripts/benchmarking/figures
 
 - `output/` — the rendered figures (PDF) as they appear in the paper.
 - `data/` — the processed results (CSV) each figure is drawn from, one subdirectory per experiment.
-- `plot_*.py` — one plotting script per figure or group of figures.
+- `plot_*.py` — one plotting script per figure, and `table_model_memory.py` for the model-memory table.
 
 ## Experiment scripts
 

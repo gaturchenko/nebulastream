@@ -1,6 +1,7 @@
 """Source-rate x batch-size micro-benchmark: sustainable throughput vs. batch size.
 
-Produces batch-throughput.pdf, the throughput side of batch-rate.pdf: per fixed batch size, the
+The throughput panel of batch-rate-throughput-column.pdf (plot_batch_rate_throughput.py), which
+imports this module: per fixed batch size, the
 largest offered rate it sustained (delivered >= 99% of it), with a bracket up to the next rate of
 its ladder, which it did not sustain. The profiled model-only throughput B / t(B) and the
 window-only query show what bounds it: batching amortizes the model invocation, but every result
@@ -18,7 +19,7 @@ Data: data/batch_rate/batch_throughput_runs.csv
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from common import eng_formatter, load_csv, save, setup_style
+from common import eng_formatter, load_csv
 
 MEASURED_COLOR = plt.get_cmap("Blues")(0.85)
 # Opaque rather than alpha-blended: transparency makes some PDF viewers rasterize the page.
@@ -75,23 +76,3 @@ def draw_batch_throughput(
 
     handles, _ = ax.get_legend_handles_labels()
     return [handles[2], handles[0], handles[1]]
-
-
-def plot_batch_throughput(throughput: pd.DataFrame, profile: pd.Series, window_only: float) -> None:
-    FIG_SIZE = (3.33, 2.3)
-    FONT_SIZE = 8
-    TICK_SIZE = 7
-
-    setup_style()
-    plt.rcParams.update({"font.size": FONT_SIZE, "xtick.labelsize": TICK_SIZE, "ytick.labelsize": TICK_SIZE,
-                         "legend.fontsize": TICK_SIZE})
-    fig, ax = plt.subplots(figsize=FIG_SIZE)
-    legend = draw_batch_throughput(ax, throughput, profile, window_only, TICK_SIZE)
-    fig.legend(handles=legend, loc="upper center", ncol=2, frameon=False, handletextpad=0.4, columnspacing=1.2,
-               borderaxespad=0.1)
-    fig.tight_layout(pad=0.2, rect=(0, 0, 1, 0.84))
-    save(fig, "batch-throughput.pdf", tight=False)
-
-
-if __name__ == "__main__":
-    plot_batch_throughput(*load_data())

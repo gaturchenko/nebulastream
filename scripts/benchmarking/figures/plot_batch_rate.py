@@ -1,6 +1,7 @@
 """Source-rate x batch-size micro-benchmark: P95 latency vs. batch size at each offered rate.
 
-Produces batch-rate.pdf: one line per offered rate over the fixed batch sizes, the 75 ms latency
+The latency panel of batch-rate-throughput-column.pdf (plot_batch_rate_throughput.py), which
+imports this module: one line per offered rate over the fixed batch sizes, the 75 ms latency
 SLO (the window size), the batch size OPTIMIZER_CHOOSES selected at each rate, and the batch sizes
 that fell behind. Window-fed inference waits for a full batch, so a batch of B costs (B - 1)
 strides of fill time: large batches miss the SLO at low rates, small ones fall behind at high rates.
@@ -14,7 +15,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.lines import Line2D
 
-from common import eng_formatter, load_csv, save, setup_style
+from common import eng_formatter, load_csv
 
 OPTIMIZER_COLOR = "#e8730c"
 
@@ -83,23 +84,3 @@ def draw_batch_rate(ax, fixed: pd.DataFrame, chosen: pd.DataFrame, slo_ms: float
         Line2D([], [], color=cmap(1.0), marker="x", markersize=5, linestyle="none", label="falls behind"),
         Line2D([], [], color="0.3", linestyle="--", linewidth=0.9, label=f"SLO ({slo_ms:.0f} ms window)"),
     ]
-
-
-def plot_batch_rate(fixed: pd.DataFrame, chosen: pd.DataFrame, slo_ms: float) -> None:
-    FIG_SIZE = (3.33, 2.3)
-    FONT_SIZE = 8
-    TICK_SIZE = 7
-
-    setup_style()
-    plt.rcParams.update({"font.size": FONT_SIZE, "xtick.labelsize": TICK_SIZE, "ytick.labelsize": TICK_SIZE,
-                         "legend.fontsize": TICK_SIZE})
-    fig, ax = plt.subplots(figsize=FIG_SIZE)
-    legend = draw_batch_rate(ax, fixed, chosen, slo_ms, TICK_SIZE)
-    fig.legend(handles=legend, loc="upper center", ncol=2, frameon=False, handletextpad=0.4, columnspacing=1.2,
-               borderaxespad=0.1)
-    fig.tight_layout(pad=0.2, rect=(0, 0, 1, 0.84))
-    save(fig, "batch-rate.pdf", tight=False)
-
-
-if __name__ == "__main__":
-    plot_batch_rate(*load_data())
