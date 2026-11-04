@@ -23,7 +23,8 @@ The drivers and query definitions behind the data are in
 | `model_memory/` | memory of an inference operator's sessions, private vs. shared compiled model |
 | `sensitivity/` | sensitivity of the optimizer's implementation selection to its parameters |
 | `queries/` | the three workloads (CWRU, MUSAN, Waymo) of the comparison with other systems |
-| `baselines/` | the Flink + OpenVINO and TorchServe baselines |
+| `baselines/` | the Flink + OpenVINO and TorchServe baselines (`flink-openvino-baseline/` holds the full source of the Flink job and its OpenVINO JNI bridge) |
+| `navi/` | the deployment on the Raspberry Pi: the `run_pi_*.sh` drivers of the Pi experiments, their queries, the processing scripts, and the built Flink baseline as it ran there |
 | `config/` | worker and optimizer configurations shared by the experiments |
 | top level | thread budget split (`run_threading*.sh`), prediction cache scope (`run_global_vs_local_caches.sh`), configuration ablation (`run_*_time_series.sh`, `config/run_ablation.sh`) |
 
