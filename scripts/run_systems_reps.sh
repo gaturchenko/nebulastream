@@ -10,7 +10,7 @@
 # run_systems.sh wipes at the start of every pass.
 #
 # With SHARE_COMPILED_MODEL=1 only the Flink stage is run, with compiled-model sharing enabled
-# (the counterpart of the XXXX-2 openvino_share_compiled_model option), writing
+# (the counterpart of the NES openvino_share_compiled_model option), writing
 # flink_<workload>_shared_rep<N>.csv. That is the best-effort version of the baseline: without it
 # each Flink lane holds its own copy of the model.
 set -uo pipefail
