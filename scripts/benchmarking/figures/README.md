@@ -30,12 +30,14 @@ The sensitivity table (Table V) is not drawn here: its ranges are printed by `re
 
 ## Running
 
-Requires `pandas`, `seaborn`, `matplotlib`, and a LaTeX installation with the
-`libertine` package (all text is rendered with the paper's Libertine font via
-`text.usetex`; see `common.setup_style`). On this machine the only interpreter
-carrying all three is `~/PycharmProjects/nes-inference-datasets-models/.venv`.
+Requires Python 3.12 with the packages in `requirements.txt`, and a LaTeX installation with
+the `libertine` and `newtx` packages: all text is rendered with the paper's Libertine font via
+`text.usetex` (see `common.setup_style`). On Debian/Ubuntu, `texlive-latex-extra` and
+`texlive-fonts-extra` provide them.
 
 ```sh
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
 python plot_batch_microbench.py     # or any other plot_*.py, or table_model_memory.py
 ```
 

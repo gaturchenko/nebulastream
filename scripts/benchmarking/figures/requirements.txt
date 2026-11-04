@@ -1,0 +1,5 @@
+# The versions the committed figures were rendered with (Python 3.12).
+matplotlib==3.10.6
+numpy==1.26.0
+pandas==2.3.2
+seaborn==0.13.2
