@@ -165,8 +165,9 @@ def draw_e2e_workloads(data: dict, share: dict, flink_steady: dict, layout: Layo
         # Direct value labels: the palette's aqua sits below 3:1 against white, so identity and
         # magnitude must not rest on the fill alone.
         for index, value in enumerate(medians):
-            ax.text(index, value + upper[index], f"{value:.0f}", ha="center", va="bottom",
-                    fontsize=layout.value_fs)
+            ax.annotate(f"{value:.0f}", (index, value + upper[index]), xytext=(0, 1),
+                        textcoords="offset points", ha="center", va="bottom",
+                        fontsize=layout.value_fs)
 
         ax.set_title(f"{WORKLOAD_TITLE[workload]}\n{{\\{layout.rate_size} {WORKLOAD_RATE[workload]}}}",
                      fontsize=layout.title_fs, pad=layout.title_pad)
@@ -217,7 +218,7 @@ def plot_e2e_workloads_column(data: dict, share: dict, flink_steady: dict) -> No
     do not fit one row at this width and take two: the systems, then the two hatched parts.
     """
     layout = Layout(
-        figsize=(3.5, 2.1),
+        figsize=(3.5, 1.7),
         label_fs=8.5,
         tick_fs=7.5,
         value_fs=7,
@@ -231,7 +232,7 @@ def plot_e2e_workloads_column(data: dict, share: dict, flink_steady: dict) -> No
         error_linewidth=0.7,
         capsize=2,
         legend_ncol=3,
-        legend_anchor=-0.02,
+        legend_anchor=-0.025,
         pad_inches=0.02,
         title_pad=3,
         ylabel_pad=2,
@@ -239,7 +240,7 @@ def plot_e2e_workloads_column(data: dict, share: dict, flink_steady: dict) -> No
         tick_pad=1.5,
         hide_xticks=True,
         w_pad=0.6,
-        bottom=0.215,
+        bottom=0.265,
         value_label_pad=0.4,
     )
     fig = draw_e2e_workloads(data, share, flink_steady, layout)
